@@ -39,6 +39,7 @@ doc/examples/gen-tp/sample
 doc/examples/gen-tp/sample_tracepoint.h
 doc/examples/demo-tracef/demo-tracef
 doc/examples/demo-tracelog/demo-tracelog
+doc/examples/demo-statedump-notifier/demo-statedump-notifier
 
 tests/hello/hello
 tests/hello.cxx/hello

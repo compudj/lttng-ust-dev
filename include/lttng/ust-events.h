@@ -532,6 +532,9 @@ struct lttng_session {
 
 	/* New UST 2.4 */
 	int statedump_pending:1;
+
+	/* New UST 2.8 */
+	struct lttng_statedump_table *statedump_table;
 };
 
 struct lttng_transport {
