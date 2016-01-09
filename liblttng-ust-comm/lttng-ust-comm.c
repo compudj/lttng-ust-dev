@@ -697,6 +697,20 @@ int serialize_string_encoding(enum ustctl_string_encodings *ue,
 }
 
 static
+int serialize_integer_type(struct ustctl_integer_type *uit,
+		const struct lttng_integer_type *lit)
+{
+	uit->size = lit->size;
+	uit->signedness = lit->signedness;
+	uit->reverse_byte_order = lit->reverse_byte_order;
+	uit->base = lit->base;
+	if (serialize_string_encoding(&uit->encoding, lit->encoding))
+		return -EINVAL;
+	uit->alignment = lit->alignment;
+	return 0;
+}
+
+static
 int serialize_basic_type(enum ustctl_abstract_types *uatype,
 		enum lttng_abstract_types atype,
 		union _ustctl_basic_type *ubt,
@@ -705,18 +719,8 @@ int serialize_basic_type(enum ustctl_abstract_types *uatype,
 	switch (atype) {
 	case atype_integer:
 	{
-		struct ustctl_integer_type *uit;
-		const struct lttng_integer_type *lit;
-
-		uit = &ubt->integer;
-		lit = &lbt->integer;
-		uit->size = lit->size;
-		uit->signedness = lit->signedness;
-		uit->reverse_byte_order = lit->reverse_byte_order;
-		uit->base = lit->base;
-		if (serialize_string_encoding(&uit->encoding, lit->encoding))
+		if (serialize_integer_type(&ubt->integer, &lbt->integer))
 			return -EINVAL;
-		uit->alignment = lit->alignment;
 		*uatype = ustctl_atype_integer;
 		break;
 	}
@@ -743,6 +747,13 @@ int serialize_basic_type(enum ustctl_abstract_types *uatype,
 		break;
 	}
 	case atype_enum:
+	{
+		strncpy(ubt->enumeration.name, lbt->enumeration.desc->name,
+				LTTNG_UST_SYM_NAME_LEN);
+		ubt->enumeration.name[LTTNG_UST_SYM_NAME_LEN - 1] = '\0';
+		*uatype = ustctl_atype_enum;
+		break;
+	}
 	case atype_array:
 	case atype_sequence:
 	default:
@@ -760,6 +771,7 @@ int serialize_one_type(struct ustctl_type *ut, const struct lttng_type *lt)
 	case atype_integer:
 	case atype_float:
 	case atype_string:
+	case atype_enum:
 		ret = serialize_basic_type(&ut->atype, lt->atype,
 			&ut->u.basic, &lt->u.basic);
 		if (ret)
@@ -802,7 +814,6 @@ int serialize_one_type(struct ustctl_type *ut, const struct lttng_type *lt)
 		ut->atype = ustctl_atype_sequence;
 		break;
 	}
-	case atype_enum:
 	default:
 		return -EINVAL;
 	}
@@ -848,6 +859,34 @@ int serialize_fields(size_t *_nr_write_fields,
 error_type:
 	free(fields);
 	return ret;
+}
+
+static
+int serialize_entries(struct ustctl_enum_entry **_entries,
+		size_t nr_entries,
+		const struct lttng_enum_entry *lttng_entries)
+{
+	struct ustctl_enum_entry *entries;
+	int i;
+
+	/* Serialize the entries */
+	entries = zmalloc(nr_entries * sizeof(*entries));
+	if (!entries)
+		return -ENOMEM;
+	for (i = 0; i < nr_entries; i++) {
+		struct ustctl_enum_entry *uentry;
+		const struct lttng_enum_entry *lentry;
+
+		uentry = &entries[i];
+		lentry = &lttng_entries[i];
+
+		uentry->start = lentry->start;
+		uentry->end = lentry->end;
+		strncpy(uentry->string, lentry->string, LTTNG_UST_SYM_NAME_LEN);
+		uentry->string[LTTNG_UST_SYM_NAME_LEN - 1] = '\0';
+	}
+	*_entries = entries;
+	return 0;
 }
 
 static
@@ -945,14 +984,15 @@ int ustcomm_register_event(int sock,
 		model_emf_uri_len = 0;
 	}
 	msg.m.model_emf_uri_len = model_emf_uri_len;
+
 	len = ustcomm_send_unix_sock(sock, &msg, sizeof(msg));
 	if (len > 0 && len != sizeof(msg)) {
-		free(fields);
-		return -EIO;
+		ret = -EIO;
+		goto error_fields;
 	}
 	if (len < 0) {
-		free(fields);
-		return len;
+		ret = len;
+		goto error_fields;
 	}
 
 	/* send signature */
@@ -971,10 +1011,12 @@ int ustcomm_register_event(int sock,
 		len = ustcomm_send_unix_sock(sock, fields, fields_len);
 		free(fields);
 		if (len > 0 && len != fields_len) {
-			return -EIO;
+			ret = -EIO;
+			goto error_fields;
 		}
 		if (len < 0) {
-			return len;
+			ret = len;
+			goto error_fields;
 		}
 	} else {
 		free(fields);
@@ -984,10 +1026,14 @@ int ustcomm_register_event(int sock,
 		/* send model_emf_uri */
 		len = ustcomm_send_unix_sock(sock, model_emf_uri,
 				model_emf_uri_len);
-		if (len > 0 && len != model_emf_uri_len)
-			return -EIO;
-		if (len < 0)
-			return len;
+		if (len > 0 && len != model_emf_uri_len) {
+			ret = -EIO;
+			goto error_fields;
+		}
+		if (len < 0) {
+			ret = len;
+			goto error_fields;
+		}
 	}
 
 	/* receive reply */
@@ -1021,6 +1067,118 @@ int ustcomm_register_event(int sock,
 			return len;
 		}
 	}
+
+error_fields:
+	free(fields);
+	return ret;
+}
+
+/*
+ * Returns 0 on success, negative error value on error.
+ * Returns -EPIPE or -ECONNRESET if other end has hung up.
+ */
+int ustcomm_register_enum(int sock,
+	int session_objd,		/* session descriptor */
+	const char *enum_name,		/* enum name (input) */
+	const struct lttng_integer_type *container_type,
+	size_t nr_entries,		/* entries */
+	const struct lttng_enum_entry *lttng_entries)
+{
+	ssize_t len;
+	struct {
+		struct ustcomm_notify_hdr header;
+		struct ustcomm_notify_enum_msg m;
+	} msg;
+	struct {
+		struct ustcomm_notify_hdr header;
+		struct ustcomm_notify_enum_reply r;
+	} reply;
+	size_t entries_len;
+	struct ustctl_enum_entry *entries = NULL;
+	int ret;
+
+	memset(&msg, 0, sizeof(msg));
+	msg.header.notify_cmd = USTCTL_NOTIFY_CMD_ENUM;
+	msg.m.session_objd = session_objd;
+	strncpy(msg.m.enum_name, enum_name, LTTNG_UST_SYM_NAME_LEN);
+	msg.m.enum_name[LTTNG_UST_SYM_NAME_LEN - 1] = '\0';
+
+	ret = serialize_integer_type(&msg.m.container_type,
+			container_type);
+	if (ret)
+		return ret;
+
+	/* Calculate entries len, serialize entries. */
+	if (nr_entries > 0) {
+		ret = serialize_entries(&entries,
+				nr_entries, lttng_entries);
+		if (ret)
+			return ret;
+	}
+
+	entries_len = sizeof(*entries) * nr_entries;
+	msg.m.entries_len = entries_len;
+
+	len = ustcomm_send_unix_sock(sock, &msg, sizeof(msg));
+	if (len > 0 && len != sizeof(msg)) {
+		ret = -EIO;
+		goto error_entries;
+	}
+	if (len < 0) {
+		ret = len;
+		goto error_entries;
+	}
+
+	/* send entries */
+	if (entries_len > 0) {
+		len = ustcomm_send_unix_sock(sock, entries, entries_len);
+		if (len > 0 && len != entries_len) {
+			ret = -EIO;
+			goto error_entries;
+		}
+		if (len < 0) {
+			ret = len;
+			goto error_entries;
+		}
+	}
+	free(entries);
+	entries = NULL;
+
+	/* receive reply */
+	len = ustcomm_recv_unix_sock(sock, &reply, sizeof(reply));
+	switch (len) {
+	case 0:	/* orderly shutdown */
+		return -EPIPE;
+	case sizeof(reply):
+		if (reply.header.notify_cmd != msg.header.notify_cmd) {
+			ERR("Unexpected result message command "
+				"expected: %u vs received: %u\n",
+				msg.header.notify_cmd, reply.header.notify_cmd);
+			return -EINVAL;
+		}
+		if (reply.r.ret_code > 0)
+			return -EINVAL;
+		if (reply.r.ret_code < 0)
+			return reply.r.ret_code;
+		DBG("Sent register enum notification for name \"%s\": ret_code %d\n",
+			enum_name, reply.r.ret_code);
+		return 0;
+	default:
+		if (len < 0) {
+			/* Transport level error */
+			if (errno == EPIPE || errno == ECONNRESET)
+				len = -errno;
+			return len;
+		} else {
+			ERR("incorrect message size: %zd\n", len);
+			return len;
+		}
+	}
+	return ret;
+
+error_entries:
+	free(entries);
+	return ret;
 }
 
 /*

@@ -118,6 +118,35 @@ static const char							\
 #include TRACEPOINT_INCLUDE
 
 /*
+ * Stage 0.9 of tracepoint event generation
+ *
+ * Unfolding the enums
+ */
+#include <lttng/ust-tracepoint-event-reset.h>
+
+/* Enumeration entry (single value) */
+#undef ctf_enum_value
+#define ctf_enum_value(_string, _value)					\
+	{ _value, _value, _string },
+
+/* Enumeration entry (range) */
+#undef ctf_enum_range
+#define ctf_enum_range(_string, _range_start, _range_end)		\
+	{ _range_start, _range_end, _string },
+
+#undef TP_ENUM_VALUES
+#define TP_ENUM_VALUES(...)						\
+	__VA_ARGS__
+
+#undef TRACEPOINT_ENUM
+#define TRACEPOINT_ENUM(_provider, _name, _type, _values)		\
+	const struct lttng_enum_entry __enum_values__##_provider##_##_name[] = { \
+		_values							\
+	};
+
+#include TRACEPOINT_INCLUDE
+
+/*
  * Stage 1 of tracepoint event generation.
  *
  * Create event field type metadata section.
@@ -200,6 +229,34 @@ static const char							\
 	  .nowrite = _nowrite,					\
 	},
 
+#undef _ctf_enum
+#define _ctf_enum(_provider, _name, _item, _src, _nowrite)	\
+	{							\
+		.name = #_item,					\
+		.type = {					\
+			.atype = atype_enum,			\
+			.u = {					\
+				.basic = {			\
+					.enumeration = {	\
+						.desc = &__enum_##_provider##_##_name, \
+					},			\
+				 },				\
+			},					\
+		},						\
+		.nowrite = _nowrite,				\
+	},
+
+#undef ctf_enum_integer
+#define ctf_enum_integer(_type)					\
+	{							\
+		.size = sizeof(_type) * CHAR_BIT,		\
+		.alignment = lttng_alignof(_type) * CHAR_BIT,	\
+		.signedness = lttng_is_signed_type(_type),	\
+		.reverse_byte_order = 0,			\
+		.base = 10,					\
+		.encoding = lttng_encode_none,			\
+	}
+
 #undef TP_FIELDS
 #define TP_FIELDS(...) __VA_ARGS__	/* Only one used in this phase */
 
@@ -207,6 +264,15 @@ static const char							\
 #define TRACEPOINT_EVENT_CLASS(_provider, _name, _args, _fields)		   	     \
 	static const struct lttng_event_field __event_fields___##_provider##___##_name[] = { \
 		_fields									     \
+	};
+
+#undef TRACEPOINT_ENUM
+#define TRACEPOINT_ENUM(_provider, _name, _type, _values)		\
+	static const struct lttng_enum_desc __enum_##_provider##_##_name = { \
+		.name = #_provider "_" #_name,				\
+		.container_type = _type,				\
+		.entries = __enum_values__##_provider##_##_name,	\
+		.nr_entries = _TP_ARRAY_SIZE(__enum_values__##_provider##_##_name), \
 	};
 
 #include TRACEPOINT_INCLUDE
@@ -230,7 +296,33 @@ static void __event_probe__##_provider##___##_name(_TP_ARGS_DATA_PROTO(_args));
 #include TRACEPOINT_INCLUDE
 
 /*
- * Stage 3 of tracepoint event generation.
+ * Stage 3.0 of tracepoint event generation.
+ *
+ * Create static inline function that calculates enum size.
+ */
+
+/* Reset all macros within TRACEPOINT_EVENT */
+#include <lttng/ust-tracepoint-event-reset.h>
+#include <lttng/ust-tracepoint-event-write.h>
+
+#undef ctf_enum_integer
+#define ctf_enum_integer(_type)		_type
+
+#undef TRACEPOINT_ENUM
+#define TRACEPOINT_ENUM(_provider, _name, _type, _values)			\
+static inline									\
+size_t __enum_get_size__##_provider##___##_name(size_t __event_len)		\
+{										\
+       size_t __enum_len = 0;							\
+       __enum_len = lib_ring_buffer_align(__event_len, lttng_alignof(_type));	\
+       __enum_len += sizeof(_type);						\
+       return __enum_len;							\
+}
+
+#include TRACEPOINT_INCLUDE
+
+/*
+ * Stage 3.1 of tracepoint event generation.
  *
  * Create static inline function that calculates event size.
  */
@@ -267,6 +359,10 @@ static void __event_probe__##_provider##___##_name(_TP_ARGS_DATA_PROTO(_args));
 #undef _ctf_string
 #define _ctf_string(_item, _src, _nowrite)				       \
 	__event_len += __dynamic_len[__dynamic_len_idx++] = strlen(_src) + 1;
+
+#undef _ctf_enum
+#define _ctf_enum(_provider, _name, _item, _src, _nowrite)			\
+	__event_len += __enum_get_size__##_provider##___##_name(__event_len);
 
 #undef TP_ARGS
 #define TP_ARGS(...) __VA_ARGS__
@@ -410,6 +506,65 @@ size_t __event_get_size__##_provider##___##_name(size_t *__dynamic_len, _TP_ARGS
 		__stack_data += sizeof(void *);				       \
 	}
 
+#undef _ctf_enum
+#define _ctf_enum(_provider, _name, _item, _src, _nowrite)			\
+	{									\
+		int64_t __tmp;							\
+		if (__enum_##_provider##_##_name.container_type.signedness) {	\
+			switch (__enum_##_provider##_##_name.container_type.size) { \
+			case 8:							\
+			{							\
+				__tmp = (int64_t) (int8_t) _src;		\
+				break;						\
+			}							\
+			case 16:						\
+			{							\
+				__tmp = (int64_t) (int16_t) _src;		\
+				break;						\
+			}							\
+			case 32:						\
+			{							\
+				__tmp = (int64_t) (int32_t) _src;		\
+				break;						\
+			}							\
+			case 64:						\
+			{							\
+				__tmp = (int64_t) _src;				\
+				break;						\
+			}							\
+			default:						\
+				abort();					\
+			}							\
+		} else {							\
+			switch (__enum_##_provider##_##_name.container_type.size) { \
+			case 8:							\
+			{							\
+				__tmp = (uint64_t) (uint8_t) _src;		\
+				break;						\
+			}							\
+			case 16:						\
+			{							\
+				__tmp = (uint64_t) (uint16_t) _src;		\
+				break;						\
+			}							\
+			case 32:						\
+			{							\
+				__tmp = (uint64_t) (uint32_t) _src;		\
+				break;						\
+			}							\
+			case 64:						\
+			{							\
+				__tmp = (uint64_t) _src;			\
+				break;						\
+			}							\
+			default:						\
+				abort();					\
+			}							\
+		}								\
+		memcpy(__stack_data, &__tmp, sizeof(int64_t));			\
+		__stack_data += sizeof(int64_t);				\
+	}
+
 #undef TP_ARGS
 #define TP_ARGS(...) __VA_ARGS__
 
@@ -427,10 +582,31 @@ void __event_prepare_filter_stack__##_provider##___##_name(char *__stack_data,\
 
 #include TRACEPOINT_INCLUDE
 
+/*
+ * Stage 4.0 of tracepoint event generation.
+ *
+ * Create static inline function that calculates enum alignment.
+ */
 
+/* Reset all macros within TRACEPOINT_EVENT */
+#include <lttng/ust-tracepoint-event-reset.h>
+#include <lttng/ust-tracepoint-event-write.h>
+
+#undef ctf_enum_integer
+#define ctf_enum_integer(_type)		_type
+
+#undef TRACEPOINT_ENUM
+#define TRACEPOINT_ENUM(_provider, _name, _type, _values)			\
+static inline									\
+size_t __enum_get_align__##_provider##___##_name(void)				\
+{										\
+	return lttng_alignof(_type);						\
+}
+
+#include TRACEPOINT_INCLUDE
 
 /*
- * Stage 4 of tracepoint event generation.
+ * Stage 4.1 of tracepoint event generation.
  *
  * Create static inline function that calculates event payload alignment.
  */
@@ -459,6 +635,10 @@ void __event_prepare_filter_stack__##_provider##___##_name(char *__stack_data,\
 
 #undef _ctf_string
 #define _ctf_string(_item, _src, _nowrite)
+
+#undef _ctf_enum
+#define _ctf_enum(_provider, _name, _item, _src, _nowrite)			\
+	__event_align = _tp_max_t(size_t, __event_align, __enum_get_align__##_provider##___##_name());
 
 #undef TP_ARGS
 #define TP_ARGS(...) __VA_ARGS__
@@ -543,6 +723,80 @@ size_t __event_get_align__##_provider##___##_name(_TP_ARGS_PROTO(_args))      \
 	else								\
 		__chan->ops->event_write(&__ctx, _src,			\
 			__get_dynamic_len(dest));
+
+#undef _ctf_enum
+#define _ctf_enum(_provider, _name, _item, _src, _nowrite)		\
+{									\
+	lib_ring_buffer_align_ctx(&__ctx,				\
+		__enum_get_align__##_provider##___##_name());		\
+	if (__enum_##_provider##_##_name.container_type.signedness) {	\
+		switch (__enum_##_provider##_##_name.container_type.size) { \
+		case 8:							\
+		{							\
+			int8_t __tmp = (int8_t) _src;			\
+			__chan->ops->event_write(&__ctx, &__tmp,	\
+					sizeof(__tmp));			\
+			break;						\
+		}							\
+		case 16:						\
+		{							\
+			int16_t __tmp = (int16_t) _src;			\
+			__chan->ops->event_write(&__ctx, &__tmp,	\
+					sizeof(__tmp));			\
+			break;						\
+		}							\
+		case 32:						\
+		{							\
+			int32_t __tmp = (int32_t) _src;			\
+			__chan->ops->event_write(&__ctx, &__tmp,	\
+					sizeof(__tmp));			\
+			break;						\
+		}							\
+		case 64:						\
+		{							\
+			int64_t __tmp = (int64_t) _src;			\
+			__chan->ops->event_write(&__ctx, &__tmp,	\
+					sizeof(__tmp));			\
+			break;						\
+		}							\
+		default:						\
+			abort();					\
+		}							\
+	} else {							\
+		switch (__enum_##_provider##_##_name.container_type.size) { \
+		case 8:							\
+		{							\
+			uint8_t __tmp = (uint8_t) _src;			\
+			__chan->ops->event_write(&__ctx, &__tmp,	\
+					sizeof(__tmp));			\
+			break;						\
+		}							\
+		case 16:						\
+		{							\
+			uint16_t __tmp = (uint16_t) _src;		\
+			__chan->ops->event_write(&__ctx, &__tmp,	\
+					sizeof(__tmp));			\
+			break;						\
+		}							\
+		case 32:						\
+		{							\
+			uint32_t __tmp = (uint32_t) _src;		\
+			__chan->ops->event_write(&__ctx, &__tmp,	\
+					sizeof(__tmp));			\
+			break;						\
+		}							\
+		case 64:						\
+		{							\
+			uint64_t __tmp = (uint64_t) _src;		\
+			__chan->ops->event_write(&__ctx, &__tmp,	\
+					sizeof(__tmp));			\
+			break;						\
+		}							\
+		default:						\
+			abort();					\
+		}							\
+	}								\
+}
 
 /* Beware: this get len actually consumes the len value */
 #undef __get_dynamic_len
@@ -726,7 +980,11 @@ const struct lttng_event_desc __event_desc___##_provider##_##_name = {	       \
 	.nr_fields = _TP_ARRAY_SIZE(__event_fields___##_provider##___##_template), \
 	.loglevel = &__ref_loglevel___##_provider##___##_name,		       \
 	.signature = __tp_event_signature___##_provider##___##_template,       \
-	.u = { .ext = { .model_emf_uri = &__ref_model_emf_uri___##_provider##___##_name } }, \
+	.u = {								       \
+	    .ext = {							       \
+		  .model_emf_uri = &__ref_model_emf_uri___##_provider##___##_name, \
+		},							       \
+	},								       \
 };
 
 #include TRACEPOINT_INCLUDE
