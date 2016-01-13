@@ -85,12 +85,12 @@ void vpid_record(struct lttng_ctx_field *field,
 
 static
 void vpid_get_value(struct lttng_ctx_field *field,
-		union lttng_ctx_value *value)
+		struct lttng_ctx_value *value)
 {
 	pid_t pid;
 
 	pid = wrapper_getpid();
-	value->s64 = pid;
+	value->u.s64 = pid;
 }
 
 int lttng_add_vpid_to_ctx(struct lttng_ctx **ctx)
