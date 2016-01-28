@@ -27,7 +27,7 @@
 #include <urcu/hlist.h>
 
 struct lttng_ust_context_provider {
-	const char *name;
+	char *name;
 	size_t (*get_size)(size_t offset);
 	void (*record)(struct lttng_ctx_field *field,
 		       struct lttng_ust_lib_ring_buffer_ctx *ctx,
