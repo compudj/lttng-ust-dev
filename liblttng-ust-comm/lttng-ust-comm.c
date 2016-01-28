@@ -1012,8 +1012,6 @@ int serialize_one_field(struct lttng_session *session,
 	case atype_struct:
 	{
 		struct ustctl_field *uf = &fields[*iter_output];
-		struct ustctl_type *ut = &uf->type;
-		int ret;
 
 		/*
 		 * TODO: add support for non-empty struct.
