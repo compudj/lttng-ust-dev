@@ -93,7 +93,6 @@ end:
 	return ret;
 }
 
-//TODO: use empty struct
 static
 size_t dummy_get_size(struct lttng_ctx_field *field, size_t offset)
 {
@@ -101,7 +100,6 @@ size_t dummy_get_size(struct lttng_ctx_field *field, size_t offset)
 
 	size += lib_ring_buffer_align(offset, lttng_alignof(char));
 	size += sizeof(char);		/* tag */
-	size += sizeof(char);
 	return size;
 }
 
@@ -110,19 +108,17 @@ void dummy_record(struct lttng_ctx_field *field,
 		 struct lttng_ust_lib_ring_buffer_ctx *ctx,
 		 struct lttng_channel *chan)
 {
-	char sel_char = (char) LTTNG_UST_DYNAMIC_TYPE_STRING;
+	char sel_char = (char) LTTNG_UST_DYNAMIC_TYPE_NONE;
 
 	lib_ring_buffer_align_ctx(ctx, lttng_alignof(sel_char));
 	chan->ops->event_write(ctx, &sel_char, sizeof(sel_char));
-	chan->ops->event_write(ctx, "", sizeof(char));
 }
 
 static
 void dummy_get_value(struct lttng_ctx_field *field,
 		struct lttng_ctx_value *value)
 {
-	value->sel = LTTNG_UST_DYNAMIC_TYPE_STRING;
-	value->u.str = "";
+	value->sel = LTTNG_UST_DYNAMIC_TYPE_NONE;
 }
 
 void lttng_ust_context_provider_unregister(struct lttng_ust_context_provider *provider)
