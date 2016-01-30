@@ -51,7 +51,7 @@ void test_inc_count(void)
 }
 
 static
-size_t test_get_size(size_t offset)
+size_t test_get_size(struct lttng_ctx_field *field, size_t offset)
 {
 	int sel = test_count % _NR_LTTNG_UST_DYNAMIC_TYPES;
 	size_t size = 0;
