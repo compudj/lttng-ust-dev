@@ -69,7 +69,7 @@ struct lttng_perf_counter_field {
 static pthread_key_t perf_counter_key;
 
 static
-size_t perf_counter_get_size(size_t offset)
+size_t perf_counter_get_size(struct lttng_ctx_field *field, size_t offset)
 {
 	size_t size = 0;
 

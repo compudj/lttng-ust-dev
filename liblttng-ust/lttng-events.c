@@ -1137,7 +1137,7 @@ void lttng_session_lazy_sync_enablers(struct lttng_session *session)
  * context (either app context callbacks, or dummy callbacks).
  */
 void lttng_ust_context_set_session_provider(const char *name,
-		size_t (*get_size)(size_t offset),
+		size_t (*get_size)(struct lttng_ctx_field *field, size_t offset),
 		void (*record)(struct lttng_ctx_field *field,
 			struct lttng_ust_lib_ring_buffer_ctx *ctx,
 			struct lttng_channel *chan),

@@ -62,7 +62,7 @@ void lttng_context_vpid_reset(void)
 #endif
 
 static
-size_t vpid_get_size(size_t offset)
+size_t vpid_get_size(struct lttng_ctx_field *field, size_t offset)
 {
 	size_t size = 0;
 

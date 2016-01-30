@@ -95,7 +95,7 @@ end:
 
 //TODO: use empty struct
 static
-size_t dummy_get_size(size_t offset)
+size_t dummy_get_size(struct lttng_ctx_field *field, size_t offset)
 {
 	size_t size = 0;
 

@@ -46,7 +46,7 @@ void lttng_context_vtid_reset(void)
 }
 
 static
-size_t vtid_get_size(size_t offset)
+size_t vtid_get_size(struct lttng_ctx_field *field, size_t offset)
 {
 	size_t size = 0;
 

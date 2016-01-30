@@ -28,7 +28,7 @@
 
 struct lttng_ust_context_provider {
 	char *name;
-	size_t (*get_size)(size_t offset);
+	size_t (*get_size)(struct lttng_ctx_field *field, size_t offset);
 	void (*record)(struct lttng_ctx_field *field,
 		       struct lttng_ust_lib_ring_buffer_ctx *ctx,
 		       struct lttng_channel *chan);
@@ -43,7 +43,7 @@ void lttng_ust_context_provider_unregister(struct lttng_ust_context_provider *pr
 int lttng_context_is_app(const char *name);
 
 void lttng_ust_context_set_session_provider(const char *name,
-		size_t (*get_size)(size_t offset),
+		size_t (*get_size)(struct lttng_ctx_field *field, size_t offset),
 		void (*record)(struct lttng_ctx_field *field,
 			struct lttng_ust_lib_ring_buffer_ctx *ctx,
 			struct lttng_channel *chan),
@@ -53,7 +53,7 @@ void lttng_ust_context_set_session_provider(const char *name,
 int lttng_ust_add_app_context_to_ctx_rcu(const char *name, struct lttng_ctx **ctx);
 int lttng_ust_context_set_provider_rcu(struct lttng_ctx **_ctx,
 		const char *name,
-		size_t (*get_size)(size_t offset),
+		size_t (*get_size)(struct lttng_ctx_field *field, size_t offset),
 		void (*record)(struct lttng_ctx_field *field,
 			struct lttng_ust_lib_ring_buffer_ctx *ctx,
 			struct lttng_channel *chan),

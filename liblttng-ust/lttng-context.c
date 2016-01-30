@@ -304,7 +304,7 @@ void lttng_destroy_context(struct lttng_ctx *ctx)
  */
 int lttng_ust_context_set_provider_rcu(struct lttng_ctx **_ctx,
 		const char *name,
-		size_t (*get_size)(size_t offset),
+		size_t (*get_size)(struct lttng_ctx_field *field, size_t offset),
 		void (*record)(struct lttng_ctx_field *field,
 			struct lttng_ust_lib_ring_buffer_ctx *ctx,
 			struct lttng_channel *chan),

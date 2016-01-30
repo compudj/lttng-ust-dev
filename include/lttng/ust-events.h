@@ -264,7 +264,7 @@ struct lttng_perf_counter_field;
 #define LTTNG_UST_CTX_FIELD_PADDING	40
 struct lttng_ctx_field {
 	struct lttng_event_field event_field;
-	size_t (*get_size)(size_t offset);
+	size_t (*get_size)(struct lttng_ctx_field *field, size_t offset);
 	void (*record)(struct lttng_ctx_field *field,
 		       struct lttng_ust_lib_ring_buffer_ctx *ctx,
 		       struct lttng_channel *chan);
