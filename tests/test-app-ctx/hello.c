@@ -61,9 +61,41 @@ size_t test_get_size(struct lttng_ctx_field *field, size_t offset)
 	switch (sel) {
 	case LTTNG_UST_DYNAMIC_TYPE_NONE:
 		break;
+	case LTTNG_UST_DYNAMIC_TYPE_S8:
+		size += lib_ring_buffer_align(offset, lttng_alignof(int8_t));
+		size += sizeof(int8_t);		/* variant */
+		break;
+	case LTTNG_UST_DYNAMIC_TYPE_S16:
+		size += lib_ring_buffer_align(offset, lttng_alignof(int16_t));
+		size += sizeof(int16_t);	/* variant */
+		break;
+	case LTTNG_UST_DYNAMIC_TYPE_S32:
+		size += lib_ring_buffer_align(offset, lttng_alignof(int32_t));
+		size += sizeof(int32_t);	/* variant */
+		break;
 	case LTTNG_UST_DYNAMIC_TYPE_S64:
 		size += lib_ring_buffer_align(offset, lttng_alignof(int64_t));
 		size += sizeof(int64_t);	/* variant */
+		break;
+	case LTTNG_UST_DYNAMIC_TYPE_U8:
+		size += lib_ring_buffer_align(offset, lttng_alignof(uint8_t));
+		size += sizeof(uint8_t);		/* variant */
+		break;
+	case LTTNG_UST_DYNAMIC_TYPE_U16:
+		size += lib_ring_buffer_align(offset, lttng_alignof(uint16_t));
+		size += sizeof(uint16_t);	/* variant */
+		break;
+	case LTTNG_UST_DYNAMIC_TYPE_U32:
+		size += lib_ring_buffer_align(offset, lttng_alignof(uint32_t));
+		size += sizeof(uint32_t);	/* variant */
+		break;
+	case LTTNG_UST_DYNAMIC_TYPE_U64:
+		size += lib_ring_buffer_align(offset, lttng_alignof(uint64_t));
+		size += sizeof(uint64_t);	/* variant */
+		break;
+	case LTTNG_UST_DYNAMIC_TYPE_FLOAT:
+		size += lib_ring_buffer_align(offset, lttng_alignof(float));
+		size += sizeof(float);		/* variant */
 		break;
 	case LTTNG_UST_DYNAMIC_TYPE_DOUBLE:
 		size += lib_ring_buffer_align(offset, lttng_alignof(double));
@@ -92,12 +124,76 @@ void test_record(struct lttng_ctx_field *field,
 	switch (sel) {
 	case LTTNG_UST_DYNAMIC_TYPE_NONE:
 		break;
-	case LTTNG_UST_DYNAMIC_TYPE_S64:
+	case LTTNG_UST_DYNAMIC_TYPE_S8:
 	{
-		int64_t v = 42;
+		int8_t v = -8;
 
 		lib_ring_buffer_align_ctx(ctx, lttng_alignof(v));
 		chan->ops->event_write(ctx, &v, sizeof(v));
+		break;
+	}
+	case LTTNG_UST_DYNAMIC_TYPE_S16:
+	{
+		int16_t v = -16;
+
+		lib_ring_buffer_align_ctx(ctx, lttng_alignof(v));
+		chan->ops->event_write(ctx, &v, sizeof(v));
+		break;
+	}
+	case LTTNG_UST_DYNAMIC_TYPE_S32:
+	{
+		int32_t v = -32;
+
+		lib_ring_buffer_align_ctx(ctx, lttng_alignof(v));
+		chan->ops->event_write(ctx, &v, sizeof(v));
+		break;
+	}
+	case LTTNG_UST_DYNAMIC_TYPE_S64:
+	{
+		int64_t v = -64;
+
+		lib_ring_buffer_align_ctx(ctx, lttng_alignof(v));
+		chan->ops->event_write(ctx, &v, sizeof(v));
+		break;
+	}
+	case LTTNG_UST_DYNAMIC_TYPE_U8:
+	{
+		uint8_t v = 8;
+
+		lib_ring_buffer_align_ctx(ctx, lttng_alignof(v));
+		chan->ops->event_write(ctx, &v, sizeof(v));
+		break;
+	}
+	case LTTNG_UST_DYNAMIC_TYPE_U16:
+	{
+		uint16_t v = 16;
+
+		lib_ring_buffer_align_ctx(ctx, lttng_alignof(v));
+		chan->ops->event_write(ctx, &v, sizeof(v));
+		break;
+	}
+	case LTTNG_UST_DYNAMIC_TYPE_U32:
+	{
+		uint32_t v = 32;
+
+		lib_ring_buffer_align_ctx(ctx, lttng_alignof(v));
+		chan->ops->event_write(ctx, &v, sizeof(v));
+		break;
+	}
+	case LTTNG_UST_DYNAMIC_TYPE_U64:
+	{
+		uint64_t v = 64;
+
+		lib_ring_buffer_align_ctx(ctx, lttng_alignof(v));
+		chan->ops->event_write(ctx, &v, sizeof(v));
+		break;
+	}
+	case LTTNG_UST_DYNAMIC_TYPE_FLOAT:
+	{
+		float f = 22322.0;
+
+		lib_ring_buffer_align_ctx(ctx, lttng_alignof(f));
+		chan->ops->event_write(ctx, &f, sizeof(f));
 		break;
 	}
 	case LTTNG_UST_DYNAMIC_TYPE_DOUBLE:
@@ -129,8 +225,32 @@ void test_get_value(struct lttng_ctx_field *field,
 	switch (sel) {
 	case LTTNG_UST_DYNAMIC_TYPE_NONE:
 		break;
+	case LTTNG_UST_DYNAMIC_TYPE_S8:
+		value->u.s64 = -8;
+		break;
+	case LTTNG_UST_DYNAMIC_TYPE_S16:
+		value->u.s64 = -16;
+		break;
+	case LTTNG_UST_DYNAMIC_TYPE_S32:
+		value->u.s64 = -32;
+		break;
 	case LTTNG_UST_DYNAMIC_TYPE_S64:
-		value->u.s64 = 42;
+		value->u.s64 = -64;
+		break;
+	case LTTNG_UST_DYNAMIC_TYPE_U8:
+		value->u.s64 = 8;
+		break;
+	case LTTNG_UST_DYNAMIC_TYPE_U16:
+		value->u.s64 = 16;
+		break;
+	case LTTNG_UST_DYNAMIC_TYPE_U32:
+		value->u.s64 = 32;
+		break;
+	case LTTNG_UST_DYNAMIC_TYPE_U64:
+		value->u.s64 = 64;
+		break;
+	case LTTNG_UST_DYNAMIC_TYPE_FLOAT:
+		value->u.d = 22322.0;
 		break;
 	case LTTNG_UST_DYNAMIC_TYPE_DOUBLE:
 		value->u.d = 2.0;
