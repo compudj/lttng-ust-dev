@@ -43,6 +43,8 @@ liblttng_ust_runtime_la_SOURCES = \
 	lttng-ust-statedump.c \
 	lttng-ust-statedump.h \
 	lttng-ust-statedump-provider.h \
+	ust_dl.c \
+	ust_dl.h \
 	tracepoint-internal.h \
 	clock.h \
 	compat.h \

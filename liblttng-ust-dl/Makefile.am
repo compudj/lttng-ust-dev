@@ -3,9 +3,7 @@ AM_CFLAGS = -fno-strict-aliasing
 
 lib_LTLIBRARIES = liblttng-ust-dl.la
 liblttng_ust_dl_la_SOURCES = \
-	lttng-ust-dl.c \
-	ust_dl.c \
-	ust_dl.h
+	lttng-ust-dl.c
 liblttng_ust_dl_la_LIBADD = \
 	$(top_builddir)/liblttng-ust/liblttng-ust.la
 
