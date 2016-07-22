@@ -22,6 +22,6 @@
  * SOFTWARE.
  */
 
-//#define _LGPL_SOURCE
+#define _LGPL_SOURCE
 #define TRACEPOINT_CREATE_PROBES
 #include "ust_tests_hello.h"
