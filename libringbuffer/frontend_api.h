@@ -56,6 +56,7 @@ int lib_ring_buffer_get_cpu(const struct lttng_ust_lib_ring_buffer_config *confi
 	int cpu, nesting;
 
 	cpu = lttng_ust_get_cpu(start_value);
+#if 0
 	nesting = ++URCU_TLS(lib_ring_buffer_nesting);
 	cmm_barrier();
 
@@ -64,6 +65,7 @@ int lib_ring_buffer_get_cpu(const struct lttng_ust_lib_ring_buffer_config *confi
 		URCU_TLS(lib_ring_buffer_nesting)--;
 		return -EPERM;
 	} else
+#endif
 		return cpu;
 }
 
@@ -73,8 +75,10 @@ int lib_ring_buffer_get_cpu(const struct lttng_ust_lib_ring_buffer_config *confi
 static inline
 void lib_ring_buffer_put_cpu(const struct lttng_ust_lib_ring_buffer_config *config)
 {
+#if 0
 	cmm_barrier();
 	URCU_TLS(lib_ring_buffer_nesting)--;		/* TLS */
+#endif
 }
 
 /*
