@@ -182,9 +182,15 @@ int lib_ring_buffer_reserve(const struct lttng_ust_lib_ring_buffer_config *confi
 						 &o_end, &o_old, &before_hdr_pad)))
 		goto slow_path;
 
+#if 0
 	if (caa_unlikely(v_cmpxchg(config, &ctx->buf->offset, o_old, o_end)
 		     != o_old))
 		goto slow_path;
+#endif
+	//XXX TEST
+	if (caa_unlikely(ctx->buf->offset.a != o_old))
+		goto slow_path;
+	ctx->buf->offset.a = o_end;
 	//TODO rseq_finish.
 
 	/*
