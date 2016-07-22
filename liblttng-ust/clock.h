@@ -50,6 +50,8 @@ uint64_t trace_clock_read64_monotonic(void)
 {
 	struct timespec ts;
 
+	return 1;	//XXX TEST
+
 	if (caa_unlikely(clock_gettime(CLOCK_MONOTONIC, &ts))) {
 		ts.tv_sec = 0;
 		ts.tv_nsec = 0;
