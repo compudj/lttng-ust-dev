@@ -174,34 +174,22 @@ void lib_ring_buffer_check_deliver_slow(const struct lttng_ust_lib_ring_buffer_c
 				   struct lttng_ust_shm_handle *handle,
 				   uint64_t tsc);
 
+extern
+void lib_ring_buffer_reserve_push_reader_slow(struct lttng_ust_lib_ring_buffer *buf,
+		struct channel *chan, unsigned long offset);
+
 /* Buffer write helpers */
 
 static inline
 void lib_ring_buffer_reserve_push_reader(struct lttng_ust_lib_ring_buffer *buf,
-					 struct channel *chan,
-					 unsigned long offset)
+		struct channel *chan, unsigned long offset)
 {
-	unsigned long consumed_old, consumed_new;
+	unsigned long consumed_old = uatomic_read(&buf->consumed);
 
-	do {
-		consumed_old = uatomic_read(&buf->consumed);
-		/*
-		 * If buffer is in overwrite mode, push the reader consumed
-		 * count if the write position has reached it and we are not
-		 * at the first iteration (don't push the reader farther than
-		 * the writer). This operation can be done concurrently by many
-		 * writers in the same buffer, the writer being at the farthest
-		 * write position sub-buffer index in the buffer being the one
-		 * which will win this loop.
-		 */
-		if (caa_unlikely(subbuf_trunc(offset, chan)
-			      - subbuf_trunc(consumed_old, chan)
-			     >= chan->backend.buf_size))
-			consumed_new = subbuf_align(consumed_old, chan);
-		else
-			return;
-	} while (caa_unlikely(uatomic_cmpxchg(&buf->consumed, consumed_old,
-					      consumed_new) != consumed_old));
+	if (caa_unlikely(subbuf_trunc(offset, chan)
+			- subbuf_trunc(consumed_old, chan)
+			>= chan->backend.buf_size))
+		lib_ring_buffer_reserve_push_reader_slow(buf, chan, offset);
 }
 
 static inline
