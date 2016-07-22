@@ -23,6 +23,7 @@
 #include <urcu/system.h>
 #include <urcu/arch.h>
 #include <config.h>
+#include <lttng/rseq.h>
 
 void lttng_ust_getcpu_init(void);
 
@@ -48,6 +49,13 @@ int lttng_ust_get_cpu_internal(void)
  */
 #ifdef __linux__
 
+static inline
+int lttng_ust_get_cpu_internal(struct rseq_state start_value)
+{
+	return rseq_cpu_at_start(start_value);
+}
+
+#if 0
 #if !HAVE_SCHED_GETCPU
 #include <sys/syscall.h>
 #define __getcpu(cpu, node, cache)	syscall(__NR_getcpu, cpu, node, cache)
@@ -81,6 +89,7 @@ int lttng_ust_get_cpu_internal(void)
 	return cpu;
 }
 #endif	/* HAVE_SCHED_GETCPU */
+#endif
 
 #elif (defined(__FreeBSD__) || defined(__CYGWIN__))
 
@@ -101,15 +110,15 @@ int lttng_ust_get_cpu_internal(void)
 #endif
 
 static inline
-int lttng_ust_get_cpu(void)
+int lttng_ust_get_cpu(struct rseq_state start_value)
 {
-	int (*getcpu)(void) = CMM_LOAD_SHARED(lttng_get_cpu);
+	//int (*getcpu)(void) = CMM_LOAD_SHARED(lttng_get_cpu);
 
-	if (caa_likely(!getcpu)) {
-		return lttng_ust_get_cpu_internal();
-	} else {
-		return getcpu();
-	}
+	//if (caa_likely(!getcpu)) {
+		return lttng_ust_get_cpu_internal(start_value);
+	//} else {
+	//	return getcpu();
+	//}
 }
 
 #endif /* _LTTNG_GETCPU_H */

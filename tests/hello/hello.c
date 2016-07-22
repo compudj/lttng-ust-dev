@@ -36,6 +36,8 @@ struct mmsghdr;
 #include <stdlib.h>
 #include <stdbool.h>
 
+#include <lttng/rseq.h>
+
 #define TRACEPOINT_DEFINE
 #include "ust_tests_hello.h"
 
@@ -83,6 +85,8 @@ int main(int argc, char **argv)
 	float flt = 2222.0;
 	int delay = 0;
 	bool mybool = 123;	/* should print "1" */
+
+	rseq_init_current_thread();
 
 	init_int_handler();
 

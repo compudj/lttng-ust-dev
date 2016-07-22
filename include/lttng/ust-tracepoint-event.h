@@ -30,6 +30,7 @@
 #include <lttng/tracepoint.h>
 #include <byteswap.h>
 #include <string.h>
+#include <lttng/rseq.h>
 
 #define __LTTNG_UST_NULL_STRING	"(null)"
 
@@ -753,6 +754,7 @@ void __event_probe__##_provider##___##_name(_TP_ARGS_DATA_PROTO(_args))	      \
 	struct lttng_event *__event = (struct lttng_event *) __tp_data;	      \
 	struct lttng_channel *__chan = __event->chan;			      \
 	struct lttng_ust_lib_ring_buffer_ctx __ctx;			      \
+	struct rseq_state __rseq_state;					      \
 	struct lttng_stack_ctx __lttng_ctx;				      \
 	size_t __event_len, __event_align;				      \
 	size_t __dynamic_len_idx = 0;					      \
@@ -795,6 +797,7 @@ void __event_probe__##_provider##___##_name(_TP_ARGS_DATA_PROTO(_args))	      \
 	__lttng_ctx.event = __event;					      \
 	__lttng_ctx.chan_ctx = tp_rcu_dereference_bp(__chan->ctx);	      \
 	__lttng_ctx.event_ctx = tp_rcu_dereference_bp(__event->ctx);	      \
+	__lttng_ctx.rseq_state = &__rseq_state;				      \
 	lib_ring_buffer_ctx_init(&__ctx, __chan->chan, __event, __event_len,  \
 				 __event_align, -1, __chan->handle, &__lttng_ctx); \
 	__ctx.ip = _TP_IP_PARAM(TP_IP_PARAM);				      \

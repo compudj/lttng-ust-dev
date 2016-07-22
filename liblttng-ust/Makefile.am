@@ -76,7 +76,8 @@ liblttng_ust_support_la_SOURCES = \
 	lttng-ring-buffer-client-overwrite-rt.c \
 	lttng-ring-buffer-metadata-client.h \
 	lttng-ring-buffer-metadata-client.c \
-	lttng-clock.c lttng-getcpu.c
+	lttng-clock.c lttng-getcpu.c \
+	rseq.c
 
 liblttng_ust_la_SOURCES =
 

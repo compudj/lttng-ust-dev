@@ -33,11 +33,11 @@ doc_examples_pythondir = ${docdir}/examples/python
 dist_doc_examples_python_DATA = python/hello.py
 endif
 
-if HAVE_CMAKE
-if HAVE_CXX
-SUBDIRS_CMAKE = cmake-multiple-shared-libraries
-endif
-endif
+#if HAVE_CMAKE
+#if HAVE_CXX
+#SUBDIRS_CMAKE = cmake-multiple-shared-libraries
+#endif
+#endif
 
 dist_doc_examples_DATA = README
 

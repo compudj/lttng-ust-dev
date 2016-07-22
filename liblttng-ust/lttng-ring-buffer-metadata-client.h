@@ -25,6 +25,7 @@
 #include "lttng/bitfield.h"
 #include "lttng-tracer.h"
 #include "../libringbuffer/frontend_types.h"
+#include <lttng/rseq.h>
 
 struct metadata_packet_header {
 	uint32_t magic;			/* 0x75D11D57 */
@@ -160,6 +161,8 @@ static void client_buffer_finalize(struct lttng_ust_lib_ring_buffer *buf,
 {
 }
 
+static struct rseq_lock rb_client_rseq_lock;
+
 static const
 struct lttng_ust_client_lib_ring_buffer_client_cb client_cb = {
 	.parent = {
@@ -240,7 +243,10 @@ void lttng_channel_destroy(struct lttng_channel *chan)
 static
 int lttng_event_reserve(struct lttng_ust_lib_ring_buffer_ctx *ctx, uint32_t event_id)
 {
-	return lib_ring_buffer_reserve(&client_config, ctx);
+	struct rseq_state start_value;
+
+	start_value = rseq_start(&rb_client_rseq_lock);
+	return lib_ring_buffer_reserve(&client_config, ctx, start_value);
 }
 
 static
@@ -336,6 +342,7 @@ void RING_BUFFER_MODE_TEMPLATE_INIT(void)
 {
 	DBG("LTT : ltt ring buffer client \"%s\" init\n",
 		"relay-" RING_BUFFER_MODE_TEMPLATE_STRING "-mmap");
+	rseq_init_lock(&rb_client_rseq_lock);
 	lttng_transport_register(&lttng_relay_transport);
 }
 
@@ -343,5 +350,6 @@ void RING_BUFFER_MODE_TEMPLATE_EXIT(void)
 {
 	DBG("LTT : ltt ring buffer client \"%s\" exit\n",
 		"relay-" RING_BUFFER_MODE_TEMPLATE_STRING "-mmap");
+	rseq_destroy_lock(&rb_client_rseq_lock);
 	lttng_transport_unregister(&lttng_relay_transport);
 }

@@ -34,6 +34,7 @@
 #include <lttng/ust-tracer.h>
 #include <lttng/ringbuffer-config.h>
 #include "../libringbuffer/getcpu.h"
+#include <lttng/rseq.h>
 
 static
 size_t cpu_id_get_size(struct lttng_ctx_field *field, size_t offset)
@@ -52,7 +53,7 @@ void cpu_id_record(struct lttng_ctx_field *field,
 {
 	int cpu;
 
-	cpu = lttng_ust_get_cpu();
+	cpu = rseq_current_cpu();	//TODO at start ?
 	lib_ring_buffer_align_ctx(ctx, lttng_alignof(cpu));
 	chan->ops->event_write(ctx, &cpu, sizeof(cpu));
 }
@@ -63,7 +64,7 @@ void cpu_id_get_value(struct lttng_ctx_field *field,
 {
 	int cpu;
 
-	cpu = lttng_ust_get_cpu();
+	cpu = rseq_current_cpu();
 	value->u.s64 = cpu;
 }
 

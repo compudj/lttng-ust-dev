@@ -39,6 +39,7 @@
 #include <urcu/futex.h>
 #include <urcu/compiler.h>
 
+#include <lttng/rseq.h>
 #include <lttng/ust-events.h>
 #include <lttng/ust-abi.h>
 #include <lttng/ust.h>
@@ -1302,6 +1303,8 @@ void *ust_listener_thread(void *arg)
 	struct sock_info *sock_info = arg;
 	int sock, ret, prev_connect_failed = 0, has_waited = 0;
 	long timeout;
+
+	rseq_init_current_thread();
 
 	/*
 	 * If available, add '-ust' to the end of this thread's

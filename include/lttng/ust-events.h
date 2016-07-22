@@ -59,6 +59,7 @@ struct lttng_session;
 struct lttng_ust_lib_ring_buffer_ctx;
 struct lttng_ust_context_app;
 struct lttng_event_field;
+struct rseq;
 
 /*
  * Data structures used by tracepoint event declarations, and by the
@@ -550,11 +551,12 @@ struct lttng_channel {
 	int tstate:1;			/* Transient enable state */
 };
 
-#define LTTNG_UST_STACK_CTX_PADDING	32
+#define LTTNG_UST_STACK_CTX_PADDING	24
 struct lttng_stack_ctx {
 	struct lttng_event *event;
 	struct lttng_ctx *chan_ctx;	/* RCU dereferenced. */
 	struct lttng_ctx *event_ctx;	/* RCU dereferenced. */
+	struct rseq_state *rseq_state;
 	char padding[LTTNG_UST_STACK_CTX_PADDING];
 };
 

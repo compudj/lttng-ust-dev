@@ -33,6 +33,7 @@
 #include "frontend.h"
 #include <urcu-bp.h>
 #include <urcu/compiler.h>
+#include <lttng/rseq.h>
 
 /**
  * lib_ring_buffer_get_cpu - Precedes ring buffer reserve/commit.
@@ -49,11 +50,12 @@
  * section.
  */
 static inline
-int lib_ring_buffer_get_cpu(const struct lttng_ust_lib_ring_buffer_config *config)
+int lib_ring_buffer_get_cpu(const struct lttng_ust_lib_ring_buffer_config *config,
+		struct rseq_state start_value)
 {
 	int cpu, nesting;
 
-	cpu = lttng_ust_get_cpu();
+	cpu = lttng_ust_get_cpu(start_value);
 	nesting = ++URCU_TLS(lib_ring_buffer_nesting);
 	cmm_barrier();
 
@@ -153,7 +155,8 @@ int lib_ring_buffer_try_reserve(const struct lttng_ust_lib_ring_buffer_config *c
 
 static inline
 int lib_ring_buffer_reserve(const struct lttng_ust_lib_ring_buffer_config *config,
-			    struct lttng_ust_lib_ring_buffer_ctx *ctx)
+			    struct lttng_ust_lib_ring_buffer_ctx *ctx,
+			    struct rseq_state start_value)
 {
 	struct channel *chan = ctx->chan;
 	struct lttng_ust_shm_handle *handle = ctx->handle;
@@ -182,6 +185,7 @@ int lib_ring_buffer_reserve(const struct lttng_ust_lib_ring_buffer_config *confi
 	if (caa_unlikely(v_cmpxchg(config, &ctx->buf->offset, o_old, o_end)
 		     != o_old))
 		goto slow_path;
+	//TODO rseq_finish.
 
 	/*
 	 * Atomically update last_tsc. This update races against concurrent
@@ -263,6 +267,7 @@ void lib_ring_buffer_commit(const struct lttng_ust_lib_ring_buffer_config *confi
 	 */
 	cmm_smp_wmb();
 
+	//TODO: split scheme.
 	v_add(config, ctx->slot_size, &shmp_index(handle, buf->commit_hot, endidx)->cc);
 
 	/*
@@ -291,6 +296,7 @@ void lib_ring_buffer_commit(const struct lttng_ust_lib_ring_buffer_config *confi
 	 * Update used size at each commit. It's needed only for extracting
 	 * ring_buffer buffers from vmcore, after crash.
 	 */
+	//TODO: split scheme.
 	lib_ring_buffer_write_commit_counter(config, buf, chan, endidx,
 			offset_end, commit_count, handle);
 }

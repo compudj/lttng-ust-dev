@@ -26,6 +26,7 @@
 #include "clock.h"
 #include "lttng-tracer.h"
 #include "../libringbuffer/frontend_types.h"
+#include <lttng/rseq.h>
 
 #define LTTNG_COMPACT_EVENT_BITS       5
 #define LTTNG_COMPACT_TSC_BITS         27
@@ -69,6 +70,7 @@ struct packet_header {
 	} ctx;
 };
 
+static struct rseq_lock rb_client_rseq_lock;
 
 static inline uint64_t lib_ring_buffer_clock_read(struct channel *chan)
 {
@@ -695,8 +697,11 @@ int lttng_event_reserve(struct lttng_ust_lib_ring_buffer_ctx *ctx,
 {
 	struct lttng_channel *lttng_chan = channel_get_private(ctx->chan);
 	int ret, cpu;
+	struct rseq_state start_value;
+	struct lttng_stack_ctx *lttng_ctx = ctx->priv2;
 
-	cpu = lib_ring_buffer_get_cpu(&client_config);
+	start_value = rseq_start(&rb_client_rseq_lock);
+	cpu = lib_ring_buffer_get_cpu(&client_config, start_value);
 	if (cpu < 0)
 		return -EPERM;
 	ctx->cpu = cpu;
@@ -714,10 +719,11 @@ int lttng_event_reserve(struct lttng_ust_lib_ring_buffer_ctx *ctx,
 		WARN_ON_ONCE(1);
 	}
 
-	ret = lib_ring_buffer_reserve(&client_config, ctx);
+	ret = lib_ring_buffer_reserve(&client_config, ctx, start_value);
 	if (ret)
-		goto put;
+		goto put;	//TODO handle fallback
 	lttng_write_event_header(&client_config, ctx, event_id);
+	*lttng_ctx->rseq_state = start_value;
 	return 0;
 put:
 	lib_ring_buffer_put_cpu(&client_config);
@@ -814,6 +820,7 @@ void RING_BUFFER_MODE_TEMPLATE_INIT(void)
 {
 	DBG("LTT : ltt ring buffer client \"%s\" init\n",
 		"relay-" RING_BUFFER_MODE_TEMPLATE_STRING "-mmap");
+	rseq_init_lock(&rb_client_rseq_lock);
 	lttng_transport_register(&lttng_relay_transport);
 }
 
@@ -821,5 +828,6 @@ void RING_BUFFER_MODE_TEMPLATE_EXIT(void)
 {
 	DBG("LTT : ltt ring buffer client \"%s\" exit\n",
 		"relay-" RING_BUFFER_MODE_TEMPLATE_STRING "-mmap");
+	rseq_destroy_lock(&rb_client_rseq_lock);
 	lttng_transport_unregister(&lttng_relay_transport);
 }
