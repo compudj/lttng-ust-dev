@@ -274,7 +274,9 @@ void lib_ring_buffer_commit(const struct lttng_ust_lib_ring_buffer_config *confi
 	cmm_smp_wmb();
 
 	//TODO: split scheme.
-	v_add(config, ctx->slot_size, &shmp_index(handle, buf->commit_hot, endidx)->cc);
+	//XXX TEST
+	//v_add(config, ctx->slot_size, &shmp_index(handle, buf->commit_hot, endidx)->cc);
+	shmp_index(handle, buf->commit_hot, endidx)->cc.a += ctx->slot_size;
 
 	/*
 	 * commit count read can race with concurrent OOO commit count updates.
