@@ -204,7 +204,9 @@ void subbuffer_count_record(const struct lttng_ust_lib_ring_buffer_config *confi
 	unsigned long sb_bindex;
 
 	sb_bindex = subbuffer_id_get_index(config, shmp_index(handle, bufb->buf_wsb, idx)->id);
-	v_inc(config, &shmp(handle, shmp_index(handle, bufb->array, sb_bindex)->shmp)->records_commit);
+	//TODO: test
+	//v_inc(config, &shmp(handle, shmp_index(handle, bufb->array, sb_bindex)->shmp)->records_commit);
+	shmp(handle, shmp_index(handle, bufb->array, sb_bindex)->shmp)->records_commit.a += 1;
 }
 
 /*
