@@ -17,6 +17,7 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301 USA
  */
 
+#define _LGPL_SOURCE
 #include <stdio.h>
 #include <unistd.h>
 #include <sys/mman.h>
@@ -93,10 +94,9 @@ int main(int argc, char **argv)
 	sleep(delay);
 
 	fprintf(stderr, "Tracing... ");
-	for (i = 0; i < 1000000; i++) {
+	for (i = 0; i < 100000000; i++) {
 		netint = htonl(i);
-		tracepoint(ust_tests_hello, tptest, i, netint, values,
-			   text, strlen(text), dbl, flt, mybool);
+		tracepoint(ust_tests_hello, tptest, i);
 		//usleep(100000);
 	}
 	fprintf(stderr, " done.\n");
