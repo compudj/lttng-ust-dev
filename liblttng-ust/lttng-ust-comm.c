@@ -46,6 +46,7 @@
 #include <lttng/ust-ctl.h>
 #include <urcu/tls-compat.h>
 #include <ust-comm.h>
+#include <ust-fd.h>
 #include <usterr-signal-safe.h>
 #include <helper.h>
 #include "tracepoint-internal.h"
@@ -1221,17 +1222,28 @@ char *get_map_shm(struct sock_info *sock_info)
 		goto error;
 	}
 
+	lttng_ust_lock_fd_tracker();
 	wait_shm_fd = get_wait_shm(sock_info, page_size);
 	if (wait_shm_fd < 0) {
+		lttng_ust_unlock_fd_tracker();
 		goto error;
 	}
+	lttng_ust_add_fd_to_tracker(wait_shm_fd);
+	lttng_ust_unlock_fd_tracker();
+
 	wait_shm_mmap = mmap(NULL, page_size, PROT_READ,
 		  MAP_SHARED, wait_shm_fd, 0);
+
 	/* close shm fd immediately after taking the mmap reference */
+	lttng_ust_lock_fd_tracker();
 	ret = close(wait_shm_fd);
-	if (ret) {
+	if (!ret) {
+		lttng_ust_delete_fd_from_tracker(wait_shm_fd);
+	} else {
 		PERROR("Error closing fd");
 	}
+	lttng_ust_unlock_fd_tracker();
+
 	if (wait_shm_mmap == MAP_FAILED) {
 		DBG("mmap error (can be caused by race with sessiond). Fallback to poll mode.");
 		goto error;
@@ -1340,6 +1352,7 @@ restart:
 	}
 
 	if (sock_info->socket != -1) {
+		/* FD tracker is updated by ustcomm_close_unix_sock() */
 		ret = ustcomm_close_unix_sock(sock_info->socket);
 		if (ret) {
 			ERR("Error closing %s ust cmd socket",
@@ -1348,12 +1361,17 @@ restart:
 		sock_info->socket = -1;
 	}
 	if (sock_info->notify_socket != -1) {
+		/* FD tracker is updated by ustcomm_close_unix_sock() */
 		ret = ustcomm_close_unix_sock(sock_info->notify_socket);
 		if (ret) {
 			ERR("Error closing %s ust notify socket",
 				sock_info->name);
 		}
 		sock_info->notify_socket = -1;
+	}
+
+	if (ust_lock()) {
+		goto quit;
 	}
 
 	/*
@@ -1364,15 +1382,13 @@ restart:
 	 * first connect registration message.
 	 */
 	/* Connect cmd socket */
+	lttng_ust_lock_fd_tracker();
 	ret = ustcomm_connect_unix_sock(sock_info->sock_path,
 		get_connect_sock_timeout());
 	if (ret < 0) {
+		lttng_ust_unlock_fd_tracker();
 		DBG("Info: sessiond not accepting connections to %s apps socket", sock_info->name);
 		prev_connect_failed = 1;
-
-		if (ust_lock()) {
-			goto quit;
-		}
 
 		/*
 		 * If we cannot find the sessiond daemon, don't delay
@@ -1383,8 +1399,16 @@ restart:
 		ust_unlock();
 		goto restart;
 	}
+	lttng_ust_add_fd_to_tracker(ret);
+	lttng_ust_unlock_fd_tracker();
 	sock_info->socket = ret;
 
+	ust_unlock();
+	/*
+	 * Unlock/relock ust lock because connect is blocking (with
+	 * timeout). Don't delay constructors on the ust lock for too
+	 * long.
+	 */
 	if (ust_lock()) {
 		goto quit;
 	}
@@ -1419,17 +1443,23 @@ restart:
 	}
 
 	ust_unlock();
+	/*
+	 * Unlock/relock ust lock because connect is blocking (with
+	 * timeout). Don't delay constructors on the ust lock for too
+	 * long.
+	 */
+	if (ust_lock()) {
+		goto quit;
+	}
 
 	/* Connect notify socket */
+	lttng_ust_lock_fd_tracker();
 	ret = ustcomm_connect_unix_sock(sock_info->sock_path,
 		get_connect_sock_timeout());
 	if (ret < 0) {
+		lttng_ust_unlock_fd_tracker();
 		DBG("Info: sessiond not accepting connections to %s apps socket", sock_info->name);
 		prev_connect_failed = 1;
-
-		if (ust_lock()) {
-			goto quit;
-		}
 
 		/*
 		 * If we cannot find the sessiond daemon, don't delay
@@ -1440,7 +1470,19 @@ restart:
 		ust_unlock();
 		goto restart;
 	}
+	lttng_ust_add_fd_to_tracker(ret);
+	lttng_ust_unlock_fd_tracker();
 	sock_info->notify_socket = ret;
+
+	ust_unlock();
+	/*
+	 * Unlock/relock ust lock because connect is blocking (with
+	 * timeout). Don't delay constructors on the ust lock for too
+	 * long.
+	 */
+	if (ust_lock()) {
+		goto quit;
+	}
 
 	timeout = get_notify_sock_timeout();
 	if (timeout >= 0) {
@@ -1462,10 +1504,6 @@ restart:
 		}
 	} else if (timeout < -1) {
 		WARN("Unsupported timeout value %ld", timeout);
-	}
-
-	if (ust_lock()) {
-		goto quit;
 	}
 
 	ret = register_to_sessiond(sock_info->notify_socket,
@@ -1602,6 +1640,7 @@ void __attribute__((constructor)) lttng_ust_init(void)
 	 */
 	init_usterr();
 	init_tracepoint();
+	lttng_ust_init_fd_tracker();
 	lttng_ust_clock_init();
 	lttng_ust_getcpu_init();
 	lttng_ust_statedump_init();
