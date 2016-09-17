@@ -11,7 +11,8 @@ libringbuffer_la_SOURCES = \
 	api.h \
 	backend.h backend_internal.h backend_types.h \
 	frontend_api.h frontend.h frontend_internal.h frontend_types.h \
-	nohz.h vatomic.h tlsfixup.h
+	nohz.h vatomic.h tlsfixup.h \
+	rseq.c rseq.h rseq-x86.h rseq-arm.h rseq-ppc.h
 
 libringbuffer_la_LIBADD = \
 	-lpthread \
