@@ -24,25 +24,6 @@
 
 #ifdef __x86_64__
 
-#define smp_mb()	__asm__ __volatile__ ("mfence" : : : "memory")
-#define smp_rmb()	barrier()
-#define smp_wmb()	barrier()
-
-#define smp_load_acquire(p)						\
-__extension__ ({							\
-	__typeof(*p) ____p1 = READ_ONCE(*p);				\
-	barrier();							\
-	____p1;								\
-})
-
-#define smp_acquire__after_ctrl_dep()	smp_rmb()
-
-#define smp_store_release(p, v)						\
-do {									\
-	barrier();							\
-	WRITE_ONCE(*p, v);						\
-} while (0)
-
 #define has_fast_acquire_release()	1
 #define has_single_copy_load_64()	1
 
@@ -158,32 +139,6 @@ do { \
 		"movq %[rseq_scratch0], %[to_write_memcpy]\n\t"
 
 #elif __i386__
-
-/*
- * Support older 32-bit architectures that do not implement fence
- * instructions.
- */
-#define smp_mb()	\
-	__asm__ __volatile__ ("lock; addl $0,0(%%esp)" : : : "memory")
-#define smp_rmb()	\
-	__asm__ __volatile__ ("lock; addl $0,0(%%esp)" : : : "memory")
-#define smp_wmb()	\
-	__asm__ __volatile__ ("lock; addl $0,0(%%esp)" : : : "memory")
-
-#define smp_load_acquire(p)						\
-__extension__ ({							\
-	__typeof(*p) ____p1 = READ_ONCE(*p);				\
-	smp_mb();							\
-	____p1;								\
-})
-
-#define smp_acquire__after_ctrl_dep()	smp_rmb()
-
-#define smp_store_release(p, v)						\
-do {									\
-	smp_mb();							\
-	WRITE_ONCE(*p, v);						\
-} while (0)
 
 #define has_fast_acquire_release()	0
 #define has_single_copy_load_64()	0

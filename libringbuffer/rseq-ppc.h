@@ -23,26 +23,6 @@
  * SOFTWARE.
  */
 
-#define smp_mb()	__asm__ __volatile__ ("sync" : : : "memory")
-#define smp_lwsync()	__asm__ __volatile__ ("lwsync" : : : "memory")
-#define smp_rmb()	smp_lwsync()
-#define smp_wmb()	smp_lwsync()
-
-#define smp_load_acquire(p)						\
-__extension__ ({							\
-	__typeof(*p) ____p1 = READ_ONCE(*p);				\
-	smp_lwsync();							\
-	____p1;								\
-})
-
-#define smp_acquire__after_ctrl_dep()	smp_lwsync()
-
-#define smp_store_release(p, v)						\
-do {									\
-	smp_lwsync();							\
-	WRITE_ONCE(*p, v);						\
-} while (0)
-
 #define has_fast_acquire_release()	0
 
 #ifdef __PPC64__
