@@ -31,6 +31,11 @@ __attribute__((weak)) __thread volatile struct rseq __rseq_abi = {
 	.u.e.cpu_id = -1,
 };
 
+/* Own state, not shared with other libs. */
+static __thread int rseq_registered;
+
+static pthread_key_t rseq_key;
+
 static int sys_rseq(volatile struct rseq *rseq_abi, int flags)
 {
 	return syscall(__NR_rseq, rseq_abi, flags);
@@ -56,29 +61,82 @@ static void signal_restore(sigset_t oldset)
 		abort();
 }
 
-int rseq_register_current_thread(void)
-{
-	int rc;
-
-	rc = sys_rseq(&__rseq_abi, 0);
-	if (rc) {
-		fprintf(stderr, "Error: sys_rseq(...) failed(%d): %s\n",
-			errno, strerror(errno));
-		return -1;
-	}
-	assert(rseq_current_cpu() >= 0);
-	return 0;
-}
-
 int rseq_unregister_current_thread(void)
 {
-	int rc;
+	sigset_t oldset;
+	int rc, ret = 0;
 
-	rc = sys_rseq(NULL, 0);
-	if (rc) {
-		fprintf(stderr, "Error: sys_rseq(...) failed(%d): %s\n",
-			errno, strerror(errno));
-		return -1;
+	signal_off_save(&oldset);
+	if (rseq_registered) {
+		rc = sys_rseq(NULL, 0);
+		if (rc) {
+			fprintf(stderr, "Error: sys_rseq(...) failed(%d): %s\n",
+				errno, strerror(errno));
+			ret = -1;
+			goto end;
+		}
+		rseq_registered = 0;
 	}
-	return 0;
+end:
+	signal_restore(oldset);
+	return ret;
+}
+
+static void destroy_rseq_key(void *key)
+{
+	if (rseq_unregister_current_thread())
+		abort();
+}
+
+int rseq_register_current_thread(void)
+{
+	sigset_t oldset;
+	int rc, ret = 0;
+
+	signal_off_save(&oldset);
+	if (caa_likely(!rseq_registered)) {
+		rc = sys_rseq(&__rseq_abi, 0);
+		if (rc) {
+			fprintf(stderr, "Error: sys_rseq(...) failed(%d): %s\n",
+				errno, strerror(errno));
+			__rseq_abi.u.e.cpu_id = -2;
+			ret = -1;
+			goto end;
+		}
+		rseq_registered = 1;
+		assert(rseq_current_cpu_raw() >= 0);
+		/*
+		 * Register destroy notifier. Pointer needs to
+		 * be non-NULL.
+		 */
+		if (pthread_setspecific(rseq_key, (void *)0x1))
+			abort();
+	}
+end:
+	signal_restore(oldset);
+	return ret;
+}
+
+void rseq_init(void)
+{
+	int ret;
+
+	ret = pthread_key_create(&rseq_key, destroy_rseq_key);
+	if (ret) {
+		errno = -ret;
+		perror("pthread_key_create");
+		abort();
+	}
+}
+
+void rseq_destroy(void)
+{
+	int ret;
+
+	ret = pthread_key_delete(rseq_key);
+	if (ret) {
+		errno = -ret;
+		perror("pthread_key_delete");
+		abort();
+	}
 }

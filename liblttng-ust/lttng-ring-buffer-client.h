@@ -695,13 +695,28 @@ int lttng_event_reserve(struct lttng_ust_lib_ring_buffer_ctx *ctx,
 		      uint32_t event_id)
 {
 	struct lttng_channel *lttng_chan = channel_get_private(ctx->chan);
+	struct rseq_state rseq_state;
 	int ret, cpu;
 
-	//TODO register (lazy)
-	cpu = lib_ring_buffer_get_cpu(&client_config);
-	if (cpu < 0)
+	if (lib_ring_buffer_begin(&client_config))
 		return -EPERM;
-	ctx->cpu = cpu;
+retry:
+	rseq_state = rseq_start();
+	if (caa_unlikely(rseq_cpu_at_start(rseq_state) < 0)) {
+		if (caa_unlikely(rseq_cpu_at_start(rseq_state) == -1)) {
+			if (!rseq_register_current_thread())
+				goto retry;
+		}
+		/* rseq is unavailable. */
+		cpu = lib_ring_buffer_get_cpu(&client_config);
+		if (caa_unlikely(cpu < 0)) {
+			ret = -EPERM;
+			goto end;
+		}
+		ctx->cpu = cpu;
+	} else {
+		ctx->cpu = rseq_cpu_at_start(rseq_state);
+	}
 
 	switch (lttng_chan->header_type) {
 	case 1:	/* compact */
@@ -718,11 +733,11 @@ int lttng_event_reserve(struct lttng_ust_lib_ring_buffer_ctx *ctx,
 
 	ret = lib_ring_buffer_reserve(&client_config, ctx);
 	if (ret)
-		goto put;
+		goto end;
 	lttng_write_event_header(&client_config, ctx, event_id);
 	return 0;
-put:
-	lib_ring_buffer_put_cpu(&client_config);
+end:
+	lib_ring_buffer_end(&client_config);
 	return ret;
 }
 
@@ -730,7 +745,7 @@ static
 void lttng_event_commit(struct lttng_ust_lib_ring_buffer_ctx *ctx)
 {
 	lib_ring_buffer_commit(&client_config, ctx);
-	lib_ring_buffer_put_cpu(&client_config);
+	lib_ring_buffer_end(&client_config);
 }
 
 static

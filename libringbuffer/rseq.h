@@ -71,11 +71,11 @@
 extern __thread volatile struct rseq __rseq_abi;
 
 #if defined(__x86_64__) || defined(__i386__)
-#include <rseq-x86.h>
+#include "rseq-x86.h"
 #elif defined(__ARMEL__)
-#include <rseq-arm.h>
+#include "rseq-arm.h"
 #elif defined(__PPC__)
-#include <rseq-ppc.h>
+#include "rseq-ppc.h"
 #else
 #error unsupported target
 #endif
@@ -99,10 +99,8 @@ int rseq_register_current_thread(void);
  */
 int rseq_unregister_current_thread(void);
 
-/*
- * Restartable sequence fallback for reading the current CPU number.
- */
-int rseq_fallback_current_cpu(void);
+void rseq_init(void);
+void rseq_destroy(void);
 
 static inline int32_t rseq_cpu_at_start(struct rseq_state start_value)
 {
@@ -112,16 +110,6 @@ static inline int32_t rseq_cpu_at_start(struct rseq_state start_value)
 static inline int32_t rseq_current_cpu_raw(void)
 {
 	return CMM_LOAD_SHARED(__rseq_abi.u.e.cpu_id);
-}
-
-static inline int32_t rseq_current_cpu(void)
-{
-	int32_t cpu;
-
-	cpu = rseq_current_cpu_raw();
-	if (caa_unlikely(cpu < 0))
-		cpu = rseq_fallback_current_cpu();
-	return cpu;
 }
 
 static inline __attribute__((always_inline))
