@@ -34,6 +34,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <sched.h>
+#include <unistd.h>
 #include <urcu/compiler.h>
 #include <urcu/system.h>
 #include <urcu/arch.h>
@@ -72,10 +73,19 @@ extern __thread volatile struct rseq __rseq_abi;
 
 #if defined(__x86_64__) || defined(__i386__)
 #include "rseq-x86.h"
+#ifdef __NR_rseq
+#define ARCH_HAS_RSEQ	1
+#endif
 #elif defined(__ARMEL__)
 #include "rseq-arm.h"
+#ifdef __NR_rseq
+#define ARCH_HAS_RSEQ	1
+#endif
 #elif defined(__PPC__)
 #include "rseq-ppc.h"
+#ifdef __NR_rseq
+#define ARCH_HAS_RSEQ	1
+#endif
 #else
 #error unsupported target
 #endif
@@ -112,6 +122,7 @@ static inline int32_t rseq_current_cpu_raw(void)
 	return CMM_LOAD_SHARED(__rseq_abi.u.e.cpu_id);
 }
 
+#ifdef ARCH_HAS_RSEQ
 static inline __attribute__((always_inline))
 struct rseq_state rseq_start(void)
 {
@@ -149,6 +160,16 @@ struct rseq_state rseq_start(void)
 	cmm_barrier();
 	return result;
 }
+#else
+static inline __attribute__((always_inline))
+struct rseq_state rseq_start(void)
+{
+	struct rseq_state result = {
+		.cpu_id = -2,
+	};
+	return result;
+}
+#endif
 
 enum rseq_finish_type {
 	RSEQ_FINISH_SINGLE,
@@ -164,6 +185,7 @@ enum rseq_finish_type {
  * p_final and to_write_final are used for the final write. If this
  * write takes place, the rseq_finish2 is guaranteed to succeed.
  */
+#ifdef ARCH_HAS_RSEQ
 static inline __attribute__((always_inline))
 bool __rseq_finish(intptr_t *p_spec, intptr_t to_write_spec,
 		void *p_memcpy, void *to_write_memcpy, size_t len_memcpy,
@@ -235,6 +257,17 @@ failure:
 	RSEQ_INJECT_FAILED
 	return false;
 }
+#else
+static inline __attribute__((always_inline))
+bool __rseq_finish(intptr_t *p_spec, intptr_t to_write_spec,
+		void *p_memcpy, void *to_write_memcpy, size_t len_memcpy,
+		intptr_t *p_final, intptr_t to_write_final,
+		struct rseq_state start_value,
+		enum rseq_finish_type type, bool release)
+{
+	return false;
+}
+#endif
 
 static inline __attribute__((always_inline))
 bool rseq_finish(intptr_t *p, intptr_t to_write,

@@ -36,10 +36,19 @@ static __thread int rseq_registered;
 
 static pthread_key_t rseq_key;
 
+
+#ifdef __NR_rseq
 static int sys_rseq(volatile struct rseq *rseq_abi, int flags)
 {
 	return syscall(__NR_rseq, rseq_abi, flags);
 }
+#else
+static int sys_rseq(volatile struct rseq *rseq_abi, int flags)
+{
+	errno = ENOSYS;
+	return -1;
+}
+#endif
 
 static void signal_off_save(sigset_t *oldset)
 {
