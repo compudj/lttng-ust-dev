@@ -26,6 +26,7 @@
 #include "clock.h"
 #include "lttng-tracer.h"
 #include "../libringbuffer/frontend_types.h"
+#include "../libringbuffer/rseq.h"
 
 #define LTTNG_COMPACT_EVENT_BITS       5
 #define LTTNG_COMPACT_TSC_BITS         27
@@ -696,6 +697,7 @@ int lttng_event_reserve(struct lttng_ust_lib_ring_buffer_ctx *ctx,
 	struct lttng_channel *lttng_chan = channel_get_private(ctx->chan);
 	int ret, cpu;
 
+	//TODO register (lazy)
 	cpu = lib_ring_buffer_get_cpu(&client_config);
 	if (cpu < 0)
 		return -EPERM;

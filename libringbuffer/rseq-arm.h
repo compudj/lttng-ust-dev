@@ -22,25 +22,6 @@
  * SOFTWARE.
  */
 
-#define smp_mb()	__asm__ __volatile__ ("dmb" : : : "memory")
-#define smp_rmb()	__asm__ __volatile__ ("dmb" : : : "memory")
-#define smp_wmb()	__asm__ __volatile__ ("dmb" : : : "memory")
-
-#define smp_load_acquire(p)						\
-__extension__ ({							\
-	__typeof(*p) ____p1 = READ_ONCE(*p);				\
-	smp_mb();							\
-	____p1;								\
-})
-
-#define smp_acquire__after_ctrl_dep()	smp_rmb()
-
-#define smp_store_release(p, v)						\
-do {									\
-	smp_mb();							\
-	WRITE_ONCE(*p, v);						\
-} while (0)
-
 #define has_fast_acquire_release()	0
 #define has_single_copy_load_64()	1
 
