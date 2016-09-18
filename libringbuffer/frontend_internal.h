@@ -249,6 +249,7 @@ int lib_ring_buffer_reserve_committed(const struct lttng_ust_lib_ring_buffer_con
 		offset = v_read(config, &buf->offset);
 		idx = subbuf_index(offset, chan);
 		commit_count = v_read(config, &shmp_index(handle, buf->commit_hot, idx)->cc);
+		commit_count += shmp_index(handle, buf->commit_hot, idx)->cc_rseq;
 	} while (offset != v_read(config, &buf->offset));
 
 	return ((buf_trunc(offset, chan) >> chan->backend.num_subbuf_order)

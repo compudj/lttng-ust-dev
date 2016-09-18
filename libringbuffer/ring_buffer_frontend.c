@@ -176,6 +176,7 @@ void lib_ring_buffer_reset(struct lttng_ust_lib_ring_buffer *buf,
 	v_set(config, &buf->offset, 0);
 	for (i = 0; i < chan->backend.num_subbuf; i++) {
 		v_set(config, &shmp_index(handle, buf->commit_hot, i)->cc, 0);
+		shmp_index(handle, buf->commit_hot, i)->cc_rseq = 0;
 		v_set(config, &shmp_index(handle, buf->commit_hot, i)->seq, 0);
 		v_set(config, &shmp_index(handle, buf->commit_cold, i)->cc_sb, 0);
 	}
@@ -1512,6 +1513,7 @@ void lib_ring_buffer_print_subbuffer_errors(struct lttng_ust_lib_ring_buffer *bu
 
 	cons_idx = subbuf_index(cons_offset, chan);
 	commit_count = v_read(config, &shmp_index(handle, buf->commit_hot, cons_idx)->cc);
+	commit_count += shmp_index(handle, buf->commit_hot, cons_idx)->cc_rseq;
 	commit_count_sb = v_read(config, &shmp_index(handle, buf->commit_cold, cons_idx)->cc_sb);
 
 	if (subbuf_offset(commit_count, chan) != 0)
@@ -1620,6 +1622,7 @@ void lib_ring_buffer_switch_old_start(struct lttng_ust_lib_ring_buffer *buf,
 	v_add(config, config->cb.subbuffer_header_size(),
 	      &shmp_index(handle, buf->commit_hot, oldidx)->cc);
 	commit_count = v_read(config, &shmp_index(handle, buf->commit_hot, oldidx)->cc);
+	commit_count += shmp_index(handle, buf->commit_hot, oldidx)->cc_rseq;
 	/* Check if the written buffer has to be delivered */
 	lib_ring_buffer_check_deliver(config, buf, chan, offsets->old,
 				      commit_count, oldidx, handle, tsc);
@@ -1659,6 +1662,7 @@ void lib_ring_buffer_switch_old_end(struct lttng_ust_lib_ring_buffer *buf,
 	cmm_smp_wmb();
 	v_add(config, padding_size, &shmp_index(handle, buf->commit_hot, oldidx)->cc);
 	commit_count = v_read(config, &shmp_index(handle, buf->commit_hot, oldidx)->cc);
+	commit_count += shmp_index(handle, buf->commit_hot, oldidx)->cc_rseq;
 	lib_ring_buffer_check_deliver(config, buf, chan, offsets->old - 1,
 				      commit_count, oldidx, handle, tsc);
 	lib_ring_buffer_write_commit_counter(config, buf, chan, oldidx,
@@ -1693,6 +1697,7 @@ void lib_ring_buffer_switch_new_start(struct lttng_ust_lib_ring_buffer *buf,
 	v_add(config, config->cb.subbuffer_header_size(),
 	      &shmp_index(handle, buf->commit_hot, beginidx)->cc);
 	commit_count = v_read(config, &shmp_index(handle, buf->commit_hot, beginidx)->cc);
+	commit_count += shmp_index(handle, buf->commit_hot, beginidx)->cc_rseq;
 	/* Check if the written buffer has to be delivered */
 	lib_ring_buffer_check_deliver(config, buf, chan, offsets->begin,
 				      commit_count, beginidx, handle, tsc);
