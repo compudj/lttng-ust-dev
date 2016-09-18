@@ -73,7 +73,7 @@ do { \
 		_teardown \
 		"ldr pc, %l[failure]\n\t" \
 		"4:\n\t" \
-		: /* no outputs */ \
+		: /* gcc asm goto does not allow outputs */ \
 		: [start_event_counter]"r"((_start_value).event_counter), \
 		  [current_event_counter]"m"((_start_value).rseqp->u.e.event_counter), \
 		  [rseq_cs]"r"(&(_start_value).rseqp->rseq_cs) \

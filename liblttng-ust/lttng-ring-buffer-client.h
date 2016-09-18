@@ -695,7 +695,7 @@ int lttng_event_reserve(struct lttng_ust_lib_ring_buffer_ctx *ctx,
 		      uint32_t event_id)
 {
 	struct lttng_channel *lttng_chan = channel_get_private(ctx->chan);
-	struct rseq_state rseq_state;
+	struct lttng_rseq_state rseq_state;
 	int ret, cpu;
 
 	if (lib_ring_buffer_begin(&client_config))
@@ -713,10 +713,10 @@ retry:
 			ret = -EPERM;
 			goto end;
 		}
-		ctx->cpu = cpu;
 	} else {
-		ctx->cpu = rseq_cpu_at_start(rseq_state);
+		cpu = rseq_cpu_at_start(rseq_state);
 	}
+	ctx->cpu = cpu;
 
 	switch (lttng_chan->header_type) {
 	case 1:	/* compact */

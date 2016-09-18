@@ -216,6 +216,13 @@ struct lttng_ust_lib_ring_buffer_config {
 	char padding[LTTNG_UST_RING_BUFFER_CONFIG_PADDING];
 };
 
+/* State returned by rseq_start, passed as argument to rseq_finish. */
+struct lttng_rseq_state {
+	volatile struct rseq *rseqp;
+	int32_t cpu_id;		/* cpu_id at start. */
+	uint32_t event_counter;	/* event_counter at start. */
+};
+
 /*
  * ring buffer context
  *
