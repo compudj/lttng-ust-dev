@@ -700,6 +700,7 @@ int lttng_event_reserve(struct lttng_ust_lib_ring_buffer_ctx *ctx,
 
 	if (lib_ring_buffer_begin(&client_config))
 		return -EPERM;
+
 retry:
 	rseq_state = rseq_start();
 	if (caa_unlikely(rseq_cpu_at_start(rseq_state) < 0)) {
@@ -750,6 +751,14 @@ fallback:
 			goto fallback;
 		}
 		goto end;
+	}
+	if (caa_likely(ctx->ctx_len
+			>= sizeof(struct lttng_ust_lib_ring_buffer_ctx))) {
+		if (lib_ring_buffer_backend_get_pages(&client_config, ctx,
+				&ctx->backend_pages)) {
+			ret = -EPERM;
+			goto end;
+		}
 	}
 	lttng_write_event_header(&client_config, ctx, event_id);
 

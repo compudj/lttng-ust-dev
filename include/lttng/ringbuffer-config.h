@@ -279,6 +279,7 @@ struct lttng_ust_lib_ring_buffer_ctx {
 	 * following fields may be used.
 	 */
 	struct lttng_rseq_state rseq_state;
+	struct lttng_ust_lib_ring_buffer_backend_pages *backend_pages;
 };
 
 /**

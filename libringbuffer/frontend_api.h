@@ -168,15 +168,6 @@ int lib_ring_buffer_reserve(const struct lttng_ust_lib_ring_buffer_config *confi
 	size_t before_hdr_pad = 0;
 	struct lttng_rseq_state rseq_state;
 
-	if (caa_likely(ctx->ctx_len
-			>= sizeof(struct lttng_ust_lib_ring_buffer_ctx))) {
-		rseq_state = ctx->rseq_state;
-	} else {
-		rseq_state.cpu_id = -2;
-		rseq_state.event_counter = 0;
-		rseq_state.rseqp = NULL;
-	}
-
 	if (caa_unlikely(uatomic_read(&chan->record_disabled)))
 		return -EPERM;
 
@@ -189,6 +180,15 @@ int lib_ring_buffer_reserve(const struct lttng_ust_lib_ring_buffer_config *confi
 	if (caa_unlikely(uatomic_read(&buf->record_disabled)))
 		return -EPERM;
 	ctx->buf = buf;
+
+	if (caa_likely(ctx->ctx_len
+			>= sizeof(struct lttng_ust_lib_ring_buffer_ctx))) {
+		rseq_state = ctx->rseq_state;
+	} else {
+		rseq_state.cpu_id = -2;
+		rseq_state.event_counter = 0;
+		rseq_state.rseqp = NULL;
+	}
 
 	/*
 	 * Perform retryable operations.
@@ -212,6 +212,7 @@ int lib_ring_buffer_reserve(const struct lttng_ust_lib_ring_buffer_config *confi
 				rseq_state, RSEQ_FINISH_SINGLE, false)))
 			return -EAGAIN;
 	}
+
 	/*
 	 * Atomically update last_tsc. This update races against concurrent
 	 * atomic updates, but the race will always cause supplementary full TSC
