@@ -279,6 +279,8 @@ void lib_ring_buffer_commit(const struct lttng_ust_lib_ring_buffer_config *confi
 	unsigned long endidx = subbuf_index(offset_end - 1, chan);
 	unsigned long commit_count;
 	struct lttng_rseq_state rseq_state;
+	struct commit_counters_hot *cc_hot = shmp_index(handle,
+						buf->commit_hot, endidx);
 
 	if (caa_likely(ctx->ctx_len
 			>= sizeof(struct lttng_ust_lib_ring_buffer_ctx))) {
@@ -304,17 +306,14 @@ void lib_ring_buffer_commit(const struct lttng_ust_lib_ring_buffer_config *confi
 			&& rseq_state.cpu_id >= 0)) {
 		unsigned long newv;
 
-		newv = shmp_index(handle, buf->commit_hot, endidx)->cc_rseq
-				+ ctx->slot_size;
+		newv = cc_hot->cc_rseq + ctx->slot_size;
 		if (__rseq_finish(NULL, 0, NULL, NULL, 0,
-				(intptr_t *)&shmp_index(handle, buf->commit_hot,
-					endidx)->cc_rseq,
+				(intptr_t *)&cc_hot->cc_rseq,
 				(intptr_t) newv,
 				rseq_state, RSEQ_FINISH_SINGLE, false))
 			goto add_done;
 	}
-	v_add(config, ctx->slot_size,
-		&shmp_index(handle, buf->commit_hot, endidx)->cc);
+	v_add(config, ctx->slot_size, &cc_hot->cc);
 add_done:
 
 	/*
@@ -335,8 +334,8 @@ add_done:
 	 *   count reaches back the reserve offset for a specific sub-buffer,
 	 *   which is completely independent of the order.
 	 */
-	commit_count = v_read(config, &shmp_index(handle, buf->commit_hot, endidx)->cc);
-	commit_count += shmp_index(handle, buf->commit_hot, endidx)->cc_rseq;
+	commit_count = v_read(config, &cc_hot->cc);
+	commit_count += cc_hot->cc_rseq;
 
 	lib_ring_buffer_check_deliver(config, buf, chan, offset_end - 1,
 				      commit_count, endidx, handle, ctx->tsc);
@@ -344,8 +343,8 @@ add_done:
 	 * Update used size at each commit. It's needed only for extracting
 	 * ring_buffer buffers from vmcore, after crash.
 	 */
-	lib_ring_buffer_write_commit_counter(config, buf, chan, endidx,
-			offset_end, commit_count, handle);
+	lib_ring_buffer_write_commit_counter(config, buf, chan,
+			offset_end, commit_count, handle, cc_hot);
 }
 
 /**
