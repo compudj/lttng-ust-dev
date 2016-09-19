@@ -177,14 +177,14 @@ int lib_ring_buffer_reserve(const struct lttng_ust_lib_ring_buffer_config *confi
 		rseq_state.rseqp = NULL;
 	}
 
-	if (uatomic_read(&chan->record_disabled))
+	if (caa_unlikely(uatomic_read(&chan->record_disabled)))
 		return -EPERM;
 
 	if (config->alloc == RING_BUFFER_ALLOC_PER_CPU)
 		buf = shmp(handle, chan->backend.buf[ctx->cpu].shmp);
 	else
 		buf = shmp(handle, chan->backend.buf[0].shmp);
-	if (uatomic_read(&buf->record_disabled))
+	if (caa_unlikely(uatomic_read(&buf->record_disabled)))
 		return -EPERM;
 	ctx->buf = buf;
 
