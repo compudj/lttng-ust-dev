@@ -33,7 +33,6 @@
 #include "frontend.h"
 #include <urcu-bp.h>
 #include <urcu/compiler.h>
-#include "rseq.h"
 
 static inline
 int lib_ring_buffer_get_cpu(const struct lttng_ust_lib_ring_buffer_config *config)
@@ -267,21 +266,11 @@ void lib_ring_buffer_commit(const struct lttng_ust_lib_ring_buffer_config *confi
 	unsigned long offset_end = ctx->buf_offset;
 	unsigned long endidx = subbuf_index(offset_end - 1, chan);
 	unsigned long commit_count;
-	struct lttng_rseq_state rseq_state;
 	struct commit_counters_hot *cc_hot = shmp_index(handle,
 						buf->commit_hot, endidx);
 
 	if (caa_unlikely(!cc_hot))
 		return;
-
-	if (caa_likely(ctx->ctx_len
-			>= sizeof(struct lttng_ust_lib_ring_buffer_ctx))) {
-		rseq_state = ctx->rseq_state;
-	} else {
-		rseq_state.cpu_id = -2;
-		rseq_state.event_counter = 0;
-		rseq_state.rseqp = NULL;
-	}
 
 	/*
 	 * Must count record before incrementing the commit count.
@@ -294,19 +283,7 @@ void lib_ring_buffer_commit(const struct lttng_ust_lib_ring_buffer_config *confi
 	 */
 	cmm_smp_wmb();
 
-	if (caa_likely(config->sync == RING_BUFFER_SYNC_PER_CPU
-			&& rseq_state.cpu_id >= 0)) {
-		unsigned long newv;
-
-		newv = cc_hot->cc_rseq + ctx->slot_size;
-		if (__rseq_finish(NULL, 0, NULL, NULL, 0,
-				(intptr_t *)&cc_hot->cc_rseq,
-				(intptr_t) newv,
-				rseq_state, RSEQ_FINISH_SINGLE, false))
-			goto add_done;
-	}
 	v_add(config, ctx->slot_size, &cc_hot->cc);
-add_done:
 
 	/*
 	 * commit count read can race with concurrent OOO commit count updates.
@@ -327,7 +304,6 @@ add_done:
 	 *   which is completely independent of the order.
 	 */
 	commit_count = v_read(config, &cc_hot->cc);
-	commit_count += cc_hot->cc_rseq;
 
 	lib_ring_buffer_check_deliver(config, buf, chan, offset_end - 1,
 				      commit_count, endidx, handle, ctx->tsc);
