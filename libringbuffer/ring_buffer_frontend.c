@@ -74,7 +74,6 @@
 #include "shm.h"
 #include "tlsfixup.h"
 #include "../liblttng-ust/compat.h"	/* For ENODATA */
-#include "rseq.h"
 
 /* Print DBG() messages about events lost only every 1048576 hits */
 #define DBG_PRINT_NR_LOST	(1UL << 20)
@@ -2192,16 +2191,6 @@ int lib_ring_buffer_reserve_slow(struct lttng_ust_lib_ring_buffer_ctx *ctx)
 	struct lttng_ust_lib_ring_buffer *buf;
 	struct switch_offsets offsets;
 	int ret;
-	struct lttng_rseq_state rseq_state;
-
-	if (caa_likely(ctx->ctx_len
-			>= sizeof(struct lttng_ust_lib_ring_buffer_ctx))) {
-		rseq_state = ctx->rseq_state;
-	} else {
-		rseq_state.cpu_id = -2;
-		rseq_state.event_counter = 0;
-		rseq_state.rseqp = NULL;
-	}
 
 	if (config->alloc == RING_BUFFER_ALLOC_PER_CPU)
 		buf = shmp(handle, chan->backend.buf[ctx->cpu].shmp);
@@ -2213,30 +2202,14 @@ int lib_ring_buffer_reserve_slow(struct lttng_ust_lib_ring_buffer_ctx *ctx)
 
 	offsets.size = 0;
 
-	if (caa_unlikely(config->sync == RING_BUFFER_SYNC_GLOBAL
-			|| rseq_state.cpu_id < 0
-			|| uatomic_read(&chan->u.reserve_fallback_ref))) {
-		do {
-			ret = lib_ring_buffer_try_reserve_slow(buf, chan,
-					&offsets, ctx);
-			if (caa_unlikely(ret))
-				return ret;
-		} while (caa_unlikely(v_cmpxchg(config, &buf->offset,
-					offsets.old, offsets.end)
-				!= offsets.old));
-	} else {
-		ret = lib_ring_buffer_try_reserve_slow(buf, chan,
-				&offsets, ctx);
+	do {
+		ret = lib_ring_buffer_try_reserve_slow(buf, chan, &offsets,
+						       ctx);
 		if (caa_unlikely(ret))
 			return ret;
-		if (caa_unlikely(buf->offset.a != offsets.old))
-			return -EAGAIN;
-		if (caa_unlikely(!__rseq_finish(NULL, 0, NULL, NULL, 0,
-				(intptr_t *) &buf->offset.a,
-				(intptr_t) offsets.end,
-				rseq_state, RSEQ_FINISH_SINGLE, false)))
-			return -EAGAIN;
-	}
+	} while (caa_unlikely(v_cmpxchg(config, &buf->offset, offsets.old,
+				    offsets.end)
+			  != offsets.old));
 
 	/*
 	 * Atomically update last_tsc. This update races against concurrent
