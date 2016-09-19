@@ -44,7 +44,6 @@ union v_atomic {
 static inline
 long v_read(const struct lttng_ust_lib_ring_buffer_config *config, union v_atomic *v_a)
 {
-	assert(config->sync != RING_BUFFER_SYNC_PER_CPU);
 	return uatomic_read(&v_a->a);
 }
 
@@ -52,21 +51,18 @@ static inline
 void v_set(const struct lttng_ust_lib_ring_buffer_config *config, union v_atomic *v_a,
 	   long v)
 {
-	assert(config->sync != RING_BUFFER_SYNC_PER_CPU);
 	uatomic_set(&v_a->a, v);
 }
 
 static inline
 void v_add(const struct lttng_ust_lib_ring_buffer_config *config, long v, union v_atomic *v_a)
 {
-	assert(config->sync != RING_BUFFER_SYNC_PER_CPU);
 	uatomic_add(&v_a->a, v);
 }
 
 static inline
 void v_inc(const struct lttng_ust_lib_ring_buffer_config *config, union v_atomic *v_a)
 {
-	assert(config->sync != RING_BUFFER_SYNC_PER_CPU);
 	uatomic_inc(&v_a->a);
 }
 
@@ -83,7 +79,6 @@ static inline
 long v_cmpxchg(const struct lttng_ust_lib_ring_buffer_config *config, union v_atomic *v_a,
 	       long old, long _new)
 {
-	assert(config->sync != RING_BUFFER_SYNC_PER_CPU);
 	return uatomic_cmpxchg(&v_a->a, old, _new);
 }
 

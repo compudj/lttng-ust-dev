@@ -150,10 +150,11 @@ int lib_ring_buffer_try_reserve(const struct lttng_ust_lib_ring_buffer_config *c
  *
  * Return :
  *  0 on success.
- * -EAGAIN if channel is disabled.
+ * -EPERM if channel is disabled.
  * -ENOSPC if event size is too large for packet.
  * -ENOBUFS if there is currently not enough space in buffer for the event.
  * -EIO if data cannot be written into the buffer for any other reason.
+ * -EAGAIN reserve aborted, should be attempted again.
  */
 
 static inline
@@ -165,16 +166,26 @@ int lib_ring_buffer_reserve(const struct lttng_ust_lib_ring_buffer_config *confi
 	struct lttng_ust_lib_ring_buffer *buf;
 	unsigned long o_begin, o_end, o_old;
 	size_t before_hdr_pad = 0;
+	struct lttng_rseq_state rseq_state;
+
+	if (caa_likely(ctx->ctx_len
+			>= sizeof(struct lttng_ust_lib_ring_buffer_ctx))) {
+		rseq_state = ctx->rseq_state;
+	} else {
+		rseq_state.cpu_id = -2;
+		rseq_state.event_counter = 0;
+		rseq_state.rseqp = NULL;
+	}
 
 	if (uatomic_read(&chan->record_disabled))
-		return -EAGAIN;
+		return -EPERM;
 
 	if (config->alloc == RING_BUFFER_ALLOC_PER_CPU)
 		buf = shmp(handle, chan->backend.buf[ctx->cpu].shmp);
 	else
 		buf = shmp(handle, chan->backend.buf[0].shmp);
 	if (uatomic_read(&buf->record_disabled))
-		return -EAGAIN;
+		return -EPERM;
 	ctx->buf = buf;
 
 	/*
@@ -184,10 +195,21 @@ int lib_ring_buffer_reserve(const struct lttng_ust_lib_ring_buffer_config *confi
 						 &o_end, &o_old, &before_hdr_pad)))
 		goto slow_path;
 
-	if (caa_unlikely(v_cmpxchg(config, &ctx->buf->offset, o_old, o_end)
-		     != o_old))
-		goto slow_path;
-
+	if (caa_unlikely(config->sync == RING_BUFFER_SYNC_GLOBAL
+			|| rseq_state.cpu_id < 0
+			|| uatomic_read(&chan->u.reserve_fallback_ref))) {
+		if (caa_unlikely(v_cmpxchg(config, &ctx->buf->offset, o_old,
+				o_end) != o_old))
+			goto slow_path;
+	} else {
+		if (caa_unlikely(ctx->buf->offset.a != o_old))
+			return -EAGAIN;
+		if (caa_unlikely(!__rseq_finish(NULL, 0, NULL, NULL, 0,
+				(intptr_t *) &ctx->buf->offset.a,
+				(intptr_t) o_end,
+				rseq_state, RSEQ_FINISH_SINGLE, false)))
+			return -EAGAIN;
+	}
 	/*
 	 * Atomically update last_tsc. This update races against concurrent
 	 * atomic updates, but the race will always cause supplementary full TSC
@@ -263,6 +285,8 @@ void lib_ring_buffer_commit(const struct lttng_ust_lib_ring_buffer_config *confi
 		rseq_state = ctx->rseq_state;
 	} else {
 		rseq_state.cpu_id = -2;
+		rseq_state.event_counter = 0;
+		rseq_state.rseqp = NULL;
 	}
 
 	/*
@@ -276,7 +300,8 @@ void lib_ring_buffer_commit(const struct lttng_ust_lib_ring_buffer_config *confi
 	 */
 	cmm_smp_wmb();
 
-	if (caa_likely(rseq_state.cpu_id >= 0)) {
+	if (caa_likely(config->sync == RING_BUFFER_SYNC_PER_CPU
+			&& rseq_state.cpu_id >= 0)) {
 		unsigned long newv;
 
 		newv = shmp_index(handle, buf->commit_hot, endidx)->cc_rseq

@@ -637,7 +637,7 @@ static const struct lttng_ust_lib_ring_buffer_config client_config = {
 
 	.tsc_bits = LTTNG_COMPACT_TSC_BITS,
 	.alloc = RING_BUFFER_ALLOC_PER_CPU,
-	.sync = RING_BUFFER_SYNC_GLOBAL,
+	.sync = RING_BUFFER_SYNC_PER_CPU,
 	.mode = RING_BUFFER_MODE_TEMPLATE,
 	.backend = RING_BUFFER_PAGE,
 	.output = RING_BUFFER_MMAP,
@@ -696,7 +696,7 @@ int lttng_event_reserve(struct lttng_ust_lib_ring_buffer_ctx *ctx,
 {
 	struct lttng_channel *lttng_chan = channel_get_private(ctx->chan);
 	struct lttng_rseq_state rseq_state;
-	int ret, cpu;
+	int ret, cpu, fallback = 0;
 
 	if (lib_ring_buffer_begin(&client_config))
 		return -EPERM;
@@ -716,6 +716,7 @@ retry:
 	} else {
 		cpu = rseq_cpu_at_start(rseq_state);
 	}
+fallback:
 	ctx->cpu = cpu;
 
 	switch (lttng_chan->header_type) {
@@ -731,18 +732,35 @@ retry:
 		WARN_ON_ONCE(1);
 	}
 
-	ret = lib_ring_buffer_reserve(&client_config, ctx);
-	if (ret)
-		goto end;
-	lttng_write_event_header(&client_config, ctx, event_id);
-
 	if (caa_likely(ctx->ctx_len
 			>= sizeof(struct lttng_ust_lib_ring_buffer_ctx)))
 		ctx->rseq_state = rseq_state;
 
+	ret = lib_ring_buffer_reserve(&client_config, ctx);
+	if (ret) {
+		if (ret == -EAGAIN) {
+			assert(!fallback);
+			fallback = 1;
+			uatomic_inc(&lttng_chan->chan->u.reserve_fallback_ref);
+			cpu = lib_ring_buffer_get_cpu(&client_config);
+			if (caa_unlikely(cpu < 0)) {
+				ret = -EPERM;
+				goto end;
+			}
+			goto fallback;
+		}
+		goto end;
+	}
+	lttng_write_event_header(&client_config, ctx, event_id);
+
+	if (caa_unlikely(fallback))
+		uatomic_dec(&lttng_chan->chan->u.reserve_fallback_ref);
+
 	return 0;
 end:
 	lib_ring_buffer_end(&client_config);
+	if (fallback)
+		uatomic_dec(&lttng_chan->chan->u.reserve_fallback_ref);
 	return ret;
 }
 
