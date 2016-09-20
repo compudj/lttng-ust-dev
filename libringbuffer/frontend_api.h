@@ -178,15 +178,6 @@ int lib_ring_buffer_reserve(const struct lttng_ust_lib_ring_buffer_config *confi
 		return -EPERM;
 	ctx->buf = buf;
 
-	if (caa_likely(ctx->ctx_len
-			>= sizeof(struct lttng_ust_lib_ring_buffer_ctx))) {
-		rseq_state = ctx->rseq_state;
-	} else {
-		rseq_state.cpu_id = -2;
-		rseq_state.event_counter = 0;
-		rseq_state.rseqp = NULL;
-	}
-
 	/*
 	 * Perform retryable operations.
 	 */
