@@ -743,6 +743,11 @@ retry:
 		}
 	}
 	lttng_write_event_header(&client_config, ctx, event_id);
+
+	if (caa_likely(ctx->ctx_len
+			>= sizeof(struct lttng_ust_lib_ring_buffer_ctx)))
+		ctx->rseq_state = rseq_state;
+
 	return 0;
 end:
 	lib_ring_buffer_end(&client_config);

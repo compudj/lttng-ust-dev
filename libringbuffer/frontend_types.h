@@ -82,6 +82,7 @@ struct channel {
 #define RB_COMMIT_COUNT_HOT_PADDING	16
 struct commit_counters_hot {
 	union v_atomic cc;		/* Commit counter */
+	unsigned long cc_rseq;		/* Commit counter for rseq */
 	union v_atomic seq;		/* Consecutive commits */
 	char padding[RB_COMMIT_COUNT_HOT_PADDING];
 } __attribute__((aligned(CAA_CACHE_LINE_SIZE)));

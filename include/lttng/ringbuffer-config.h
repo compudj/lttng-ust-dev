@@ -279,6 +279,7 @@ struct lttng_ust_lib_ring_buffer_ctx {
 	 * following fields may be used.
 	 */
 	struct lttng_ust_lib_ring_buffer_backend_pages *backend_pages;
+	struct lttng_rseq_state rseq_state;
 };
 
 /**
@@ -314,6 +315,9 @@ void lib_ring_buffer_ctx_init(struct lttng_ust_lib_ring_buffer_ctx *ctx,
 	ctx->ip = 0;
 	ctx->priv2 = priv2;
 	memset(ctx->padding2, 0, LTTNG_UST_RING_BUFFER_CTX_PADDING);
+	ctx->rseq_state.rseqp = NULL;
+	ctx->rseq_state.cpu_id = -1;
+	ctx->rseq_state.event_counter = 0;
 }
 
 /*
