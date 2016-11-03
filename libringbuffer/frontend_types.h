@@ -71,7 +71,7 @@ struct channel {
 	unsigned int nr_streams;		/* Number of streams */
 	struct lttng_ust_shm_handle *handle;
 	union {
-		unsigned long reserve_fallback_ref;
+		long reserve_fallback_ref;
 		char padding[RB_CHANNEL_PADDING];
 	} u;
 	/*

@@ -691,12 +691,35 @@ void lttng_channel_destroy(struct lttng_channel *chan)
 }
 
 static
+bool refcount_get_saturate(long *ref)
+{
+	long old, _new, res;
+
+	old = uatomic_read(ref);
+	for (;;) {
+		if (old == LONG_MAX) {
+			return false;	/* Saturated. */
+		}
+		_new = old + 1;
+		res = uatomic_cmpxchg(ref, old, _new);
+		if (res == old) {
+			if (_new == LONG_MAX) {
+				return false; /* Saturation. */
+			}
+			return true;	/* Success. */
+		}
+		old = res;
+	}
+}
+
+static
 int lttng_event_reserve(struct lttng_ust_lib_ring_buffer_ctx *ctx,
 		      uint32_t event_id)
 {
 	struct lttng_channel *lttng_chan = channel_get_private(ctx->chan);
 	struct lttng_rseq_state rseq_state;
-	int ret, cpu, fallback = 0;
+	int ret, cpu;
+	bool put_fallback_ref = false;
 
 	if (lib_ring_buffer_begin(&client_config))
 		return -EPERM;
@@ -739,9 +762,9 @@ fallback:
 	ret = lib_ring_buffer_reserve(&client_config, ctx);
 	if (caa_unlikely(ret)) {
 		if (ret == -EAGAIN) {
-			assert(!fallback);
-			fallback = 1;
-			uatomic_inc(&lttng_chan->chan->u.reserve_fallback_ref);
+			assert(!put_fallback_ref);
+			put_fallback_ref = refcount_get_saturate(
+				&lttng_chan->chan->u.reserve_fallback_ref);
 			cpu = lib_ring_buffer_get_cpu(&client_config);
 			if (caa_unlikely(cpu < 0)) {
 				ret = -EPERM;
@@ -761,13 +784,13 @@ fallback:
 	}
 	lttng_write_event_header(&client_config, ctx, event_id);
 
-	if (caa_unlikely(fallback))
+	if (caa_unlikely(put_fallback_ref))
 		uatomic_dec(&lttng_chan->chan->u.reserve_fallback_ref);
 
 	return 0;
 end:
 	lib_ring_buffer_end(&client_config);
-	if (fallback)
+	if (put_fallback_ref)
 		uatomic_dec(&lttng_chan->chan->u.reserve_fallback_ref);
 	return ret;
 }
