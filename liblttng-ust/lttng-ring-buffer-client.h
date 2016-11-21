@@ -30,6 +30,7 @@
 
 #define LTTNG_COMPACT_EVENT_BITS       5
 #define LTTNG_COMPACT_TSC_BITS         27
+#define LTTNG_RSEQ_ATTEMPTS		8
 
 enum app_ctx_mode {
 	APP_CTX_DISABLED,
@@ -718,7 +719,7 @@ int lttng_event_reserve(struct lttng_ust_lib_ring_buffer_ctx *ctx,
 {
 	struct lttng_channel *lttng_chan = channel_get_private(ctx->chan);
 	struct lttng_rseq_state rseq_state;
-	int ret, cpu;
+	int ret, cpu, attempt = 0;
 	bool put_fallback_ref = false;
 
 	if (lib_ring_buffer_begin(&client_config))
@@ -763,6 +764,10 @@ fallback:
 	if (caa_unlikely(ret)) {
 		if (ret == -EAGAIN) {
 			assert(!put_fallback_ref);
+			if (++attempt < LTTNG_RSEQ_ATTEMPTS) {
+				caa_cpu_relax();
+				goto retry;
+			}
 			put_fallback_ref = refcount_get_saturate(
 				&lttng_chan->chan->u.reserve_fallback_ref);
 			cpu = lib_ring_buffer_get_cpu(&client_config);
