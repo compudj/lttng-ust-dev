@@ -34,9 +34,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <sched.h>
+#include <unistd.h>
 #include <urcu/compiler.h>
 #include <urcu/system.h>
 #include <urcu/arch.h>
+#include <lttng/ringbuffer-config.h>	/* for struct lttng_rseq_state */
 #include "linux-rseq-abi.h"
 
 /*
@@ -71,21 +73,23 @@
 extern __thread volatile struct rseq __rseq_abi;
 
 #if defined(__x86_64__) || defined(__i386__)
-#include <rseq-x86.h>
+#include "rseq-x86.h"
+#ifdef __NR_rseq
+#define ARCH_HAS_RSEQ	1
+#endif
 #elif defined(__ARMEL__)
-#include <rseq-arm.h>
+#include "rseq-arm.h"
+#ifdef __NR_rseq
+#define ARCH_HAS_RSEQ	1
+#endif
 #elif defined(__PPC__)
-#include <rseq-ppc.h>
+#include "rseq-ppc.h"
+#ifdef __NR_rseq
+#define ARCH_HAS_RSEQ	1
+#endif
 #else
 #error unsupported target
 #endif
-
-/* State returned by rseq_start, passed as argument to rseq_finish. */
-struct rseq_state {
-	volatile struct rseq *rseqp;
-	int32_t cpu_id;		/* cpu_id at start. */
-	uint32_t event_counter;	/* event_counter at start. */
-};
 
 /*
  * Register rseq for the current thread. This needs to be called once
@@ -99,12 +103,10 @@ int rseq_register_current_thread(void);
  */
 int rseq_unregister_current_thread(void);
 
-/*
- * Restartable sequence fallback for reading the current CPU number.
- */
-int rseq_fallback_current_cpu(void);
+void rseq_init(void);
+void rseq_destroy(void);
 
-static inline int32_t rseq_cpu_at_start(struct rseq_state start_value)
+static inline int32_t rseq_cpu_at_start(struct lttng_rseq_state start_value)
 {
 	return start_value.cpu_id;
 }
@@ -114,20 +116,11 @@ static inline int32_t rseq_current_cpu_raw(void)
 	return CMM_LOAD_SHARED(__rseq_abi.u.e.cpu_id);
 }
 
-static inline int32_t rseq_current_cpu(void)
-{
-	int32_t cpu;
-
-	cpu = rseq_current_cpu_raw();
-	if (caa_unlikely(cpu < 0))
-		cpu = rseq_fallback_current_cpu();
-	return cpu;
-}
-
+#ifdef ARCH_HAS_RSEQ
 static inline __attribute__((always_inline))
-struct rseq_state rseq_start(void)
+struct lttng_rseq_state rseq_start(void)
 {
-	struct rseq_state result;
+	struct lttng_rseq_state result;
 
 	result.rseqp = &__rseq_abi;
 	if (has_single_copy_load_64()) {
@@ -161,6 +154,16 @@ struct rseq_state rseq_start(void)
 	cmm_barrier();
 	return result;
 }
+#else
+static inline __attribute__((always_inline))
+struct lttng_rseq_state rseq_start(void)
+{
+	struct lttng_rseq_state result = {
+		.cpu_id = -2,
+	};
+	return result;
+}
+#endif
 
 enum rseq_finish_type {
 	RSEQ_FINISH_SINGLE,
@@ -176,11 +179,12 @@ enum rseq_finish_type {
  * p_final and to_write_final are used for the final write. If this
  * write takes place, the rseq_finish2 is guaranteed to succeed.
  */
+#ifdef ARCH_HAS_RSEQ
 static inline __attribute__((always_inline))
 bool __rseq_finish(intptr_t *p_spec, intptr_t to_write_spec,
 		void *p_memcpy, void *to_write_memcpy, size_t len_memcpy,
 		intptr_t *p_final, intptr_t to_write_final,
-		struct rseq_state start_value,
+		struct lttng_rseq_state start_value,
 		enum rseq_finish_type type, bool release)
 {
 	RSEQ_INJECT_C(9)
@@ -247,10 +251,21 @@ failure:
 	RSEQ_INJECT_FAILED
 	return false;
 }
+#else
+static inline __attribute__((always_inline))
+bool __rseq_finish(intptr_t *p_spec, intptr_t to_write_spec,
+		void *p_memcpy, void *to_write_memcpy, size_t len_memcpy,
+		intptr_t *p_final, intptr_t to_write_final,
+		struct lttng_rseq_state start_value,
+		enum rseq_finish_type type, bool release)
+{
+	return false;
+}
+#endif
 
 static inline __attribute__((always_inline))
 bool rseq_finish(intptr_t *p, intptr_t to_write,
-		struct rseq_state start_value)
+		struct lttng_rseq_state start_value)
 {
 	return __rseq_finish(NULL, 0,
 			NULL, NULL, 0,
@@ -261,7 +276,7 @@ bool rseq_finish(intptr_t *p, intptr_t to_write,
 static inline __attribute__((always_inline))
 bool rseq_finish2(intptr_t *p_spec, intptr_t to_write_spec,
 		intptr_t *p_final, intptr_t to_write_final,
-		struct rseq_state start_value)
+		struct lttng_rseq_state start_value)
 {
 	return __rseq_finish(p_spec, to_write_spec,
 			NULL, NULL, 0,
@@ -272,7 +287,7 @@ bool rseq_finish2(intptr_t *p_spec, intptr_t to_write_spec,
 static inline __attribute__((always_inline))
 bool rseq_finish2_release(intptr_t *p_spec, intptr_t to_write_spec,
 		intptr_t *p_final, intptr_t to_write_final,
-		struct rseq_state start_value)
+		struct lttng_rseq_state start_value)
 {
 	return __rseq_finish(p_spec, to_write_spec,
 			NULL, NULL, 0,
@@ -283,7 +298,7 @@ bool rseq_finish2_release(intptr_t *p_spec, intptr_t to_write_spec,
 static inline __attribute__((always_inline))
 bool rseq_finish_memcpy(void *p_memcpy, void *to_write_memcpy,
 		size_t len_memcpy, intptr_t *p_final, intptr_t to_write_final,
-		struct rseq_state start_value)
+		struct lttng_rseq_state start_value)
 {
 	return __rseq_finish(NULL, 0,
 			p_memcpy, to_write_memcpy, len_memcpy,
@@ -294,7 +309,7 @@ bool rseq_finish_memcpy(void *p_memcpy, void *to_write_memcpy,
 static inline __attribute__((always_inline))
 bool rseq_finish_memcpy_release(void *p_memcpy, void *to_write_memcpy,
 		size_t len_memcpy, intptr_t *p_final, intptr_t to_write_final,
-		struct rseq_state start_value)
+		struct lttng_rseq_state start_value)
 {
 	return __rseq_finish(NULL, 0,
 			p_memcpy, to_write_memcpy, len_memcpy,

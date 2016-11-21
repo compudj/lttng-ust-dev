@@ -34,8 +34,14 @@
 #include <urcu-bp.h>
 #include <urcu/compiler.h>
 
+static inline
+int lib_ring_buffer_get_cpu(const struct lttng_ust_lib_ring_buffer_config *config)
+{
+	return lttng_ust_get_cpu();
+}
+
 /**
- * lib_ring_buffer_get_cpu - Precedes ring buffer reserve/commit.
+ * lib_ring_buffer_begin - Precedes ring buffer reserve/commit.
  *
  * Keeps a ring buffer nesting count as supplementary safety net to
  * ensure tracer client code will never trigger an endless recursion.
@@ -49,11 +55,10 @@
  * section.
  */
 static inline
-int lib_ring_buffer_get_cpu(const struct lttng_ust_lib_ring_buffer_config *config)
+int lib_ring_buffer_begin(const struct lttng_ust_lib_ring_buffer_config *config)
 {
-	int cpu, nesting;
+	int nesting;
 
-	cpu = lttng_ust_get_cpu();
 	nesting = ++URCU_TLS(lib_ring_buffer_nesting);
 	cmm_barrier();
 
@@ -61,15 +66,15 @@ int lib_ring_buffer_get_cpu(const struct lttng_ust_lib_ring_buffer_config *confi
 		WARN_ON_ONCE(1);
 		URCU_TLS(lib_ring_buffer_nesting)--;
 		return -EPERM;
-	} else
-		return cpu;
+	}
+	return 0;
 }
 
 /**
- * lib_ring_buffer_put_cpu - Follows ring buffer reserve/commit.
+ * lib_ring_buffer_end - Follows ring buffer reserve/commit.
  */
 static inline
-void lib_ring_buffer_put_cpu(const struct lttng_ust_lib_ring_buffer_config *config)
+void lib_ring_buffer_end(const struct lttng_ust_lib_ring_buffer_config *config)
 {
 	cmm_barrier();
 	URCU_TLS(lib_ring_buffer_nesting)--;		/* TLS */
