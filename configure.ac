@@ -224,6 +224,21 @@ AS_IF([test "x$have_perf_event" = "xyes"], [
 	AC_DEFINE([LTTNG_UST_HAVE_PERF_EVENT], [1])
 ])
 
+AC_MSG_CHECKING([Restartable Sequences])
+AC_COMPILE_IFELSE([AC_LANG_SOURCE([[
+	#include <unistd.h>
+	#include <syscall.h>
+	#ifndef __NR_rseq
+	#error "Restartable Sequences system call not wired up in your kernel headers."
+	#endif
+]])], [
+	AC_MSG_RESULT([yes])
+	have_rseq=yes
+], [
+	AC_MSG_RESULT([no])
+	have_rseq=no
+])
+
 AC_MSG_CHECKING([host system alignment requirements])
 AS_CASE([$host_cpu],
 	[i[[3456]]86], [],
@@ -523,6 +538,9 @@ AS_ECHO(["Architecture: $host_cpu"])
 AS_ECHO_N(["Efficient unaligned memory access: "])
 AS_IF([test "x$NO_UNALIGNED_ACCESS" != "x1"], [AS_ECHO(["yes"])], [AS_IF([test "x$UNSUPPORTED_ARCH" != "x1"], [AS_ECHO(["no"])], [AS_ECHO(["unknown"])])])
 AS_IF([test "x$UNSUPPORTED_ARCH" = "x1"], [AC_MSG_WARN([Your architecture ($host_cpu) is unsupported, using safe default of no unaligned access])])
+
+AS_ECHO_N(["Restartable Sequences system call: "])
+AS_IF([test "x$have_rseq" = "xyes"], [AS_ECHO(["yes"])], [AS_ECHO(["no"])])
 AS_ECHO
 
 AS_ECHO(["Type 'make' to compile."])
