@@ -476,6 +476,7 @@ AC_CONFIG_FILES([
 	include/Makefile
 	include/lttng/ust-version.h
 	snprintf/Makefile
+	rseq/Makefile
 	libringbuffer/Makefile
 	liblttng-ust-comm/Makefile
 	liblttng-ust/Makefile
