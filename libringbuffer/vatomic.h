@@ -45,7 +45,6 @@ union v_atomic {
 static inline
 long v_read(const struct lttng_ust_lib_ring_buffer_config *config, union v_atomic *v_a)
 {
-	//assert(config->sync != RING_BUFFER_SYNC_PER_CPU);
 	return uatomic_read(&v_a->a);
 }
 
@@ -53,7 +52,6 @@ static inline
 void v_set(const struct lttng_ust_lib_ring_buffer_config *config, union v_atomic *v_a,
 	   long v)
 {
-	//assert(config->sync != RING_BUFFER_SYNC_PER_CPU);
 	uatomic_set(&v_a->a, v);
 }
 
@@ -61,7 +59,6 @@ static inline
 void v_add(const struct lttng_ust_lib_ring_buffer_config *config, long v,
 		union v_atomic *v_a, int cpu)
 {
-	//assert(config->sync != RING_BUFFER_SYNC_PER_CPU);
 	if (caa_likely(config->sync == RING_BUFFER_SYNC_PER_CPU)) {
 #ifndef SKIP_FASTPATH
 		struct rseq_state rseq_state;
@@ -69,9 +66,9 @@ void v_add(const struct lttng_ust_lib_ring_buffer_config *config, long v,
 
 		/* Try fast path. */
 		rseq_state = rseq_start();
-		if (rseq_cpu_at_start(rseq_state) < 0)
+		if (caa_unlikely(rseq_cpu_at_start(rseq_state) < 0))
 			goto atomic;
-		if (rseq_cpu_at_start(rseq_state) != cpu)
+		if (caa_unlikely(rseq_cpu_at_start(rseq_state) != cpu))
 			goto slowpath;
 		newval = (intptr_t)v_a->a + v;
 		targetptr = (intptr_t *)&v_a->a;
@@ -84,7 +81,6 @@ slowpath:
 			/* Fallback on rseq_op system call. */
 			int ret;
 
-			cpu = rseq_current_cpu_raw();
 			ret = rseq_op_add(&v_a->a, v,
 				sizeof(v_a->a), cpu);
 			if (likely(!ret))
@@ -101,9 +97,43 @@ atomic:
 }
 
 static inline
-void v_inc(const struct lttng_ust_lib_ring_buffer_config *config, union v_atomic *v_a)
+void v_inc(const struct lttng_ust_lib_ring_buffer_config *config,
+		union v_atomic *v_a, int cpu)
 {
-	assert(config->sync != RING_BUFFER_SYNC_PER_CPU);
+	if (caa_likely(config->sync == RING_BUFFER_SYNC_PER_CPU)) {
+#ifndef SKIP_FASTPATH
+		struct rseq_state rseq_state;
+		intptr_t *targetptr, newval;
+
+		/* Try fast path. */
+		rseq_state = rseq_start();
+		if (caa_unlikely(rseq_cpu_at_start(rseq_state) < 0))
+			goto atomic;
+		if (caa_unlikely(rseq_cpu_at_start(rseq_state) != cpu))
+			goto slowpath;
+		newval = (intptr_t)v_a->a + 1;
+		targetptr = (intptr_t *)&v_a->a;
+		if (unlikely(!rseq_finish(targetptr, newval, rseq_state)))
+			goto slowpath;
+		return;
+#endif
+slowpath:
+		for (;;) {
+			/* Fallback on rseq_op system call. */
+			int ret;
+
+			ret = rseq_op_add(&v_a->a, 1,
+				sizeof(v_a->a), cpu);
+			if (likely(!ret))
+				break;
+			assert(ret >= 0 || errno == EAGAIN);
+		}
+	} else {
+		goto atomic;
+	}
+	return;
+
+atomic:
 	uatomic_inc(&v_a->a);
 }
 
@@ -118,9 +148,52 @@ void _v_dec(const struct lttng_ust_lib_ring_buffer_config *config, union v_atomi
 
 static inline
 long v_cmpxchg(const struct lttng_ust_lib_ring_buffer_config *config, union v_atomic *v_a,
-	       long old, long _new)
+	       long old, long _new, int cpu)
 {
-	assert(config->sync != RING_BUFFER_SYNC_PER_CPU);
+	if (caa_likely(config->sync == RING_BUFFER_SYNC_PER_CPU)) {
+#ifndef SKIP_FASTPATH
+		struct rseq_state rseq_state;
+		intptr_t *targetptr, newval, resval, oldval;
+
+		/* Try fast path. */
+		rseq_state = rseq_start();
+		if (caa_unlikely(rseq_cpu_at_start(rseq_state) < 0))
+			goto atomic;
+		if (caa_unlikely(rseq_cpu_at_start(rseq_state) != cpu))
+			goto slowpath;
+		oldval = (intptr_t)old;
+		resval = (intptr_t)v_read(config, v_a);
+		if (resval != oldval)
+			goto end;
+		newval = (intptr_t)_new;
+		targetptr = (intptr_t *)&v_a->a;
+		if (unlikely(!rseq_finish(targetptr, newval, rseq_state)))
+			goto slowpath;
+end:
+		return (long)resval;
+#endif
+slowpath:
+		{
+			long res;
+
+			for (;;) {
+				/* Fallback on rseq_op system call. */
+				int ret;
+
+				ret = rseq_op_cmpxchg(&v_a->a, &old,
+					&res, &_new, sizeof(v_a->a), cpu);
+				if (ret >= 0)
+					break;
+				assert(ret >= 0 || errno == EAGAIN);
+			}
+			return (long)res;
+		}
+	} else {
+		goto atomic;
+	}
+
+atomic:
+
 	return uatomic_cmpxchg(&v_a->a, old, _new);
 }
 

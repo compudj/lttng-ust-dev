@@ -261,7 +261,7 @@ void subbuffer_count_record(const struct lttng_ust_lib_ring_buffer_config *confi
 		if (lib_ring_buffer_backend_get_pages(config, ctx, &backend_pages))
 			return;
 	}
-	v_inc(config, &backend_pages->records_commit);
+	v_inc(config, &backend_pages->records_commit, bufb->cpu);
 }
 #else /* LTTNG_RING_BUFFER_COUNT_EVENTS */
 static inline
@@ -300,7 +300,7 @@ void subbuffer_consume_record(const struct lttng_ust_lib_ring_buffer_config *con
 	CHAN_WARN_ON(chan, !v_read(config, &backend_pages->records_unread));
 	/* Non-atomic decrement protected by exclusive subbuffer access */
 	_v_dec(config, &backend_pages->records_unread);
-	v_inc(config, &bufb->records_read);
+	v_inc(config, &bufb->records_read, bufb->cpu);
 }
 
 static inline

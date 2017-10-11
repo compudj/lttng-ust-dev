@@ -182,7 +182,7 @@ int lib_ring_buffer_reserve(const struct lttng_ust_lib_ring_buffer_config *confi
 						 &o_end, &o_old, &before_hdr_pad)))
 		goto slow_path;
 
-	if (caa_unlikely(v_cmpxchg(config, &ctx->buf->offset, o_old, o_end)
+	if (caa_unlikely(v_cmpxchg(config, &ctx->buf->offset, o_old, o_end, buf->backend.cpu)
 		     != o_old))
 		goto slow_path;
 
@@ -335,8 +335,8 @@ int lib_ring_buffer_try_discard_reserve(const struct lttng_ust_lib_ring_buffer_c
 	 */
 	save_last_tsc(config, buf, 0ULL);
 
-	if (caa_likely(v_cmpxchg(config, &buf->offset, end_offset, ctx->pre_offset)
-		   != end_offset))
+	if (caa_likely(v_cmpxchg(config, &buf->offset, end_offset, ctx->pre_offset,
+			buf->backend.cpu) != end_offset))
 		return -EPERM;
 	else
 		return 0;

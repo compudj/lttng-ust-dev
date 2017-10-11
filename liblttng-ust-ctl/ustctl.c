@@ -22,6 +22,7 @@
 #include <lttng/ust-ctl.h>
 #include <lttng/ust-abi.h>
 #include <lttng/ust-events.h>
+#include <lttng/rseq.h>
 #include <sys/mman.h>
 #include <byteswap.h>
 
@@ -2228,6 +2229,7 @@ void ustctl_init(void)
 	init_usterr();
 	lttng_ust_getenv_init();	/* Needs init_usterr() to be completed. */
 	lttng_ust_clock_init();
+	rseq_init();
 	lttng_ring_buffer_metadata_client_init();
 	lttng_ring_buffer_client_overwrite_init();
 	lttng_ring_buffer_client_overwrite_rt_init();
@@ -2244,4 +2246,5 @@ void ustctl_exit(void)
 	lttng_ring_buffer_client_overwrite_rt_exit();
 	lttng_ring_buffer_client_overwrite_exit();
 	lttng_ring_buffer_metadata_client_exit();
+	rseq_destroy();
 }

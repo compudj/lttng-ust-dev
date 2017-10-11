@@ -2024,7 +2024,7 @@ void lib_ring_buffer_switch_slow(struct lttng_ust_lib_ring_buffer *buf, enum swi
 		if (lib_ring_buffer_try_switch_slow(mode, buf, chan, &offsets,
 						    &tsc, handle))
 			return;	/* Switch not needed */
-	} while (v_cmpxchg(config, &buf->offset, offsets.old, offsets.end)
+	} while (v_cmpxchg(config, &buf->offset, offsets.old, offsets.end, buf->backend.cpu)
 		 != offsets.old);
 
 	/*
@@ -2182,7 +2182,7 @@ retry:
 				 * and we are full : record is lost.
 				 */
 				nr_lost = v_read(config, &buf->records_lost_full);
-				v_inc(config, &buf->records_lost_full);
+				v_inc(config, &buf->records_lost_full, buf->backend.cpu);
 				if ((nr_lost & (DBG_PRINT_NR_LOST - 1)) == 0) {
 					DBG("%lu or more records lost in (%s:%d) (buffer full)\n",
 						nr_lost + 1, chan->backend.name,
@@ -2208,7 +2208,7 @@ retry:
 			 * many nested writes over a reserve/commit pair.
 			 */
 			nr_lost = v_read(config, &buf->records_lost_wrap);
-			v_inc(config, &buf->records_lost_wrap);
+			v_inc(config, &buf->records_lost_wrap, buf->backend.cpu);
 			if ((nr_lost & (DBG_PRINT_NR_LOST - 1)) == 0) {
 				DBG("%lu or more records lost in (%s:%d) (wrap-around)\n",
 					nr_lost + 1, chan->backend.name,
@@ -2234,7 +2234,7 @@ retry:
 			 * complete the sub-buffer switch.
 			 */
 			nr_lost = v_read(config, &buf->records_lost_big);
-			v_inc(config, &buf->records_lost_big);
+			v_inc(config, &buf->records_lost_big, buf->backend.cpu);
 			if ((nr_lost & (DBG_PRINT_NR_LOST - 1)) == 0) {
 				DBG("%lu or more records lost in (%s:%d) record size "
 					" of %zu bytes is too large for buffer\n",
@@ -2300,7 +2300,7 @@ int lib_ring_buffer_reserve_slow(struct lttng_ust_lib_ring_buffer_ctx *ctx,
 		if (caa_unlikely(ret))
 			return ret;
 	} while (caa_unlikely(v_cmpxchg(config, &buf->offset, offsets.old,
-				    offsets.end)
+				    offsets.end, buf->backend.cpu)
 			  != offsets.old));
 
 	/*
@@ -2442,7 +2442,7 @@ void lib_ring_buffer_check_deliver_slow(const struct lttng_ust_lib_ring_buffer_c
 	if (!cc_cold)
 		return;
 	if (caa_likely(v_cmpxchg(config, &cc_cold->cc_sb,
-				 old_commit_count, old_commit_count + 1)
+				 old_commit_count, old_commit_count + 1, buf->backend.cpu)
 		   == old_commit_count)) {
 		/*
 		 * Start of exclusive subbuffer access. We are
