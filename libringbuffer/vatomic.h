@@ -75,8 +75,9 @@ void v_add(const struct lttng_ust_lib_ring_buffer_config *config, long v,
 		if (unlikely(!rseq_finish(targetptr, newval, rseq_state)))
 			goto slowpath;
 		return;
-#endif
+
 slowpath:
+#endif
 		for (;;) {
 			/* Fallback on rseq_op system call. */
 			int ret;
@@ -116,8 +117,9 @@ void v_inc(const struct lttng_ust_lib_ring_buffer_config *config,
 		if (unlikely(!rseq_finish(targetptr, newval, rseq_state)))
 			goto slowpath;
 		return;
-#endif
+
 slowpath:
+#endif
 		for (;;) {
 			/* Fallback on rseq_op system call. */
 			int ret;
@@ -171,8 +173,9 @@ long v_cmpxchg(const struct lttng_ust_lib_ring_buffer_config *config, union v_at
 			goto slowpath;
 end:
 		return (long)resval;
-#endif
+
 slowpath:
+#endif
 		{
 			long res;
 
