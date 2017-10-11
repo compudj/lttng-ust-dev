@@ -193,7 +193,6 @@ slowpath:
 	}
 
 atomic:
-
 	return uatomic_cmpxchg(&v_a->a, old, _new);
 }
 
