@@ -24,6 +24,8 @@
 #include <urcu/arch.h>
 #include <config.h>
 
+#include <lttng/rseq.h>
+
 void lttng_ust_getcpu_init(void);
 
 extern int (*lttng_get_cpu)(void);
@@ -59,9 +61,18 @@ int lttng_ust_get_cpu_internal(void)
 {
 	int cpu, ret;
 
-	ret = __getcpu(&cpu, NULL, NULL);
-	if (caa_unlikely(ret < 0))
-		return 0;
+retry:
+	cpu = rseq_current_cpu_raw();
+	if (caa_unlikely(cpu < 0)) {
+		if (caa_unlikely(cpu == -1)) {
+			if (!rseq_register_current_thread())
+				goto retry;
+		}
+		/* rseq is unavailable. */
+		ret = __getcpu(&cpu, NULL, NULL);
+		if (caa_unlikely(ret < 0))
+			return 0;
+	}
 	return cpu;
 }
 #else /* HAVE_SCHED_GETCPU */
@@ -75,9 +86,18 @@ int lttng_ust_get_cpu_internal(void)
 {
 	int cpu;
 
-	cpu = sched_getcpu();
-	if (caa_unlikely(cpu < 0))
-		return 0;
+retry:
+	cpu = rseq_current_cpu_raw();
+	if (caa_unlikely(cpu < 0)) {
+		if (caa_unlikely(cpu == -1)) {
+			if (!rseq_register_current_thread())
+				goto retry;
+		}
+		/* rseq is unavailable. */
+		cpu = sched_getcpu();
+		if (caa_unlikely(cpu < 0))
+			return 0;
+	}
 	return cpu;
 }
 #endif	/* HAVE_SCHED_GETCPU */
@@ -108,6 +128,9 @@ int lttng_ust_get_cpu(void)
 	if (caa_likely(!getcpu)) {
 		return lttng_ust_get_cpu_internal();
 	} else {
+		if (caa_unlikely(rseq_current_cpu_raw() == -1)) {
+			(void)rseq_register_current_thread();
+		}
 		return getcpu();
 	}
 }
