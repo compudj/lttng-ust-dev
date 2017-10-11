@@ -24,6 +24,7 @@
 #include <syscall.h>
 #include <assert.h>
 #include <signal.h>
+#include <urcu/compiler.h>
 
 #include <rseq.h>
 

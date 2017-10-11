@@ -69,6 +69,8 @@ void v_add(const struct lttng_ust_lib_ring_buffer_config *config, long v,
 
 		/* Try fast path. */
 		rseq_state = rseq_start();
+		if (rseq_cpu_at_start(rseq_state) < 0)
+			goto atomic;
 		if (rseq_cpu_at_start(rseq_state) != cpu)
 			goto slowpath;
 		newval = (intptr_t)v_a->a + v;
@@ -90,8 +92,12 @@ slowpath:
 			assert(ret >= 0 || errno == EAGAIN);
 		}
 	} else {
-		uatomic_add(&v_a->a, v);
+		goto atomic;
 	}
+	return;
+
+atomic:
+	uatomic_add(&v_a->a, v);
 }
 
 static inline

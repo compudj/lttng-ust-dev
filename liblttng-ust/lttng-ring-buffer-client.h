@@ -25,6 +25,7 @@
 #include "lttng/bitfield.h"
 #include "clock.h"
 #include "lttng-tracer.h"
+#include <lttng/rseq.h>
 #include "../libringbuffer/frontend_types.h"
 
 #define LTTNG_COMPACT_EVENT_BITS       5
@@ -739,10 +740,18 @@ int lttng_event_reserve(struct lttng_ust_lib_ring_buffer_ctx *ctx,
 		ctx_get_struct_size(event->ctx, &client_ctx.event_context_len,
 				APP_CTX_DISABLED);
 	}
-
-	cpu = lib_ring_buffer_get_cpu(&client_config);
-	if (cpu < 0)
-		return -EPERM;
+retry:
+	cpu = rseq_current_cpu_raw();
+	if (caa_unlikely(cpu < 0)) {
+		if (caa_unlikely(cpu == -1)) {
+			if (!rseq_register_current_thread())
+				goto retry;
+		}
+		/* rseq is unavailable. */
+		cpu = lib_ring_buffer_get_cpu(&client_config);
+		if (caa_unlikely(cpu < 0))
+			return -EPERM;
+	}
 	ctx->cpu = cpu;
 
 	switch (lttng_chan->header_type) {
