@@ -27,6 +27,7 @@
 
 #include <assert.h>
 #include <urcu/uatomic.h>
+#include <lttng/rseq.h>
 
 /*
  * Same data type (long) accessed differently depending on configuration.
@@ -44,7 +45,7 @@ union v_atomic {
 static inline
 long v_read(const struct lttng_ust_lib_ring_buffer_config *config, union v_atomic *v_a)
 {
-	assert(config->sync != RING_BUFFER_SYNC_PER_CPU);
+	//assert(config->sync != RING_BUFFER_SYNC_PER_CPU);
 	return uatomic_read(&v_a->a);
 }
 
@@ -52,15 +53,44 @@ static inline
 void v_set(const struct lttng_ust_lib_ring_buffer_config *config, union v_atomic *v_a,
 	   long v)
 {
-	assert(config->sync != RING_BUFFER_SYNC_PER_CPU);
+	//assert(config->sync != RING_BUFFER_SYNC_PER_CPU);
 	uatomic_set(&v_a->a, v);
 }
 
 static inline
 void v_add(const struct lttng_ust_lib_ring_buffer_config *config, long v, union v_atomic *v_a)
 {
-	assert(config->sync != RING_BUFFER_SYNC_PER_CPU);
-	uatomic_add(&v_a->a, v);
+	//assert(config->sync != RING_BUFFER_SYNC_PER_CPU);
+	if (caa_likely(config->sync == RING_BUFFER_SYNC_PER_CPU)) {
+		int cpu;
+
+#ifndef SKIP_FASTPATH
+		struct rseq_state rseq_state;
+		intptr_t *targetptr, newval;
+
+		/* Try fast path. */
+		rseq_state = rseq_start();
+		cpu = rseq_cpu_at_start(rseq_state);
+		newval = (intptr_t)v_a->a + v;
+		targetptr = (intptr_t *)&v_a->a;
+		if (unlikely(!rseq_finish(targetptr, newval, rseq_state)))
+#endif
+		{
+			for (;;) {
+				/* Fallback on rseq_op system call. */
+				int ret;
+
+				cpu = rseq_current_cpu_raw();
+				ret = rseq_op_add(&v_a->a, v,
+					sizeof(v_a->a), cpu);
+				if (likely(!ret))
+					break;
+				assert(ret >= 0 || errno == EAGAIN);
+			}
+		}
+	} else {
+		uatomic_add(&v_a->a, v);
+	}
 }
 
 static inline
