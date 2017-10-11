@@ -24,59 +24,112 @@
 #include <syscall.h>
 #include <assert.h>
 #include <signal.h>
-#include <linux/membarrier.h>
 
 #include <rseq.h>
 
 #define ARRAY_SIZE(arr)	(sizeof(arr) / sizeof((arr)[0]))
 
-#ifdef __NR_membarrier
-# define membarrier(...)		syscall(__NR_membarrier, __VA_ARGS__)
-#else
-# define membarrier(...)		-ENOSYS
-#endif
-
 __attribute__((weak)) __thread volatile struct rseq __rseq_abi = {
 	.u.e.cpu_id = -1,
 };
 
-int rseq_has_sys_membarrier;
+/* Own state, not shared with other libs. */
+static __thread int rseq_registered;
 
+static pthread_key_t rseq_key;
+
+#ifdef __NR_rseq
 static int sys_rseq(volatile struct rseq *rseq_abi, int flags)
 {
 	return syscall(__NR_rseq, rseq_abi, flags);
 }
+#else
+static int sys_rseq(volatile struct rseq *rseq_abi, int flags)
+{
+	errno = ENOSYS;
+	return -1;
+}
+#endif
 
 int rseq_op(struct rseq_op *rseqop, int rseqopcnt, int cpu, int flags)
 {
 	return syscall(__NR_rseq_op, rseqop, rseqopcnt, cpu, flags);
 }
 
-int rseq_register_current_thread(void)
+static void signal_off_save(sigset_t *oldset)
 {
-	int rc;
+	sigset_t set;
+	int ret;
 
-	rc = sys_rseq(&__rseq_abi, 0);
-	if (rc) {
-		fprintf(stderr, "Error: sys_rseq(...) failed(%d): %s\n",
-			errno, strerror(errno));
-		return -1;
-	}
-	assert(rseq_current_cpu() >= 0);
-	return 0;
+	sigfillset(&set);
+	ret = pthread_sigmask(SIG_BLOCK, &set, oldset);
+	if (ret)
+		abort();
+}
+
+static void signal_restore(sigset_t oldset)
+{
+	int ret;
+
+	ret = pthread_sigmask(SIG_SETMASK, &oldset, NULL);
+	if (ret)
+		abort();
 }
 
 int rseq_unregister_current_thread(void)
 {
-	int rc;
+	sigset_t oldset;
+	int rc, ret = 0;
 
-	rc = sys_rseq(NULL, 0);
-	if (rc) {
-		fprintf(stderr, "Error: sys_rseq(...) failed(%d): %s\n",
-			errno, strerror(errno));
-		return -1;
+	signal_off_save(&oldset);
+	if (rseq_registered) {
+		rc = sys_rseq(NULL, 0);
+		if (rc) {
+			fprintf(stderr, "Error: sys_rseq(...) failed(%d): %s\n",
+				errno, strerror(errno));
+			ret = -1;
+			goto end;
+		}
+		rseq_registered = 0;
 	}
-	return 0;
+end:
+	signal_restore(oldset);
+	return ret;
+}
+
+static void destroy_rseq_key(void *key)
+{
+	if (rseq_unregister_current_thread())
+		abort();
+}
+
+int rseq_register_current_thread(void)
+{
+	sigset_t oldset;
+	int rc, ret = 0;
+
+	signal_off_save(&oldset);
+	if (caa_likely(!rseq_registered)) {
+		rc = sys_rseq(&__rseq_abi, 0);
+		if (rc) {
+			fprintf(stderr, "Error: sys_rseq(...) failed(%d): %s\n",
+				errno, strerror(errno));
+			__rseq_abi.u.e.cpu_id = -2;
+			ret = -1;
+			goto end;
+		}
+		rseq_registered = 1;
+		assert(rseq_current_cpu_raw() >= 0);
+		/*
+		 * Register destroy notifier. Pointer needs to
+		 * be non-NULL.
+		 */
+		if (pthread_setspecific(rseq_key, (void *)0x1))
+			abort();
+	}
+end:
+	signal_restore(oldset);
+	return ret;
 }
 
 int rseq_fallback_current_cpu(void)
@@ -91,13 +144,28 @@ int rseq_fallback_current_cpu(void)
 	return cpu;
 }
 
-void __attribute__((constructor)) rseq_init(void)
+void rseq_init(void)
 {
 	int ret;
 
-	ret = membarrier(MEMBARRIER_CMD_QUERY, 0);
-	if (ret >= 0 && (ret & MEMBARRIER_CMD_SHARED))
-		rseq_has_sys_membarrier = 1;
+	ret = pthread_key_create(&rseq_key, destroy_rseq_key);
+	if (ret) {
+		errno = -ret;
+		perror("pthread_key_create");
+		abort();
+	}
+}
+
+void rseq_destroy(void)
+{
+	int ret;
+
+	ret = pthread_key_delete(rseq_key);
+	if (ret) {
+		errno = -ret;
+		perror("pthread_key_delete");
+		abort();
+	}
 }
 
 int rseq_op_cmpstore(void *v, void *expect, void *n, size_t len, int cpu)
