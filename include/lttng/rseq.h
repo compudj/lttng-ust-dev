@@ -104,6 +104,9 @@ int rseq_register_current_thread(void);
  */
 int rseq_unregister_current_thread(void);
 
+void rseq_init(void);
+void rseq_destroy(void);
+
 /*
  * Restartable sequence fallback for reading the current CPU number.
  */
