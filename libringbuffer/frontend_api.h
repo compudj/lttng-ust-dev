@@ -271,7 +271,7 @@ void lib_ring_buffer_commit(const struct lttng_ust_lib_ring_buffer_config *confi
 	 */
 	cmm_smp_wmb();
 
-	v_add(config, ctx->slot_size, &cc_hot->cc);
+	v_add(config, ctx->slot_size, &cc_hot->cc, buf->backend.cpu);
 	
 
 	/*

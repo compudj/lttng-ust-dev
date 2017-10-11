@@ -398,8 +398,8 @@ int lib_ring_buffer_create(struct lttng_ust_lib_ring_buffer *buf,
 		ret = -EPERM;
 		goto free_chanbuf;
 	}
-	v_add(config, subbuf_header_size, &cc_hot->cc);
-	v_add(config, subbuf_header_size, &cc_hot->seq);
+	v_add(config, subbuf_header_size, &cc_hot->cc, cpu);
+	v_add(config, subbuf_header_size, &cc_hot->seq, cpu);
 
 	if (config->cb.buffer_create) {
 		ret = config->cb.buffer_create(buf, priv, cpu, chanb->name, handle);
@@ -1608,7 +1608,7 @@ void lib_ring_buffer_put_subbuf(struct lttng_ust_lib_ring_buffer *buf,
 	if (!backend_pages)
 		return;
 	v_add(config, v_read(config, &backend_pages->records_unread),
-			&bufb->records_read);
+			&bufb->records_read, bufb->cpu);
 	v_set(config, &backend_pages->records_unread, 0);
 	CHAN_WARN_ON(chan, config->mode == RING_BUFFER_OVERWRITE
 		     && subbuffer_id_is_noref(config, bufb->buf_rsb.id));
@@ -1766,7 +1766,7 @@ void lib_ring_buffer_switch_old_start(struct lttng_ust_lib_ring_buffer *buf,
 	if (!cc_hot)
 		return;
 	v_add(config, config->cb.subbuffer_header_size(),
-	      &cc_hot->cc);
+	      &cc_hot->cc, buf->backend.cpu);
 	commit_count = v_read(config, &cc_hot->cc);
 	/* Check if the written buffer has to be delivered */
 	lib_ring_buffer_check_deliver(config, buf, chan, offsets->old,
@@ -1809,7 +1809,7 @@ void lib_ring_buffer_switch_old_end(struct lttng_ust_lib_ring_buffer *buf,
 	cc_hot = shmp_index(handle, buf->commit_hot, oldidx);
 	if (!cc_hot)
 		return;
-	v_add(config, padding_size, &cc_hot->cc);
+	v_add(config, padding_size, &cc_hot->cc, buf->backend.cpu);
 	commit_count = v_read(config, &cc_hot->cc);
 	lib_ring_buffer_check_deliver(config, buf, chan, offsets->old - 1,
 				      commit_count, oldidx, handle, tsc);
@@ -1847,7 +1847,8 @@ void lib_ring_buffer_switch_new_start(struct lttng_ust_lib_ring_buffer *buf,
 	cc_hot = shmp_index(handle, buf->commit_hot, beginidx);
 	if (!cc_hot)
 		return;
-	v_add(config, config->cb.subbuffer_header_size(), &cc_hot->cc);
+	v_add(config, config->cb.subbuffer_header_size(), &cc_hot->cc,
+			buf->backend.cpu);
 	commit_count = v_read(config, &cc_hot->cc);
 	/* Check if the written buffer has to be delivered */
 	lib_ring_buffer_check_deliver(config, buf, chan, offsets->begin,
@@ -2377,10 +2378,10 @@ void deliver_count_events(const struct lttng_ust_lib_ring_buffer_config *config,
 {
 	v_add(config, subbuffer_get_records_count(config,
 			&buf->backend, idx, handle),
-		&buf->records_count);
+		&buf->records_count, buf->backend.cpu);
 	v_add(config, subbuffer_count_records_overrun(config,
 			&buf->backend, idx, handle),
-		&buf->records_overrun);
+		&buf->records_overrun, buf->backend.cpu);
 }
 #else /* LTTNG_RING_BUFFER_COUNT_EVENTS */
 static
