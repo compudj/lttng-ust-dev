@@ -661,7 +661,7 @@ static const struct lttng_ust_lib_ring_buffer_config client_config = {
 
 	.tsc_bits = LTTNG_COMPACT_TSC_BITS,
 	.alloc = RING_BUFFER_ALLOC_PER_CPU,
-	.sync = RING_BUFFER_SYNC_GLOBAL,
+	.sync = RING_BUFFER_SYNC_PER_CPU,
 	.mode = RING_BUFFER_MODE_TEMPLATE,
 	.backend = RING_BUFFER_PAGE,
 	.output = RING_BUFFER_MMAP,
