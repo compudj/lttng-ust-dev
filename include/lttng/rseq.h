@@ -88,8 +88,6 @@ struct rseq_state {
 	uint32_t event_counter;	/* event_counter at start. */
 };
 
-int rseq_op(struct rseq_op *rseqop, int rseqopcnt, int cpu, int flags);
-
 /*
  * Register rseq for the current thread. This needs to be called once
  * by any thread which uses restartable sequences, before they start
@@ -299,16 +297,5 @@ bool rseq_finish_memcpy_release(void *p_memcpy, void *to_write_memcpy,
 			p_final, to_write_final, start_value,
 			RSEQ_FINISH_MEMCPY, true);
 }
-
-int rseq_op_cmpstore(void *v, void *expect, void *_new, size_t len, int cpu);
-int rseq_op_2cmp1store(void *v, void *expect, void *_new, void *check2,
-		void *expect2, size_t len, int cpu);
-int rseq_op_1cmp2store(void *v, void *expect, void *_new,
-		void *v2, void *_new2, size_t len, int cpu);
-int rseq_op_cmpxchg(void *v, void *expect, void *old, void *_new,
-		size_t len, int cpu);
-int rseq_op_add(void *v, int64_t count, size_t len, int cpu);
-int rseq_op_cmpstorememcpy(void *v, void *expect, void *_new, size_t len,
-		void *dst, void *src, size_t copylen, int cpu);
 
 #endif  /* RSEQ_H_ */

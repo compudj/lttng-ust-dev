@@ -82,7 +82,7 @@ liblttng_ust_support_la_SOURCES = \
 	lttng-ring-buffer-metadata-client.h \
 	lttng-ring-buffer-metadata-client.c \
 	lttng-clock.c lttng-getcpu.c \
-	rseq.c
+	rseq.c cpu-op.c
 
 liblttng_ust_la_SOURCES =
 

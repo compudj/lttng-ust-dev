@@ -28,6 +28,7 @@
 #include <assert.h>
 #include <urcu/uatomic.h>
 #include <lttng/rseq.h>
+#include <lttng/cpu-op.h>
 
 /*
  * Same data type (long) accessed differently depending on configuration.
@@ -79,10 +80,10 @@ void v_add(const struct lttng_ust_lib_ring_buffer_config *config, long v,
 slowpath:
 #endif
 		for (;;) {
-			/* Fallback on rseq_op system call. */
+			/* Fallback on cpu_opv system call. */
 			int ret;
 
-			ret = rseq_op_add(&v_a->a, v,
+			ret = cpu_op_add(&v_a->a, v,
 				sizeof(v_a->a), cpu);
 			if (likely(!ret))
 				break;
@@ -121,10 +122,10 @@ void v_inc(const struct lttng_ust_lib_ring_buffer_config *config,
 slowpath:
 #endif
 		for (;;) {
-			/* Fallback on rseq_op system call. */
+			/* Fallback on cpu_opv system call. */
 			int ret;
 
-			ret = rseq_op_add(&v_a->a, 1,
+			ret = cpu_op_add(&v_a->a, 1,
 				sizeof(v_a->a), cpu);
 			if (likely(!ret))
 				break;
@@ -180,10 +181,10 @@ slowpath:
 			long res;
 
 			for (;;) {
-				/* Fallback on rseq_op system call. */
+				/* Fallback on cpu_opv system call. */
 				int ret;
 
-				ret = rseq_op_cmpxchg(&v_a->a, &old,
+				ret = cpu_op_cmpxchg(&v_a->a, &old,
 					&res, &_new, sizeof(v_a->a), cpu);
 				if (ret >= 0)
 					break;
