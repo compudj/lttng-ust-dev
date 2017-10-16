@@ -949,7 +949,7 @@ int tp_srcu_read_lock_percpu(void)
 	return srcu_read_lock_percpu();
 }
 
-void tp_rcu_read_unlock_percpu(int period)
+void tp_srcu_read_unlock_percpu(int period)
 {
 	srcu_read_unlock_percpu(period);
 }
