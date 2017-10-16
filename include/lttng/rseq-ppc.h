@@ -75,7 +75,7 @@ do {									\
 		"lis %%r17, (3b)@highest\n\t" \
 		"ori %%r17, %%r17, (3b)@higher\n\t" \
 		"rldicr %%r17, %%r17, 32, 31\n\t" \
-		"oris %%r17, %%r17, (3b)@h\n\t" \
+		"oris %%r17, %%r17, (3b)@high\n\t" \
 		"ori %%r17, %%r17, (3b)@l\n\t" \
 		"std %%r17, 0(%[rseq_cs])\n\t" \
 		RSEQ_INJECT_ASM(2) \
@@ -89,6 +89,7 @@ do {									\
 		RSEQ_INJECT_ASM(5) \
 		_teardown \
 		"b 5f\n\t" \
+		".long " __stringify(RSEQ_SIG) "\n\t" \
 		"4:\n\t" \
 		_teardown \
 		"b %l[failure]\n\t" \
@@ -191,6 +192,7 @@ do {									\
 		RSEQ_INJECT_ASM(5) \
 		_teardown \
 		"b 5f\n\t" \
+		".long " __stringify(RSEQ_SIG) "\n\t" \
 		"4:\n\t" \
 		_teardown \
 		"b %l[failure]\n\t" \

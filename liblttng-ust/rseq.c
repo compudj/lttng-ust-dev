@@ -40,12 +40,12 @@ static __thread int rseq_registered;
 static pthread_key_t rseq_key;
 
 #ifdef __NR_rseq
-static int sys_rseq(volatile struct rseq *rseq_abi, int flags)
+static int sys_rseq(volatile struct rseq *rseq_abi, int flags, uint32_t sig)
 {
-	return syscall(__NR_rseq, rseq_abi, flags);
+	return syscall(__NR_rseq, rseq_abi, flags, sig);
 }
 #else
-static int sys_rseq(volatile struct rseq *rseq_abi, int flags)
+static int sys_rseq(volatile struct rseq *rseq_abi, int flags, uint32_t sig)
 {
 	errno = ENOSYS;
 	return -1;
@@ -79,7 +79,7 @@ int rseq_unregister_current_thread(void)
 
 	signal_off_save(&oldset);
 	if (rseq_registered) {
-		rc = sys_rseq(NULL, 0);
+		rc = sys_rseq(&__rseq_abi, RSEQ_FLAG_UNREGISTER, RSEQ_SIG);
 		if (rc) {
 			fprintf(stderr, "Error: sys_rseq(...) failed(%d): %s\n",
 				errno, strerror(errno));
@@ -106,7 +106,7 @@ int rseq_register_current_thread(void)
 
 	signal_off_save(&oldset);
 	if (caa_likely(!rseq_registered)) {
-		rc = sys_rseq(&__rseq_abi, 0);
+		rc = sys_rseq(&__rseq_abi, 0, RSEQ_SIG);
 		if (rc) {
 			fprintf(stderr, "Error: sys_rseq(...) failed(%d): %s\n",
 				errno, strerror(errno));
