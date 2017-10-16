@@ -222,7 +222,7 @@ AM_CONDITIONAL([HAVE_DLINFO], [test "x${ac_cv_have_decl_RTLD_DI_LINKMAP}" = "xye
 # URCU
 
 # urcu - check if we just find the headers it out of the box.
-AC_CHECK_HEADERS([urcu-bp.h], [], [AC_MSG_ERROR([Cannot find [URCU] headers (urcu-bp.h). Use [CPPFLAGS]=-Idir to specify their location.
+AC_CHECK_HEADERS([urcu-percpu.h], [], [AC_MSG_ERROR([Cannot find [URCU] headers (urcu-percpu.h). Use [CPPFLAGS]=-Idir to specify their location.
 This error can also occur when the liburcu package's configure script has not been run.])])
 
 # urcu-cds - check that URCU Concurrent Data Structure lib is available to compilation
@@ -246,10 +246,7 @@ AC_COMPILE_IFELSE([AC_LANG_SOURCE([[
 ])
 
 # urcu - check that URCU lib is available to compilation
-AC_CHECK_LIB([urcu-bp], [synchronize_rcu_bp], [], [AC_MSG_ERROR([Cannot find liburcu-bp lib. Use [LDFLAGS]=-Ldir to specify its location.])])
-
-# urcu - check that URCU lib is at least version 0.6
-AC_CHECK_LIB([urcu-bp], [call_rcu_bp], [], [AC_MSG_ERROR([liburcu 0.6 or newer is needed, please update your version or use [LDFLAGS]=-Ldir to specify the right location.])])
+AC_CHECK_LIB([urcu-percpu], [synchronize_rcu_percpu], [], [AC_MSG_ERROR([Cannot find liburcu-percpu lib. Use [LDFLAGS]=-Ldir to specify its location.])])
 
 # optional linux/perf_event.h
 AC_CHECK_HEADERS([linux/perf_event.h], [have_perf_event=yes], [])

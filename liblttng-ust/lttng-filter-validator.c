@@ -25,7 +25,7 @@
  */
 
 #define _LGPL_SOURCE
-#include <urcu-bp.h>
+#include <urcu-percpu.h>
 #include <time.h>
 #include "lttng-filter.h"
 

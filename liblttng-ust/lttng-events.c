@@ -37,7 +37,7 @@
 #include <lttng/ust-endian.h>
 #include "clock.h"
 
-#include <urcu-bp.h>
+#include <urcu-percpu.h>
 #include <urcu/compiler.h>
 #include <urcu/uatomic.h>
 #include <urcu/arch.h>

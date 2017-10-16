@@ -166,11 +166,12 @@ static											\
 void __tracepoint_cb_##_provider##___##_name(_TP_ARGS_PROTO(__VA_ARGS__))		\
 {											\
 	struct lttng_ust_tracepoint_probe *__tp_probe;						\
+	int period;									\
 											\
 	if (caa_unlikely(!TP_RCU_LINK_TEST()))						\
 		return;									\
-	tp_rcu_read_lock_bp();								\
-	__tp_probe = tp_rcu_dereference_bp(__tracepoint_##_provider##___##_name.probes); \
+	period = tp_srcu_read_lock_percpu();								\
+	__tp_probe = tp_rcu_dereference_percpu(__tracepoint_##_provider##___##_name.probes); \
 	if (caa_unlikely(!__tp_probe))							\
 		goto end;								\
 	do {										\
@@ -181,7 +182,7 @@ void __tracepoint_cb_##_provider##___##_name(_TP_ARGS_PROTO(__VA_ARGS__))		\
 				(_TP_ARGS_DATA_VAR(__VA_ARGS__));			\
 	} while ((++__tp_probe)->func);							\
 end:											\
-	tp_rcu_read_unlock_bp();							\
+	tp_srcu_read_unlock_percpu(period);						\
 }											\
 static inline lttng_ust_notrace								\
 void __tracepoint_register_##_provider##___##_name(char *name,				\
@@ -218,9 +219,9 @@ struct lttng_ust_tracepoint_dlopen {
 	int (*tracepoint_register_lib)(struct lttng_ust_tracepoint * const *tracepoints_start,
 		int tracepoints_count);
 	int (*tracepoint_unregister_lib)(struct lttng_ust_tracepoint * const *tracepoints_start);
-	void (*rcu_read_lock_sym_bp)(void);
-	void (*rcu_read_unlock_sym_bp)(void);
-	void *(*rcu_dereference_sym_bp)(void *p);
+	int (*srcu_read_lock_sym_percpu)(void);
+	void (*srcu_read_unlock_sym_percpu)(int period);
+	void *(*rcu_dereference_sym_percpu)(void *p);
 };
 
 extern struct lttng_ust_tracepoint_dlopen tracepoint_dlopen;
@@ -277,21 +278,21 @@ __tracepoint__init_urcu_sym(void)
 	 * Symbols below are needed by tracepoint call sites and probe
 	 * providers.
 	 */
-	if (!tracepoint_dlopen_ptr->rcu_read_lock_sym_bp)
-		tracepoint_dlopen_ptr->rcu_read_lock_sym_bp =
-			URCU_FORCE_CAST(void (*)(void),
+	if (!tracepoint_dlopen_ptr->srcu_read_lock_sym_percpu)
+		tracepoint_dlopen_ptr->srcu_read_lock_sym_percpu =
+			URCU_FORCE_CAST(int (*)(void),
 				dlsym(tracepoint_dlopen_ptr->liblttngust_handle,
-					"tp_rcu_read_lock_bp"));
-	if (!tracepoint_dlopen_ptr->rcu_read_unlock_sym_bp)
-		tracepoint_dlopen_ptr->rcu_read_unlock_sym_bp =
-			URCU_FORCE_CAST(void (*)(void),
+					"tp_srcu_read_lock_percpu"));
+	if (!tracepoint_dlopen_ptr->srcu_read_unlock_sym_percpu)
+		tracepoint_dlopen_ptr->srcu_read_unlock_sym_percpu =
+			URCU_FORCE_CAST(void (*)(int),
 				dlsym(tracepoint_dlopen_ptr->liblttngust_handle,
-					"tp_rcu_read_unlock_bp"));
-	if (!tracepoint_dlopen_ptr->rcu_dereference_sym_bp)
-		tracepoint_dlopen_ptr->rcu_dereference_sym_bp =
+					"tp_srcu_read_unlock_percpu"));
+	if (!tracepoint_dlopen_ptr->rcu_dereference_sym_percpu)
+		tracepoint_dlopen_ptr->rcu_dereference_sym_percpu =
 			URCU_FORCE_CAST(void *(*)(void *p),
 				dlsym(tracepoint_dlopen_ptr->liblttngust_handle,
-					"tp_rcu_dereference_sym_bp"));
+					"tp_rcu_dereference_sym_percpu"));
 }
 #else
 static inline void lttng_ust_notrace

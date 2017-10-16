@@ -27,23 +27,23 @@
 
 #ifdef _LGPL_SOURCE
 
-#include <urcu-bp.h>
+#include <urcu-percpu.h>
 
-#define tp_rcu_read_lock_bp	rcu_read_lock_bp
-#define tp_rcu_read_unlock_bp	rcu_read_unlock_bp
-#define tp_rcu_dereference_bp	rcu_dereference
-#define TP_RCU_LINK_TEST()	1
+#define tp_srcu_read_lock_percpu	srcu_read_lock_percpu
+#define tp_srcu_read_unlock_percpu	srcu_read_unlock_percpu
+#define tp_rcu_dereference_percpu	rcu_dereference
+#define TP_RCU_LINK_TEST()		1
 
 #else	/* _LGPL_SOURCE */
 
-#define tp_rcu_read_lock_bp	tracepoint_dlopen_ptr->rcu_read_lock_sym_bp
-#define tp_rcu_read_unlock_bp	tracepoint_dlopen_ptr->rcu_read_unlock_sym_bp
+#define tp_srcu_read_lock_percpu		tracepoint_dlopen_ptr->srcu_read_lock_sym_percpu
+#define tp_srcu_read_unlock_percpu		tracepoint_dlopen_ptr->srcu_read_unlock_sym_percpu
 
-#define tp_rcu_dereference_bp(p)					   \
+#define tp_rcu_dereference_percpu(p)					   \
 		URCU_FORCE_CAST(__typeof__(p),				   \
-			tracepoint_dlopen_ptr->rcu_dereference_sym_bp(URCU_FORCE_CAST(void *, p)))
+			tracepoint_dlopen_ptr->rcu_dereference_sym_percpu(URCU_FORCE_CAST(void *, p)))
 
-#define TP_RCU_LINK_TEST()	(tracepoint_dlopen_ptr && tp_rcu_read_lock_bp)
+#define TP_RCU_LINK_TEST()		(tracepoint_dlopen_ptr && tp_srcu_read_lock_percpu)
 
 #endif	/* _LGPL_SOURCE */
 

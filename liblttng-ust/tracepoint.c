@@ -26,7 +26,7 @@
 #include <stdio.h>
 
 #include <urcu/arch.h>
-#include <urcu-bp.h>
+#include <urcu-percpu.h>
 #include <urcu/hlist.h>
 #include <urcu/uatomic.h>
 #include <urcu/compiler.h>
@@ -940,21 +940,21 @@ void exit_tracepoint(void)
 /*
  * Create the wrapper symbols.
  */
-#undef tp_rcu_read_lock_bp
-#undef tp_rcu_read_unlock_bp
-#undef tp_rcu_dereference_bp
+#undef tp_srcu_read_lock_percpu
+#undef tp_srcu_read_unlock_percpu
+#undef tp_rcu_dereference_percpu
 
-void tp_rcu_read_lock_bp(void)
+int tp_srcu_read_lock_percpu(void)
 {
-	rcu_read_lock_bp();
+	return srcu_read_lock_percpu();
 }
 
-void tp_rcu_read_unlock_bp(void)
+void tp_rcu_read_unlock_percpu(int period)
 {
-	rcu_read_unlock_bp();
+	srcu_read_unlock_percpu(period);
 }
 
-void *tp_rcu_dereference_sym_bp(void *p)
+void *tp_rcu_dereference_sym_percpu(void *p)
 {
-	return rcu_dereference_bp(p);
+	return rcu_dereference_percpu(p);
 }
