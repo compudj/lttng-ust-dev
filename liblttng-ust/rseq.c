@@ -30,9 +30,7 @@
 
 #define ARRAY_SIZE(arr)	(sizeof(arr) / sizeof((arr)[0]))
 
-__attribute__((weak)) __thread volatile struct rseq __rseq_abi = {
-	.u.e.cpu_id = -1,
-};
+DEFINE_RSEQ_ABI();
 
 /* Own state, not shared with other libs. */
 static __thread int rseq_registered;
