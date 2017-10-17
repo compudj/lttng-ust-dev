@@ -105,6 +105,11 @@ int rseq_register_current_thread(void)
 	signal_off_save(&oldset);
 	if (caa_likely(!rseq_registered)) {
 		rc = sys_rseq(&__rseq_abi, 0, RSEQ_SIG);
+		if (rc && errno == EBUSY) {
+			/* Registered by another rseq user. */
+			assert(rseq_current_cpu_raw() >= 0);
+			goto end;
+		}
 		if (rc) {
 			fprintf(stderr, "Error: sys_rseq(...) failed(%d): %s\n",
 				errno, strerror(errno));
