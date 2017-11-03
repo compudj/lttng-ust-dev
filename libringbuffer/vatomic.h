@@ -27,8 +27,8 @@
 
 #include <assert.h>
 #include <urcu/uatomic.h>
-#include <lttng/rseq.h>
-#include <lttng/cpu-op.h>
+#include <lttng/ust-rseq.h>
+#include <cpu-op.h>
 
 /*
  * Same data type (long) accessed differently depending on configuration.
@@ -61,30 +61,17 @@ void v_add(const struct lttng_ust_lib_ring_buffer_config *config, long v,
 		union v_atomic *v_a, int cpu)
 {
 	if (caa_likely(config->sync == RING_BUFFER_SYNC_PER_CPU)) {
+		int ret;
+
 #ifndef SKIP_FASTPATH
-		struct rseq_state rseq_state;
-		intptr_t *targetptr, newval;
-
 		/* Try fast path. */
-		rseq_state = rseq_start();
-		if (caa_unlikely(rseq_cpu_at_start(rseq_state) < 0))
-			goto atomic;
-		if (caa_unlikely(rseq_cpu_at_start(rseq_state) != cpu))
-			goto slowpath;
-		newval = (intptr_t)v_a->a + v;
-		targetptr = (intptr_t *)&v_a->a;
-		if (unlikely(!rseq_finish(targetptr, newval, rseq_state)))
-			goto slowpath;
-		return;
-
-slowpath:
+		ret = rseq_addv((intptr_t *)&v_a->a, v, cpu);
+		if (likely(!ret))
+			return;
 #endif
 		for (;;) {
 			/* Fallback on cpu_opv system call. */
-			int ret;
-
-			ret = cpu_op_add(&v_a->a, v,
-				sizeof(v_a->a), cpu);
+			ret = cpu_op_addv((intptr_t *)&v_a->a, v, cpu);
 			if (likely(!ret))
 				break;
 			assert(ret >= 0 || errno == EAGAIN);
@@ -103,30 +90,17 @@ void v_inc(const struct lttng_ust_lib_ring_buffer_config *config,
 		union v_atomic *v_a, int cpu)
 {
 	if (caa_likely(config->sync == RING_BUFFER_SYNC_PER_CPU)) {
+		int ret;
+
 #ifndef SKIP_FASTPATH
-		struct rseq_state rseq_state;
-		intptr_t *targetptr, newval;
-
 		/* Try fast path. */
-		rseq_state = rseq_start();
-		if (caa_unlikely(rseq_cpu_at_start(rseq_state) < 0))
-			goto atomic;
-		if (caa_unlikely(rseq_cpu_at_start(rseq_state) != cpu))
-			goto slowpath;
-		newval = (intptr_t)v_a->a + 1;
-		targetptr = (intptr_t *)&v_a->a;
-		if (unlikely(!rseq_finish(targetptr, newval, rseq_state)))
-			goto slowpath;
-		return;
-
-slowpath:
+		ret = rseq_addv((intptr_t *)&v_a->a, 1, cpu);
+		if (likely(!ret))
+			return;
 #endif
 		for (;;) {
 			/* Fallback on cpu_opv system call. */
-			int ret;
-
-			ret = cpu_op_add(&v_a->a, 1,
-				sizeof(v_a->a), cpu);
+			ret = cpu_op_addv((intptr_t *)&v_a->a, 1, cpu);
 			if (likely(!ret))
 				break;
 			assert(ret >= 0 || errno == EAGAIN);
@@ -150,54 +124,36 @@ void _v_dec(const struct lttng_ust_lib_ring_buffer_config *config, union v_atomi
 }
 
 static inline
-long v_cmpxchg(const struct lttng_ust_lib_ring_buffer_config *config, union v_atomic *v_a,
+int v_cmpstore(const struct lttng_ust_lib_ring_buffer_config *config, union v_atomic *v_a,
 	       long old, long _new, int cpu)
 {
 	if (caa_likely(config->sync == RING_BUFFER_SYNC_PER_CPU)) {
+		int ret;
+
 #ifndef SKIP_FASTPATH
-		struct rseq_state rseq_state;
-		intptr_t *targetptr, newval, resval, oldval;
-
 		/* Try fast path. */
-		rseq_state = rseq_start();
-		if (caa_unlikely(rseq_cpu_at_start(rseq_state) < 0))
-			goto atomic;
-		if (caa_unlikely(rseq_cpu_at_start(rseq_state) != cpu))
-			goto slowpath;
-		oldval = (intptr_t)old;
-		resval = (intptr_t)v_read(config, v_a);
-		if (resval != oldval)
-			goto end;
-		newval = (intptr_t)_new;
-		targetptr = (intptr_t *)&v_a->a;
-		if (unlikely(!rseq_finish(targetptr, newval, rseq_state)))
-			goto slowpath;
-end:
-		return (long)resval;
-
-slowpath:
+		ret = rseq_cmpeqv_storev((intptr_t *)&v_a->a, old, _new, cpu);
+		if (likely(!ret))
+			return 0;
+		if (likely(ret > 0))
+			return 1;
 #endif
-		{
-			long res;
-
-			for (;;) {
-				/* Fallback on cpu_opv system call. */
-				int ret;
-
-				ret = cpu_op_cmpxchg(&v_a->a, &old,
-					&res, &_new, sizeof(v_a->a), cpu);
-				if (ret >= 0)
-					break;
-				assert(ret >= 0 || errno == EAGAIN);
-			}
-			return (long)res;
+		/* Slow path. */
+		for (;;) {
+			/* Fallback on cpu_opv system call. */
+			ret = cpu_op_cmpeqv_storev((intptr_t *)&v_a->a,
+				old, _new, cpu);
+			if (ret >= 0)
+				break;
+			assert(ret >= 0 || errno == EAGAIN);
 		}
+		return ret;
 	} else {
 		goto atomic;
 	}
 
 atomic:
-	return uatomic_cmpxchg(&v_a->a, old, _new);
+	return uatomic_cmpxchg(&v_a->a, old, _new) != old;
 }
 
 #endif /* _LTTNG_RING_BUFFER_VATOMIC_H */

@@ -1997,7 +1997,7 @@ int lib_ring_buffer_try_switch_slow(enum switch_mode mode,
  * Force a sub-buffer switch. This operation is completely reentrant : can be
  * called while tracing is active with absolutely no lock held.
  *
- * Note, however, that as a v_cmpxchg is used for some atomic
+ * Note, however, that as a v_cmpstore is used for some atomic
  * operations, this function must be called from the CPU which owns the buffer
  * for a ACTIVE flush.
  */
@@ -2024,8 +2024,7 @@ void lib_ring_buffer_switch_slow(struct lttng_ust_lib_ring_buffer *buf, enum swi
 		if (lib_ring_buffer_try_switch_slow(mode, buf, chan, &offsets,
 						    &tsc, handle))
 			return;	/* Switch not needed */
-	} while (v_cmpxchg(config, &buf->offset, offsets.old, offsets.end, buf->backend.cpu)
-		 != offsets.old);
+	} while (v_cmpstore(config, &buf->offset, offsets.old, offsets.end, buf->backend.cpu));
 
 	/*
 	 * Atomically update last_tsc. This update races against concurrent
@@ -2299,9 +2298,8 @@ int lib_ring_buffer_reserve_slow(struct lttng_ust_lib_ring_buffer_ctx *ctx,
 						       ctx, client_ctx);
 		if (caa_unlikely(ret))
 			return ret;
-	} while (caa_unlikely(v_cmpxchg(config, &buf->offset, offsets.old,
-				    offsets.end, buf->backend.cpu)
-			  != offsets.old));
+	} while (caa_unlikely(v_cmpstore(config, &buf->offset, offsets.old,
+				    offsets.end, buf->backend.cpu)));
 
 	/*
 	 * Atomically update last_tsc. This update races against concurrent
@@ -2441,9 +2439,8 @@ void lib_ring_buffer_check_deliver_slow(const struct lttng_ust_lib_ring_buffer_c
 	cc_cold = shmp_index(handle, buf->commit_cold, idx);
 	if (!cc_cold)
 		return;
-	if (caa_likely(v_cmpxchg(config, &cc_cold->cc_sb,
-				 old_commit_count, old_commit_count + 1, buf->backend.cpu)
-		   == old_commit_count)) {
+	if (caa_likely(!v_cmpstore(config, &cc_cold->cc_sb,
+				 old_commit_count, old_commit_count + 1, buf->backend.cpu))) {
 		/*
 		 * Start of exclusive subbuffer access. We are
 		 * guaranteed to be the last writer in this subbuffer

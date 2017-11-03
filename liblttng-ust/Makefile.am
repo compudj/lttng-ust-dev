@@ -14,6 +14,8 @@ liblttng_ust_tracepoint_la_SOURCES = \
 	error.h
 liblttng_ust_tracepoint_la_LIBADD = \
 	-lurcu-percpu \
+	-lrseq \
+	-lcpu-op \
 	-lpthread \
 	$(top_builddir)/snprintf/libustsnprintf.la
 liblttng_ust_tracepoint_la_LDFLAGS = -no-undefined -version-info $(LTTNG_UST_LIBRARY_VERSION)
@@ -82,7 +84,7 @@ liblttng_ust_support_la_SOURCES = \
 	lttng-ring-buffer-metadata-client.h \
 	lttng-ring-buffer-metadata-client.c \
 	lttng-clock.c lttng-getcpu.c \
-	rseq.c cpu-op.c
+	rseq.c
 
 liblttng_ust_la_SOURCES =
 
@@ -96,6 +98,8 @@ liblttng_ust_la_LIBADD = \
 	-lrt \
 	-lurcu-cds \
 	-ldl \
+	-lrseq \
+	-lcpu-op \
 	$(top_builddir)/snprintf/libustsnprintf.la \
 	$(top_builddir)/liblttng-ust-comm/liblttng-ust-comm.la \
 	liblttng-ust-tracepoint.la \

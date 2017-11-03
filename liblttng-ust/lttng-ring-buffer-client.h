@@ -25,7 +25,7 @@
 #include "lttng/bitfield.h"
 #include "clock.h"
 #include "lttng-tracer.h"
-#include <lttng/rseq.h>
+#include <lttng/ust-rseq.h>
 #include "../libringbuffer/frontend_types.h"
 
 #define LTTNG_COMPACT_EVENT_BITS       5

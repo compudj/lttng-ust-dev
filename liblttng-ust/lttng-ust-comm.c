@@ -45,7 +45,7 @@
 #include <lttng/ust.h>
 #include <lttng/ust-error.h>
 #include <lttng/ust-ctl.h>
-#include <lttng/rseq.h>
+#include <lttng/ust-rseq.h>
 #include <urcu/tls-compat.h>
 #include <ust-comm.h>
 #include <ust-fd.h>
@@ -1677,7 +1677,7 @@ void __attribute__((constructor)) lttng_ust_init(void)
 	lttng_ust_clock_init();
 	lttng_ust_getcpu_init();
 	lttng_ust_statedump_init();
-	rseq_init();
+	lttng_ust_rseq_init();
 	lttng_ring_buffer_metadata_client_init();
 	lttng_ring_buffer_client_overwrite_init();
 	lttng_ring_buffer_client_overwrite_rt_init();
@@ -1816,7 +1816,7 @@ void lttng_ust_cleanup(int exiting)
 	lttng_ring_buffer_client_overwrite_rt_exit();
 	lttng_ring_buffer_client_overwrite_exit();
 	lttng_ring_buffer_metadata_client_exit();
-	rseq_destroy();
+	lttng_ust_rseq_destroy();
 	lttng_ust_statedump_destroy();
 	exit_tracepoint();
 	if (!exiting) {

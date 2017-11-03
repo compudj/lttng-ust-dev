@@ -24,7 +24,7 @@
 #include <urcu/arch.h>
 #include <config.h>
 
-#include <lttng/rseq.h>
+#include <lttng/ust-rseq.h>
 
 void lttng_ust_getcpu_init(void);
 
@@ -65,7 +65,7 @@ retry:
 	cpu = rseq_current_cpu_raw();
 	if (caa_unlikely(cpu < 0)) {
 		if (caa_unlikely(cpu == -1)) {
-			if (!rseq_register_current_thread())
+			if (!lttng_rseq_register_current_thread())
 				goto retry;
 		}
 		/* rseq is unavailable. */
@@ -90,7 +90,7 @@ retry:
 	cpu = rseq_current_cpu_raw();
 	if (caa_unlikely(cpu < 0)) {
 		if (caa_unlikely(cpu == -1)) {
-			if (!rseq_register_current_thread())
+			if (!lttng_rseq_register_current_thread())
 				goto retry;
 		}
 		/* rseq is unavailable. */
@@ -129,7 +129,7 @@ int lttng_ust_get_cpu(void)
 		return lttng_ust_get_cpu_internal();
 	} else {
 		if (caa_unlikely(rseq_current_cpu_raw() == -1)) {
-			(void)rseq_register_current_thread();
+			(void)lttng_rseq_register_current_thread();
 		}
 		return getcpu();
 	}

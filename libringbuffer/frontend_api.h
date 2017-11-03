@@ -182,8 +182,7 @@ int lib_ring_buffer_reserve(const struct lttng_ust_lib_ring_buffer_config *confi
 						 &o_end, &o_old, &before_hdr_pad)))
 		goto slow_path;
 
-	if (caa_unlikely(v_cmpxchg(config, &ctx->buf->offset, o_old, o_end, buf->backend.cpu)
-		     != o_old))
+	if (caa_unlikely(v_cmpstore(config, &ctx->buf->offset, o_old, o_end, buf->backend.cpu)))
 		goto slow_path;
 
 	/*
@@ -221,7 +220,7 @@ slow_path:
  * This operation is completely reentrant : can be called while tracing is
  * active with absolutely no lock held.
  *
- * Note, however, that as a v_cmpxchg is used for some atomic operations and
+ * Note, however, that as a v_cmpstore is used for some atomic operations and
  * requires to be executed locally for per-CPU buffers, this function must be
  * called from the CPU which owns the buffer for a ACTIVE flush, with preemption
  * disabled, for RING_BUFFER_SYNC_PER_CPU configuration.
@@ -322,7 +321,7 @@ int lib_ring_buffer_try_discard_reserve(const struct lttng_ust_lib_ring_buffer_c
 	unsigned long end_offset = ctx->pre_offset + ctx->slot_size;
 
 	/*
-	 * We need to ensure that if the cmpxchg succeeds and discards the
+	 * We need to ensure that if the cmpstore succeeds and discards the
 	 * record, the next record will record a full TSC, because it cannot
 	 * rely on the last_tsc associated with the discarded record to detect
 	 * overflows. The only way to ensure this is to set the last_tsc to 0
@@ -335,8 +334,8 @@ int lib_ring_buffer_try_discard_reserve(const struct lttng_ust_lib_ring_buffer_c
 	 */
 	save_last_tsc(config, buf, 0ULL);
 
-	if (caa_likely(v_cmpxchg(config, &buf->offset, end_offset, ctx->pre_offset,
-			buf->backend.cpu) != end_offset))
+	if (caa_likely(v_cmpstore(config, &buf->offset, end_offset, ctx->pre_offset,
+			buf->backend.cpu)))
 		return -EPERM;
 	else
 		return 0;

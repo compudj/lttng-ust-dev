@@ -14,7 +14,6 @@
  * Lesser General Public License for more details.
  */
 
-#define _GNU_SOURCE
 #include <errno.h>
 #include <sched.h>
 #include <stdio.h>
@@ -26,29 +25,13 @@
 #include <signal.h>
 #include <urcu/compiler.h>
 
-#include <rseq.h>
-
-#define ARRAY_SIZE(arr)	(sizeof(arr) / sizeof((arr)[0]))
-
-DEFINE_RSEQ_ABI();
+#include <urcu/rseq.h>
 
 /* Own state, not shared with other libs. */
+//TODO: TLS IE
 static __thread int rseq_registered;
 
 static pthread_key_t rseq_key;
-
-#ifdef __NR_rseq
-static int sys_rseq(volatile struct rseq *rseq_abi, int flags, uint32_t sig)
-{
-	return syscall(__NR_rseq, rseq_abi, flags, sig);
-}
-#else
-static int sys_rseq(volatile struct rseq *rseq_abi, int flags, uint32_t sig)
-{
-	errno = ENOSYS;
-	return -1;
-}
-#endif
 
 static void signal_off_save(sigset_t *oldset)
 {
@@ -70,17 +53,15 @@ static void signal_restore(sigset_t oldset)
 		abort();
 }
 
-int rseq_unregister_current_thread(void)
+static int lttng_rseq_unregister_current_thread(void)
 {
 	sigset_t oldset;
 	int rc, ret = 0;
 
 	signal_off_save(&oldset);
 	if (rseq_registered) {
-		rc = sys_rseq(&__rseq_abi, RSEQ_FLAG_UNREGISTER, RSEQ_SIG);
+		rc = rseq_unregister_current_thread();
 		if (rc) {
-			fprintf(stderr, "Error: sys_rseq(...) failed(%d): %s\n",
-				errno, strerror(errno));
 			ret = -1;
 			goto end;
 		}
@@ -91,34 +72,25 @@ end:
 	return ret;
 }
 
-static void destroy_rseq_key(void *key)
+static void lttng_destroy_rseq_key(void *key)
 {
-	if (rseq_unregister_current_thread())
+	if (lttng_rseq_unregister_current_thread())
 		abort();
 }
 
-int rseq_register_current_thread(void)
+int lttng_rseq_register_current_thread(void)
 {
 	sigset_t oldset;
 	int rc, ret = 0;
 
 	signal_off_save(&oldset);
 	if (caa_likely(!rseq_registered)) {
-		rc = sys_rseq(&__rseq_abi, 0, RSEQ_SIG);
-		if (rc && errno == EBUSY) {
-			/* Registered by another rseq user. */
-			assert(rseq_current_cpu_raw() >= 0);
-			goto end;
-		}
+		rc = rseq_register_current_thread();
 		if (rc) {
-			fprintf(stderr, "Error: sys_rseq(...) failed(%d): %s\n",
-				errno, strerror(errno));
-			__rseq_abi.u.e.cpu_id = -2;
 			ret = -1;
 			goto end;
 		}
 		rseq_registered = 1;
-		assert(rseq_current_cpu_raw() >= 0);
 		/*
 		 * Register destroy notifier. Pointer needs to
 		 * be non-NULL.
@@ -131,23 +103,11 @@ end:
 	return ret;
 }
 
-int rseq_fallback_current_cpu(void)
-{
-	int cpu;
-
-	cpu = sched_getcpu();
-	if (cpu < 0) {
-		perror("sched_getcpu()");
-		abort();
-	}
-	return cpu;
-}
-
-void rseq_init(void)
+void lttng_ust_rseq_init(void)
 {
 	int ret;
 
-	ret = pthread_key_create(&rseq_key, destroy_rseq_key);
+	ret = pthread_key_create(&rseq_key, lttng_destroy_rseq_key);
 	if (ret) {
 		errno = -ret;
 		perror("pthread_key_create");
@@ -155,7 +115,7 @@ void rseq_init(void)
 	}
 }
 
-void rseq_destroy(void)
+void lttng_ust_rseq_destroy(void)
 {
 	int ret;
 

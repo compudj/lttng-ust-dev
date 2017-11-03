@@ -740,6 +740,8 @@ void lttng_ust_fixup_fd_tracker_tls(void);
 extern struct lttng_ctx *lttng_static_ctx;
 void lttng_context_init(void);
 void lttng_context_exit(void);
+void lttng_ust_rseq_init(void);
+void lttng_ust_rseq_destroy(void);
 
 #ifdef __cplusplus
 }

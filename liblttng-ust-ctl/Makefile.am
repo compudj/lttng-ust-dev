@@ -11,4 +11,6 @@ liblttng_ust_ctl_la_LIBADD = \
 	$(top_builddir)/liblttng-ust-comm/liblttng-ust-comm.la \
 	$(top_builddir)/liblttng-ust/liblttng-ust-support.la \
 	$(top_builddir)/snprintf/libustsnprintf.la \
+	-lrseq \
+	-lcpu-op \
 	-ldl
