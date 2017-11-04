@@ -397,6 +397,7 @@ void lttng_fixup_urcu_bp_tls(void)
 {
 	int period;
 
+	rcu_init();
 	period = srcu_read_lock();
 	srcu_read_unlock(period);
 }
