@@ -248,6 +248,9 @@ AC_COMPILE_IFELSE([AC_LANG_SOURCE([[
 # urcu - check that URCU lib is available to compilation
 AC_CHECK_LIB([urcu-percpu], [synchronize_rcu_percpu], [], [AC_MSG_ERROR([Cannot find liburcu-percpu lib. Use [LDFLAGS]=-Ldir to specify its location.])])
 
+# numa - check that numa lib is available
+AC_CHECK_LIB([numa], [numa_available], [], [AC_MSG_ERROR([libnuma is required, please install it (e.g. libnuma-dev) or use [LDFLAGS]=-Ldir to specify the right location.])])
+
 # optional linux/perf_event.h
 AC_CHECK_HEADERS([linux/perf_event.h], [have_perf_event=yes], [])
 
