@@ -248,8 +248,21 @@ AC_COMPILE_IFELSE([AC_LANG_SOURCE([[
 # urcu - check that URCU lib is available to compilation
 AC_CHECK_LIB([urcu-percpu], [synchronize_rcu_percpu], [], [AC_MSG_ERROR([Cannot find liburcu-percpu lib. Use [LDFLAGS]=-Ldir to specify its location.])])
 
-# numa - check that numa lib is available
-AC_CHECK_LIB([numa], [numa_available], [], [AC_MSG_ERROR([libnuma is required, please install it (e.g. libnuma-dev) or use [LDFLAGS]=-Ldir to specify the right location.])])
+# numa.h integration
+AC_ARG_ENABLE([numa], [
+AS_HELP_STRING([--disable-numa], [disable NUMA support])
+], [
+	enable_numa=$enableval
+], [
+	enable_numa=yes
+])
+
+AS_IF([test "x$enable_numa" = "xyes"], [
+	# numa - check that numa lib is available
+	AC_CHECK_LIB([numa], [numa_available], [], [AC_MSG_ERROR([libnuma is required, please install it (e.g. libnuma-dev) or use [LDFLAGS]=-Ldir to specify the right location.])])
+	have_libnuma=yes
+])
+AM_CONDITIONAL([HAVE_LIBNUMA], [test "x$have_libnuma" = "xyes"])
 
 # optional linux/perf_event.h
 AC_CHECK_HEADERS([linux/perf_event.h], [have_perf_event=yes], [])
@@ -570,6 +583,9 @@ PPRINT_PROP_BOOL_CUSTOM([JNI interface (JNI)], $value, [use --enable-jni-interfa
 
 test "x$python_agent" = xyes && value=1 || value=0
 PPRINT_PROP_BOOL_CUSTOM([Python agent], $value, [use --enable-python-agent])
+
+test "x$enable_numa" = xyes && value=1 || value=0
+PPRINT_PROP_BOOL([NUMA], $value)
 
 AS_ECHO
 PPRINT_SET_INDENT(0)
