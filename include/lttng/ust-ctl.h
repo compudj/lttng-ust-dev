@@ -238,6 +238,7 @@ int ustctl_put_subbuf(struct ustctl_consumer_stream *stream);
 
 void ustctl_flush_buffer(struct ustctl_consumer_stream *stream,
 		int producer_active);
+void ustctl_clear_buffer(struct ustctl_consumer_stream *stream);
 
 /* index */
 int ustctl_get_timestamp_begin(struct ustctl_consumer_stream *stream,
