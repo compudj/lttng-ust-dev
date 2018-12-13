@@ -393,18 +393,18 @@ void lttng_fixup_ust_mutex_nest_tls(void)
 }
 
 /*
- * Fixup urcu bp TLS.
+ * Fixup lttng ust rcu TLS.
  */
 static
-void lttng_fixup_urcu_bp_tls(void)
+void lttng_fixup_lttng_ust_rcu_tls(void)
 {
-	rcu_read_lock();
-	rcu_read_unlock();
+	lttng_ust_rcu_read_lock();
+	lttng_ust_rcu_read_unlock();
 }
 
 void lttng_ust_fixup_tls(void)
 {
-	lttng_fixup_urcu_bp_tls();
+	lttng_fixup_lttng_ust_rcu_tls();
 	lttng_fixup_ringbuffer_tls();
 	lttng_fixup_vtid_tls();
 	lttng_fixup_nest_count_tls();
@@ -1969,7 +1969,7 @@ void ust_before_fork(sigset_t *save_sigset)
 	pthread_mutex_lock(&ust_fork_mutex);
 
 	ust_lock_nocheck();
-	urcu_bp_before_fork();
+	lttng_ust_rcu_before_fork();
 }
 
 static void ust_after_fork_common(sigset_t *restore_sigset)
@@ -1993,7 +1993,7 @@ void ust_after_fork_parent(sigset_t *restore_sigset)
 	if (URCU_TLS(lttng_ust_nest_count))
 		return;
 	DBG("process %d", getpid());
-	urcu_bp_after_fork_parent();
+	lttng_ust_rcu_after_fork_parent();
 	/* Release mutexes and reenable signals */
 	ust_after_fork_common(restore_sigset);
 }
@@ -2016,7 +2016,7 @@ void ust_after_fork_child(sigset_t *restore_sigset)
 	lttng_context_procname_reset();
 	DBG("process %d", getpid());
 	/* Release urcu mutexes */
-	urcu_bp_after_fork_child();
+	lttng_ust_rcu_after_fork_child();
 	lttng_ust_cleanup(0);
 	/* Release mutexes and reenable signals */
 	ust_after_fork_common(restore_sigset);

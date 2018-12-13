@@ -25,10 +25,10 @@
  */
 
 #define _LGPL_SOURCE
-#include <urcu-bp.h>
 #include <time.h>
 #include "lttng-filter.h"
 
+#include <lttng/ust-rcu.h>
 #include <urcu/rculfhash.h>
 #include "lttng-hash-helper.h"
 #include "string-utils.h"
@@ -1865,9 +1865,9 @@ int lttng_filter_validate_bytecode(struct bytecode_runtime *bytecode)
 	 * holding RCU read-side lock and free nodes without using
 	 * call_rcu.
 	 */
-	merge_points = cds_lfht_new(DEFAULT_NR_MERGE_POINTS,
+	merge_points = cds_lfht_new_flavor(DEFAULT_NR_MERGE_POINTS,
 			MIN_NR_BUCKETS, MAX_NR_BUCKETS,
-			0, NULL);
+			0, &lttng_ust_rcu_flavor, NULL);
 	if (!merge_points) {
 		ERR("Error allocating hash table for bytecode validation\n");
 		return -ENOMEM;

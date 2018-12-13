@@ -31,7 +31,6 @@
  */
 
 #include "frontend.h"
-#include <urcu-bp.h>
 #include <urcu/compiler.h>
 
 /**

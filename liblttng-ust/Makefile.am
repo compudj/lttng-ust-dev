@@ -13,7 +13,6 @@ liblttng_ust_tracepoint_la_SOURCES = \
 	jhash.h \
 	error.h
 liblttng_ust_tracepoint_la_LIBADD = \
-	-lurcu-bp \
 	-lpthread \
 	$(top_builddir)/snprintf/libustsnprintf.la
 liblttng_ust_tracepoint_la_LDFLAGS = -no-undefined -version-info $(LTTNG_UST_LIBRARY_VERSION)
@@ -74,6 +73,9 @@ liblttng_ust_runtime_la_SOURCES += \
 	lttng-context-perf-counters.c \
 	perf_event.h
 endif
+
+liblttng_ust_runtime_la_LIBADD = \
+	$(top_builddir)/liblttng-ust-rcu/liblttng-ust-rcu.la
 
 liblttng_ust_support_la_SOURCES = \
 	lttng-tracer.h \

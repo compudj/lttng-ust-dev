@@ -205,6 +205,8 @@ AH_TEMPLATE([LTTNG_UST_HAVE_EFFICIENT_UNALIGNED_ACCESS], [Use efficient unaligne
 AH_TEMPLATE([LTTNG_UST_HAVE_SDT_INTEGRATION], [SystemTap integration via sdt.h])
 AH_TEMPLATE([LTTNG_UST_HAVE_PERF_EVENT], [Perf event integration via perf_event.h])
 
+# TODO: CONFIG_LTTNG_UST_FORCE_SYS_MEMBARRIER
+
 # Checks for libraries.
 AC_CHECK_LIB([dl], [dlopen], [
 	have_libdl=yes
@@ -251,13 +253,12 @@ AM_CONDITIONAL([HAVE_DLINFO], [test "x${ac_cv_have_decl_RTLD_DI_LINKMAP}" = "xye
 # URCU
 
 # urcu - check if we just find the headers it out of the box.
-AC_CHECK_HEADERS([urcu-bp.h], [], [AC_MSG_ERROR([Cannot find [URCU] headers (urcu-bp.h). Use [CPPFLAGS]=-Idir to specify their location.
-This error can also occur when the liburcu package's configure script has not been run.])])
+AC_CHECK_HEADERS([urcu/tls-compat.h], [], [AC_MSG_ERROR([Cannot find [URCU] headers (urcu/tls-compat.h). Use [CPPFLAGS]=-Idir to specify their location. This error can also occur when the liburcu package's configure script has not been run.])])
 
 # urcu-cds - check that URCU Concurrent Data Structure lib is available to compilation
-# Part of Userspace RCU library 0.7.2 or better.
-AC_CHECK_LIB([urcu-cds], [_cds_lfht_new], [], [AC_MSG_ERROR([Cannot find
-liburcu-cds lib, part of Userspace RCU 0.7 or better. Use [LDFLAGS]=-Ldir to specify its location.])])
+# the _cds_lfht_new symbol is available starting from Userspace RCU library 0.7.2.
+AC_CHECK_LIB([urcu-cds], [_cds_lfht_new], [],
+[AC_MSG_ERROR([Cannot find liburcu-cds lib from Userspace RCU 0.7 or better. Use [LDFLAGS]=-Ldir to specify its location.])])
 
 AC_MSG_CHECKING([caa_likely()])
 AC_COMPILE_IFELSE([AC_LANG_SOURCE([[
@@ -273,12 +274,6 @@ AC_COMPILE_IFELSE([AC_LANG_SOURCE([[
 	AC_MSG_RESULT([no])
 	AC_MSG_ERROR([Please upgrade your version of liburcu to 0.6.6 or better])
 ])
-
-# urcu - check that URCU lib is available to compilation
-AC_CHECK_LIB([urcu-bp], [urcu_bp_synchronize_rcu], [], [AC_MSG_ERROR([Cannot find liburcu-bp 0.11 or newer. Use [LDFLAGS]=-Ldir to specify its location.])])
-
-# urcu - check that URCU lib is at least version 0.11
-AC_CHECK_LIB([urcu-bp], [urcu_bp_call_rcu], [], [AC_MSG_ERROR([liburcu 0.11 or newer is needed, please update your version or use [LDFLAGS]=-Ldir to specify the right location.])])
 
 # numa.h integration
 AS_IF([test "x$NO_NUMA" = "x1"],[
@@ -540,6 +535,7 @@ AC_CONFIG_FILES([
 	liblttng-ust-libc-wrapper/Makefile
 	liblttng-ust-cyg-profile/Makefile
 	liblttng-ust-python-agent/Makefile
+	liblttng-ust-rcu/Makefile
 	python-lttngust/Makefile
 	python-lttngust/setup.py
 	python-lttngust/lttngust/__init__.py

@@ -20,8 +20,8 @@
  */
 
 #include <urcu/list.h>
-#include <urcu-bp.h>
 #include <lttng/tracepoint-types.h>
+#include <lttng/ust-rcu.h>
 
 #define TRACE_DEFAULT	TRACE_DEBUG_LINE
 
@@ -50,7 +50,7 @@ extern void __tracepoint_probe_prune_release_queue(void);
  */
 static inline void tracepoint_synchronize_unregister(void)
 {
-	urcu_bp_synchronize_rcu();
+	lttng_ust_synchronize_rcu();
 }
 
 extern void init_tracepoint(void);

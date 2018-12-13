@@ -37,7 +37,6 @@
 #include <lttng/ust-endian.h>
 #include "clock.h"
 
-#include <urcu-bp.h>
 #include <urcu/compiler.h>
 #include <urcu/uatomic.h>
 #include <urcu/arch.h>
@@ -51,6 +50,7 @@
 #include <ust-comm.h>
 #include <lttng/ust-dynamic-type.h>
 #include <lttng/ust-context-provider.h>
+#include <lttng/ust-rcu.h>
 #include "error.h"
 #include "compat.h"
 #include "lttng-ust-uuid.h"
@@ -132,7 +132,7 @@ int lttng_loglevel_match(int loglevel,
 
 void synchronize_trace(void)
 {
-	synchronize_rcu();
+	lttng_ust_synchronize_rcu();
 }
 
 struct lttng_session *lttng_session_create(void)

@@ -410,7 +410,7 @@ void lttng_destroy_perf_counter_field(struct lttng_ctx_field *field)
 	perf_field = field->u.perf_counter;
 	/*
 	 * This put is performed when no threads can concurrently
-	 * perform a "get" concurrently, thanks to urcu-bp grace
+	 * perform a "get" concurrently, thanks to lttng-ust-rcu grace
 	 * period.
 	 */
 	cds_list_for_each_entry_safe(pos, p, &perf_field->thread_field_list,

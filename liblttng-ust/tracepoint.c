@@ -24,9 +24,9 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <stdio.h>
+#include <stdbool.h>
 
 #include <urcu/arch.h>
-#include <urcu/urcu-bp.h>
 #include <urcu/hlist.h>
 #include <urcu/uatomic.h>
 #include <urcu/compiler.h>
@@ -37,6 +37,7 @@
 
 #include <usterr-signal-safe.h>
 #include <helper.h>
+#include <lttng/ust-rcu.h>
 
 #include "tracepoint-internal.h"
 #include "lttng-tracer-core.h"
@@ -166,7 +167,7 @@ static void release_probes(void *old)
 	if (old) {
 		struct tp_probes *tp_probes = caa_container_of(old,
 			struct tp_probes, probes[0]);
-		urcu_bp_synchronize_rcu();
+		lttng_ust_synchronize_rcu();
 		free(tp_probes);
 	}
 }
@@ -750,7 +751,7 @@ void __tracepoint_probe_prune_release_queue(void)
 	release_queue_need_update = 0;
 
 	/* Wait for grace period between all sync_callsites and free. */
-	urcu_bp_synchronize_rcu();
+	lttng_ust_synchronize_rcu();
 
 	cds_list_for_each_entry_safe(pos, next, &release_probes, u.list) {
 		cds_list_del(&pos->u.list);
@@ -841,7 +842,7 @@ void tracepoint_probe_update_all(void)
 
 	tracepoint_update_probes();
 	/* Wait for grace period between update_probes and free. */
-	urcu_bp_synchronize_rcu();
+	lttng_ust_synchronize_rcu();
 	cds_list_for_each_entry_safe(pos, next, &release_probes, u.list) {
 		cds_list_del(&pos->u.list);
 		free(pos);
@@ -987,17 +988,17 @@ void exit_tracepoint(void)
 
 void tp_rcu_read_lock_bp(void)
 {
-	urcu_bp_read_lock();
+	lttng_ust_rcu_read_lock();
 }
 
 void tp_rcu_read_unlock_bp(void)
 {
-	urcu_bp_read_unlock();
+	lttng_ust_rcu_read_unlock();
 }
 
 void *tp_rcu_dereference_sym_bp(void *p)
 {
-	return urcu_bp_dereference(p);
+	return rcu_dereference(p);
 }
 
 /*
