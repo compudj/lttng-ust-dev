@@ -66,13 +66,13 @@ void v_add(const struct lttng_ust_lib_ring_buffer_config *config, long v,
 #ifndef SKIP_FASTPATH
 		/* Try fast path. */
 		ret = rseq_addv((intptr_t *)&v_a->a, v, cpu);
-		if (likely(!ret))
+		if (caa_likely(!ret))
 			return;
 #endif
 		for (;;) {
 			/* Fallback on cpu_opv system call. */
 			ret = cpu_op_addv((intptr_t *)&v_a->a, v, cpu);
-			if (likely(!ret))
+			if (caa_likely(!ret))
 				break;
 			assert(ret >= 0 || errno == EAGAIN);
 		}
@@ -95,13 +95,13 @@ void v_inc(const struct lttng_ust_lib_ring_buffer_config *config,
 #ifndef SKIP_FASTPATH
 		/* Try fast path. */
 		ret = rseq_addv((intptr_t *)&v_a->a, 1, cpu);
-		if (likely(!ret))
+		if (caa_likely(!ret))
 			return;
 #endif
 		for (;;) {
 			/* Fallback on cpu_opv system call. */
 			ret = cpu_op_addv((intptr_t *)&v_a->a, 1, cpu);
-			if (likely(!ret))
+			if (caa_likely(!ret))
 				break;
 			assert(ret >= 0 || errno == EAGAIN);
 		}
@@ -133,9 +133,9 @@ int v_cmpstore(const struct lttng_ust_lib_ring_buffer_config *config, union v_at
 #ifndef SKIP_FASTPATH
 		/* Try fast path. */
 		ret = rseq_cmpeqv_storev((intptr_t *)&v_a->a, old, _new, cpu);
-		if (likely(!ret))
+		if (caa_likely(!ret))
 			return 0;
-		if (likely(ret > 0))
+		if (caa_likely(ret > 0))
 			return 1;
 #endif
 		/* Slow path. */
