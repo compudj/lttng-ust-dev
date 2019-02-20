@@ -1,4 +1,4 @@
-AM_CPPFLAGS = -I$(top_srcdir)/include -I$(top_builddir)/include
+AM_CPPFLAGS = -I$(top_srcdir)/include -I$(top_builddir)/include -DUSE_DL_PREFIX="lttng_ust_" -DONLY_MSPACES
 AM_CFLAGS += -fno-strict-aliasing
 
 noinst_LTLIBRARIES = liblttng-ust-runtime.la liblttng-ust-support.la
@@ -84,7 +84,8 @@ liblttng_ust_support_la_SOURCES = \
 	lttng-ring-buffer-client-overwrite-rt.c \
 	lttng-ring-buffer-metadata-client.h \
 	lttng-ring-buffer-metadata-client.c \
-	lttng-clock.c lttng-getcpu.c
+	lttng-clock.c lttng-getcpu.c \
+	lttng-ust-malloc.c
 
 liblttng_ust_la_SOURCES =
 

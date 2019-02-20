@@ -39,6 +39,7 @@ noinst_HEADERS = \
 	lttng/ust-dlfcn.h \
 	lttng/ust-dynamic-type.h \
 	lttng/ust-context-provider.h \
+	lttng/ust-malloc.h \
 	helper.h \
 	share.h
 
