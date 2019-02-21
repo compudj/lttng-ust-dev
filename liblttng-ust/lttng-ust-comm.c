@@ -2045,9 +2045,9 @@ void ust_after_fork_child(sigset_t *restore_sigset)
 	DBG("process %d", getpid());
 	/* Release urcu mutexes */
 	urcu_bp_after_fork_child();
-	lttng_ust_cleanup(0);
 	/* Release mutexes and reenable signals */
 	ust_after_fork_common(restore_sigset);
+	lttng_ust_cleanup(0);
 	lttng_ust_init();
 }
 
