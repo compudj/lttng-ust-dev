@@ -81,7 +81,7 @@ struct lttng_ust_dl_node *alloc_dl_node(const struct bin_info_data *bin_data)
 {
 	struct lttng_ust_dl_node *e;
 
-	e = zmalloc(sizeof(struct lttng_ust_dl_node));
+	e = lttng_ust_zmalloc(sizeof(struct lttng_ust_dl_node));
 	if (!e)
 		return NULL;
 	if (bin_data->dbg_file) {
@@ -90,7 +90,7 @@ struct lttng_ust_dl_node *alloc_dl_node(const struct bin_info_data *bin_data)
 			goto error;
 	}
 	if (bin_data->build_id) {
-		e->bin_data.build_id = zmalloc(bin_data->build_id_len);
+		e->bin_data.build_id = lttng_ust_zmalloc(bin_data->build_id_len);
 		if (!e->bin_data.build_id)
 			goto error;
 		memcpy(e->bin_data.build_id, bin_data->build_id,
@@ -108,18 +108,18 @@ struct lttng_ust_dl_node *alloc_dl_node(const struct bin_info_data *bin_data)
 	return e;
 
 error:
-	free(e->bin_data.build_id);
-	free(e->bin_data.dbg_file);
-	free(e);
+	lttng_ust_free(e->bin_data.build_id);
+	lttng_ust_free(e->bin_data.dbg_file);
+	lttng_ust_free(e);
 	return NULL;
 }
 
 static
 void free_dl_node(struct lttng_ust_dl_node *e)
 {
-	free(e->bin_data.build_id);
-	free(e->bin_data.dbg_file);
-	free(e);
+	lttng_ust_free(e->bin_data.build_id);
+	lttng_ust_free(e->bin_data.dbg_file);
+	lttng_ust_free(e);
 }
 
 /* Return 0 if same, nonzero if not. */
@@ -335,9 +335,9 @@ int extract_baddr(struct bin_info_data *bin_data)
 	}
 	e->marked = true;
 end:
-	free(bin_data->build_id);
+	lttng_ust_free(bin_data->build_id);
 	bin_data->build_id = NULL;
-	free(bin_data->dbg_file);
+	lttng_ust_free(bin_data->dbg_file);
 	bin_data->dbg_file = NULL;
 	return ret;
 }

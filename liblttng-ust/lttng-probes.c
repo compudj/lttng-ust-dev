@@ -245,7 +245,7 @@ void lttng_probes_prune_event_list(struct lttng_ust_tracepoint_list *list)
 
 	cds_list_for_each_entry_safe(list_entry, tmp, &list->head, head) {
 		cds_list_del(&list_entry->head);
-		free(list_entry);
+		lttng_ust_free(list_entry);
 	}
 }
 
@@ -264,7 +264,7 @@ int lttng_probes_get_event_list(struct lttng_ust_tracepoint_list *list)
 		for (i = 0; i < probe_desc->nr_events; i++) {
 			struct tp_list_entry *list_entry;
 
-			list_entry = zmalloc(sizeof(*list_entry));
+			list_entry = lttng_ust_zmalloc(sizeof(*list_entry));
 			if (!list_entry)
 				goto err_nomem;
 			cds_list_add(&list_entry->head, &list->head);
@@ -317,7 +317,7 @@ void lttng_probes_prune_field_list(struct lttng_ust_field_list *list)
 
 	cds_list_for_each_entry_safe(list_entry, tmp, &list->head, head) {
 		cds_list_del(&list_entry->head);
-		free(list_entry);
+		lttng_ust_free(list_entry);
 	}
 }
 
@@ -342,7 +342,7 @@ int lttng_probes_get_field_list(struct lttng_ust_field_list *list)
 				/* Events without fields. */
 				struct tp_field_list_entry *list_entry;
 
-				list_entry = zmalloc(sizeof(*list_entry));
+				list_entry = lttng_ust_zmalloc(sizeof(*list_entry));
 				if (!list_entry)
 					goto err_nomem;
 				cds_list_add(&list_entry->head, &list->head);
@@ -365,7 +365,7 @@ int lttng_probes_get_field_list(struct lttng_ust_field_list *list)
 					&event_desc->fields[j];
 				struct tp_field_list_entry *list_entry;
 
-				list_entry = zmalloc(sizeof(*list_entry));
+				list_entry = lttng_ust_zmalloc(sizeof(*list_entry));
 				if (!list_entry)
 					goto err_nomem;
 				cds_list_add(&list_entry->head, &list->head);

@@ -57,7 +57,7 @@ struct lttng_ust_elf_phdr *lttng_ust_elf_get_phdr(struct lttng_ust_elf *elf,
 		goto error;
 	}
 
-	phdr = zmalloc(sizeof(struct lttng_ust_elf_phdr));
+	phdr = lttng_ust_zmalloc(sizeof(struct lttng_ust_elf_phdr));
 	if (!phdr) {
 		goto error;
 	}
@@ -95,7 +95,7 @@ struct lttng_ust_elf_phdr *lttng_ust_elf_get_phdr(struct lttng_ust_elf *elf,
 	return phdr;
 
 error:
-	free(phdr);
+	lttng_ust_free(phdr);
 	return NULL;
 }
 
@@ -120,7 +120,7 @@ struct lttng_ust_elf_shdr *lttng_ust_elf_get_shdr(struct lttng_ust_elf *elf,
 		goto error;
 	}
 
-	shdr = zmalloc(sizeof(struct lttng_ust_elf_shdr));
+	shdr = lttng_ust_zmalloc(sizeof(struct lttng_ust_elf_shdr));
 	if (!shdr) {
 		goto error;
 	}
@@ -158,7 +158,7 @@ struct lttng_ust_elf_shdr *lttng_ust_elf_get_shdr(struct lttng_ust_elf *elf,
 	return shdr;
 
 error:
-	free(shdr);
+	lttng_ust_free(shdr);
 	return NULL;
 }
 
@@ -213,7 +213,7 @@ char *lttng_ust_elf_get_section_name(struct lttng_ust_elf *elf, off_t offset)
 		to_read -= read_len;
 	}
 end:
-	name = zmalloc(sizeof(char) * (len + 1));	/* + 1 for \0 */
+	name = lttng_ust_zmalloc(sizeof(char) * (len + 1));	/* + 1 for \0 */
 	if (!name) {
 		goto error;
 	}
@@ -228,7 +228,7 @@ end:
 	return name;
 
 error:
-	free(name);
+	lttng_ust_free(name);
 	return NULL;
 }
 
@@ -245,7 +245,7 @@ struct lttng_ust_elf *lttng_ust_elf_create(const char *path)
 	struct lttng_ust_elf *elf = NULL;
 	int ret, fd;
 
-	elf = zmalloc(sizeof(struct lttng_ust_elf));
+	elf = lttng_ust_zmalloc(sizeof(struct lttng_ust_elf));
 	if (!elf) {
 		goto error;
 	}
@@ -288,7 +288,7 @@ struct lttng_ust_elf *lttng_ust_elf_create(const char *path)
 		goto error;
 	}
 
-	elf->ehdr = zmalloc(sizeof(struct lttng_ust_elf_ehdr));
+	elf->ehdr = lttng_ust_zmalloc(sizeof(struct lttng_ust_elf_ehdr));
 	if (!elf->ehdr) {
 		goto error;
 	}
@@ -325,7 +325,7 @@ struct lttng_ust_elf *lttng_ust_elf_create(const char *path)
 	elf->section_names_offset = section_names_shdr->sh_offset;
 	elf->section_names_size = section_names_shdr->sh_size;
 
-	free(section_names_shdr);
+	lttng_ust_free(section_names_shdr);
 	return elf;
 
 error:
@@ -368,9 +368,9 @@ void lttng_ust_elf_destroy(struct lttng_ust_elf *elf)
 		lttng_ust_unlock_fd_tracker();
 	}
 
-	free(elf->ehdr);
-	free(elf->path);
-	free(elf);
+	lttng_ust_free(elf->ehdr);
+	lttng_ust_free(elf->path);
+	lttng_ust_free(elf);
 }
 
 /*
@@ -408,7 +408,7 @@ int lttng_ust_elf_get_memsz(struct lttng_ust_elf *elf, uint64_t *memsz)
 		high_addr = max_t(uint64_t, high_addr,
 				phdr->p_vaddr + phdr->p_memsz);
 	next_loop:
-		free(phdr);
+		lttng_ust_free(phdr);
 	}
 
 	if (high_addr < low_addr) {
@@ -484,7 +484,7 @@ int lttng_ust_elf_get_build_id_from_segment(
 		}
 
 		_length = nhdr.n_descsz;
-		_build_id = zmalloc(sizeof(uint8_t) * _length);
+		_build_id = lttng_ust_zmalloc(sizeof(uint8_t) * _length);
 		if (!_build_id) {
 			goto error;
 		}
@@ -507,7 +507,7 @@ int lttng_ust_elf_get_build_id_from_segment(
 
 	return 0;
 error:
-	free(_build_id);
+	lttng_ust_free(_build_id);
 	return -1;
 }
 
@@ -555,7 +555,7 @@ int lttng_ust_elf_get_build_id(struct lttng_ust_elf *elf, uint8_t **build_id,
 		ret = lttng_ust_elf_get_build_id_from_segment(
 			elf, &_build_id, &_length, offset, segment_end);
 	next_loop:
-		free(phdr);
+		lttng_ust_free(phdr);
 		if (ret) {
 			goto error;
 		}
@@ -574,7 +574,7 @@ int lttng_ust_elf_get_build_id(struct lttng_ust_elf *elf, uint8_t **build_id,
 
 	return 0;
 error:
-	free(_build_id);
+	lttng_ust_free(_build_id);
 	return -1;
 }
 
@@ -622,7 +622,7 @@ int lttng_ust_elf_get_debug_link_from_section(struct lttng_ust_elf *elf,
 	 * The length of the filename is the sh_size excluding the CRC
 	 * which comes after it in the section.
 	 */
-	_filename = zmalloc(sizeof(char) * (shdr->sh_size - ELF_CRC_SIZE));
+	_filename = lttng_ust_zmalloc(sizeof(char) * (shdr->sh_size - ELF_CRC_SIZE));
 	if (!_filename) {
 		goto error;
 	}
@@ -641,7 +641,7 @@ int lttng_ust_elf_get_debug_link_from_section(struct lttng_ust_elf *elf,
 	}
 
 end:
-	free(section_name);
+	lttng_ust_free(section_name);
 	if (_filename) {
 		*filename = _filename;
 		*crc = _crc;
@@ -650,8 +650,8 @@ end:
 	return 0;
 
 error:
-	free(_filename);
-	free(section_name);
+	lttng_ust_free(_filename);
+	lttng_ust_free(section_name);
 	return -1;
 }
 
@@ -687,7 +687,7 @@ int lttng_ust_elf_get_debug_link(struct lttng_ust_elf *elf, char **filename,
 
 		ret = lttng_ust_elf_get_debug_link_from_section(
 			elf, &_filename, &_crc, shdr);
-		free(shdr);
+		lttng_ust_free(shdr);
 
 		if (ret) {
 			goto error;
@@ -708,6 +708,6 @@ int lttng_ust_elf_get_debug_link(struct lttng_ust_elf *elf, char **filename,
 	return 0;
 
 error:
-	free(_filename);
+	lttng_ust_free(_filename);
 	return -1;
 }

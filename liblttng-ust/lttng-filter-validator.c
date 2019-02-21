@@ -99,7 +99,7 @@ int merge_point_add_check(struct cds_lfht *ht, unsigned long target_pc,
 
 	dbg_printf("Filter: adding merge point at offset %lu, hash %lu\n",
 			target_pc, hash);
-	node = zmalloc(sizeof(struct lfht_mp_node));
+	node = lttng_ust_zmalloc(sizeof(struct lfht_mp_node));
 	if (!node)
 		return -ENOMEM;
 	node->target_pc = target_pc;
@@ -113,7 +113,7 @@ int merge_point_add_check(struct cds_lfht *ht, unsigned long target_pc,
 		/* Key already present */
 		dbg_printf("Filter: compare merge points for offset %lu, hash %lu\n",
 				target_pc, hash);
-		free(node);
+		lttng_ust_free(node);
 		if (merge_points_compare(stack, &ret_mp->stack)) {
 			ERR("Merge points differ for offset %lu\n",
 				target_pc);
@@ -549,7 +549,7 @@ unsigned long delete_all_nodes(struct cds_lfht *ht)
 		ret = cds_lfht_del(ht, cds_lfht_iter_get_node(&iter));
 		assert(!ret);
 		/* note: this hash table is never used concurrently */
-		free(node);
+		lttng_ust_free(node);
 		nr_nodes++;
 	}
 	return nr_nodes;

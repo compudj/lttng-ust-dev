@@ -84,7 +84,7 @@ static ssize_t bytecode_reserve_data(struct bytecode_runtime *runtime,
 
 		new_alloc_len =
 			max_t(size_t, 1U << get_count_order(new_alloc_len), old_alloc_len << 1);
-		newptr = realloc(runtime->data, new_alloc_len);
+		newptr = lttng_ust_realloc(runtime->data, new_alloc_len);
 		if (!newptr)
 			return -ENOMEM;
 		runtime->data = newptr;
@@ -483,7 +483,7 @@ static int specialize_app_context_lookup(struct lttng_session *session,
 
 	offset = ((struct get_symbol *) insn->data)->offset;
 	orig_name = runtime->p.bc->bc.data + runtime->p.bc->bc.reloc_offset + offset;
-	name = zmalloc(strlen(orig_name) + strlen("$app.") + 1);
+	name = lttng_ust_zmalloc(strlen(orig_name) + strlen("$app.") + 1);
 	if (!name) {
 		ret = -ENOMEM;
 		goto end;
@@ -521,7 +521,7 @@ static int specialize_app_context_lookup(struct lttng_session *session,
 	((struct get_index_u16 *) insn->data)->index = data_offset;
 	ret = 0;
 end:
-	free(name);
+	lttng_ust_free(name);
 	return ret;
 }
 

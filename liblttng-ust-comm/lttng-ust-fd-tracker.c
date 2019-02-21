@@ -111,10 +111,10 @@ void lttng_ust_init_fd_tracker(void)
 	if (lttng_ust_max_fd % FD_SETSIZE)
 		++num_fd_sets;
 	if (lttng_fd_set != NULL) {
-		free(lttng_fd_set);
+		lttng_ust_free(lttng_fd_set);
 		lttng_fd_set = NULL;
 	}
-	lttng_fd_set = malloc(num_fd_sets * (sizeof(fd_set)));
+	lttng_fd_set = lttng_ust_malloc(num_fd_sets * (sizeof(fd_set)));
 	if (!lttng_fd_set)
 		abort();
 	for (i = 0; i < num_fd_sets; i++)

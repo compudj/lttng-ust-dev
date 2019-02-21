@@ -101,7 +101,7 @@ struct lttng_ctx_field *lttng_append_context(struct lttng_ctx **ctx_p)
 	struct lttng_ctx *ctx;
 
 	if (!*ctx_p) {
-		*ctx_p = zmalloc(sizeof(struct lttng_ctx));
+		*ctx_p = lttng_ust_zmalloc(sizeof(struct lttng_ctx));
 		if (!*ctx_p)
 			return NULL;
 		(*ctx_p)->largest_align = 1;
@@ -111,12 +111,12 @@ struct lttng_ctx_field *lttng_append_context(struct lttng_ctx **ctx_p)
 		struct lttng_ctx_field *new_fields;
 
 		ctx->allocated_fields = max_t(size_t, 1, 2 * ctx->allocated_fields);
-		new_fields = zmalloc(ctx->allocated_fields * sizeof(struct lttng_ctx_field));
+		new_fields = lttng_ust_zmalloc(ctx->allocated_fields * sizeof(struct lttng_ctx_field));
 		if (!new_fields)
 			return NULL;
 		if (ctx->fields)
 			memcpy(new_fields, ctx->fields, sizeof(*ctx->fields) * ctx->nr_fields);
-		free(ctx->fields);
+		lttng_ust_free(ctx->fields);
 		ctx->fields = new_fields;
 	}
 	field = &ctx->fields[ctx->nr_fields];
@@ -132,14 +132,14 @@ int lttng_context_add_rcu(struct lttng_ctx **ctx_p,
 	struct lttng_ctx_field *nf;
 
 	if (old_ctx) {
-		new_ctx = zmalloc(sizeof(struct lttng_ctx));
+		new_ctx = lttng_ust_zmalloc(sizeof(struct lttng_ctx));
 		if (!new_ctx)
 			return -ENOMEM;
 		*new_ctx = *old_ctx;
-		new_fields = zmalloc(new_ctx->allocated_fields
+		new_fields = lttng_ust_zmalloc(new_ctx->allocated_fields
 				* sizeof(struct lttng_ctx_field));
 		if (!new_fields) {
-			free(new_ctx);
+			lttng_ust_free(new_ctx);
 			return -ENOMEM;
 		}
 		memcpy(new_fields, old_ctx->fields,
@@ -148,8 +148,8 @@ int lttng_context_add_rcu(struct lttng_ctx **ctx_p,
 	}
 	nf = lttng_append_context(&new_ctx);
 	if (!nf) {
-		free(new_fields);
-		free(new_ctx);
+		lttng_ust_free(new_fields);
+		lttng_ust_free(new_ctx);
 		return -ENOMEM;
 	}
 	*nf = *f;
@@ -157,8 +157,8 @@ int lttng_context_add_rcu(struct lttng_ctx **ctx_p,
 	rcu_assign_pointer(*ctx_p, new_ctx);
 	synchronize_trace();
 	if (old_ctx) {
-		free(old_ctx->fields);
-		free(old_ctx);
+		lttng_ust_free(old_ctx->fields);
+		lttng_ust_free(old_ctx);
 	}
 	return 0;
 }
@@ -276,10 +276,10 @@ void lttng_destroy_context(struct lttng_ctx *ctx)
 	for (i = 0; i < ctx->nr_fields; i++) {
 		if (ctx->fields[i].destroy)
 			ctx->fields[i].destroy(&ctx->fields[i]);
-		free(ctx->fields[i].field_name);
+		lttng_ust_free(ctx->fields[i].field_name);
 	}
-	free(ctx->fields);
-	free(ctx);
+	lttng_ust_free(ctx->fields);
+	lttng_ust_free(ctx);
 }
 
 /*
@@ -312,11 +312,11 @@ int lttng_ust_context_set_provider_rcu(struct lttng_ctx **_ctx,
 	/*
 	 * We have at least one instance of context for the provider.
 	 */
-	new_ctx = zmalloc(sizeof(*new_ctx));
+	new_ctx = lttng_ust_zmalloc(sizeof(*new_ctx));
 	if (!new_ctx)
 		return -ENOMEM;
 	*new_ctx = *ctx;
-	new_fields = zmalloc(sizeof(*new_fields) * ctx->allocated_fields);
+	new_fields = lttng_ust_zmalloc(sizeof(*new_fields) * ctx->allocated_fields);
 	if (!new_fields) {
 		ret = -ENOMEM;
 		goto field_error;
@@ -334,12 +334,12 @@ int lttng_ust_context_set_provider_rcu(struct lttng_ctx **_ctx,
 	new_ctx->fields = new_fields;
 	rcu_assign_pointer(*_ctx, new_ctx);
 	synchronize_trace();
-	free(ctx->fields);
-	free(ctx);
+	lttng_ust_free(ctx->fields);
+	lttng_ust_free(ctx);
 	return 0;
 
 field_error:
-	free(new_ctx);
+	lttng_ust_free(new_ctx);
 	return ret;
 }
 

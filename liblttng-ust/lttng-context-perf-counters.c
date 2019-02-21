@@ -262,7 +262,7 @@ struct lttng_perf_counter_thread *alloc_perf_counter_thread(void)
 	perf_thread = pthread_getspecific(perf_counter_key);
 	if (perf_thread)
 		goto skip;
-	perf_thread = zmalloc(sizeof(*perf_thread));
+	perf_thread = lttng_ust_zmalloc(sizeof(*perf_thread));
 	if (!perf_thread)
 		abort();
 	CDS_INIT_LIST_HEAD(&perf_thread->rcu_field_list);
@@ -297,7 +297,7 @@ struct lttng_perf_counter_thread_field *
 		if (thread_field->field == perf_field)
 			goto skip;
 	}
-	thread_field = zmalloc(sizeof(*thread_field));
+	thread_field = lttng_ust_zmalloc(sizeof(*thread_field));
 	if (!thread_field)
 		abort();
 	thread_field->field = perf_field;
@@ -382,7 +382,7 @@ void lttng_destroy_perf_thread_field(
 	unmap_perf_page(thread_field->pc);
 	cds_list_del_rcu(&thread_field->rcu_field_node);
 	cds_list_del(&thread_field->thread_field_node);
-	free(thread_field);
+	lttng_ust_free(thread_field);
 }
 
 static
@@ -396,7 +396,7 @@ void lttng_destroy_perf_thread_key(void *_key)
 			rcu_field_node)
 		lttng_destroy_perf_thread_field(pos);
 	ust_unlock();
-	free(perf_thread);
+	lttng_ust_free(perf_thread);
 }
 
 /* Called with UST lock held */
@@ -406,7 +406,7 @@ void lttng_destroy_perf_counter_field(struct lttng_ctx_field *field)
 	struct lttng_perf_counter_field *perf_field;
 	struct lttng_perf_counter_thread_field *pos, *p;
 
-	free((char *) field->event_field.name);
+	lttng_ust_free((char *) field->event_field.name);
 	perf_field = field->u.perf_counter;
 	/*
 	 * This put is performed when no threads can concurrently
@@ -416,7 +416,7 @@ void lttng_destroy_perf_counter_field(struct lttng_ctx_field *field)
 	cds_list_for_each_entry_safe(pos, p, &perf_field->thread_field_list,
 			thread_field_node)
 		lttng_destroy_perf_thread_field(pos);
-	free(perf_field);
+	lttng_ust_free(perf_field);
 }
 
 #ifdef __ARM_ARCH_7A__
@@ -448,12 +448,12 @@ int lttng_add_perf_counter_to_ctx(uint32_t type,
 	char *name_alloc;
 	int ret;
 
-	name_alloc = strdup(name);
+	name_alloc = lttng_ust_strdup(name);
 	if (!name_alloc) {
 		ret = -ENOMEM;
 		goto name_alloc_error;
 	}
-	perf_field = zmalloc(sizeof(*perf_field));
+	perf_field = lttng_ust_zmalloc(sizeof(*perf_field));
 	if (!perf_field) {
 		ret = -ENOMEM;
 		goto perf_field_alloc_error;
@@ -512,9 +512,9 @@ setup_error:
 find_error:
 	lttng_remove_context_field(ctx, field);
 append_context_error:
-	free(perf_field);
+	lttng_ust_free(perf_field);
 perf_field_alloc_error:
-	free(name_alloc);
+	lttng_ust_free(name_alloc);
 name_alloc_error:
 	return ret;
 }

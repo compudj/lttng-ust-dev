@@ -605,7 +605,7 @@ ssize_t ustcomm_recv_channel_from_sessiond(int sock,
 		goto error_check;
 	}
 	/* Receive variable length data */
-	chan_data = zmalloc(var_len);
+	chan_data = lttng_ust_zmalloc(var_len);
 	if (!chan_data) {
 		len = -ENOMEM;
 		goto error_alloc;
@@ -646,7 +646,7 @@ ssize_t ustcomm_recv_channel_from_sessiond(int sock,
 	return len;
 
 error_recv:
-	free(chan_data);
+	lttng_ust_free(chan_data);
 error_alloc:
 error_check:
 	return len;
@@ -1112,7 +1112,7 @@ int serialize_fields(struct lttng_session *session,
 		return (int) nr_write_fields;
 	}
 
-	fields = zmalloc(nr_write_fields * sizeof(*fields));
+	fields = lttng_ust_zmalloc(nr_write_fields * sizeof(*fields));
 	if (!fields)
 		return -ENOMEM;
 
@@ -1128,7 +1128,7 @@ int serialize_fields(struct lttng_session *session,
 	return 0;
 
 error_type:
-	free(fields);
+	lttng_ust_free(fields);
 	return ret;
 }
 
@@ -1141,7 +1141,7 @@ int serialize_entries(struct ustctl_enum_entry **_entries,
 	int i;
 
 	/* Serialize the entries */
-	entries = zmalloc(nr_entries * sizeof(*entries));
+	entries = lttng_ust_zmalloc(nr_entries * sizeof(*entries));
 	if (!entries)
 		return -ENOMEM;
 	for (i = 0; i < nr_entries; i++) {
@@ -1185,7 +1185,7 @@ int serialize_ctx_fields(struct lttng_session *session,
 		return (int) nr_write_fields;
 	}
 
-	fields = zmalloc(nr_write_fields * sizeof(*fields));
+	fields = lttng_ust_zmalloc(nr_write_fields * sizeof(*fields));
 	if (!fields)
 		return -ENOMEM;
 
@@ -1201,7 +1201,7 @@ int serialize_ctx_fields(struct lttng_session *session,
 	return 0;
 
 error_type:
-	free(fields);
+	lttng_ust_free(fields);
 	return ret;
 }
 
@@ -1294,7 +1294,7 @@ int ustcomm_register_event(int sock,
 			goto error_fields;
 		}
 	}
-	free(fields);
+	lttng_ust_free(fields);
 
 	if (model_emf_uri_len) {
 		/* send model_emf_uri */
@@ -1343,7 +1343,7 @@ int ustcomm_register_event(int sock,
 
 	/* Error path only. */
 error_fields:
-	free(fields);
+	lttng_ust_free(fields);
 	return ret;
 }
 
@@ -1410,7 +1410,7 @@ int ustcomm_register_enum(int sock,
 			goto error_entries;
 		}
 	}
-	free(entries);
+	lttng_ust_free(entries);
 	entries = NULL;
 
 	/* receive reply */
@@ -1447,7 +1447,7 @@ int ustcomm_register_enum(int sock,
 	return ret;
 
 error_entries:
-	free(entries);
+	lttng_ust_free(entries);
 	return ret;
 }
 
@@ -1495,18 +1495,18 @@ int ustcomm_register_channel(int sock,
 	msg.m.ctx_fields_len = fields_len;
 	len = ustcomm_send_unix_sock(sock, &msg, sizeof(msg));
 	if (len > 0 && len != sizeof(msg)) {
-		free(fields);
+		lttng_ust_free(fields);
 		return -EIO;
 	}
 	if (len < 0) {
-		free(fields);
+		lttng_ust_free(fields);
 		return len;
 	}
 
 	/* send fields */
 	if (fields_len > 0) {
 		len = ustcomm_send_unix_sock(sock, fields, fields_len);
-		free(fields);
+		lttng_ust_free(fields);
 		if (len > 0 && len != fields_len) {
 			return -EIO;
 		}
@@ -1514,7 +1514,7 @@ int ustcomm_register_channel(int sock,
 			return len;
 		}
 	} else {
-		free(fields);
+		lttng_ust_free(fields);
 	}
 
 	len = ustcomm_recv_unix_sock(sock, &reply, sizeof(reply));

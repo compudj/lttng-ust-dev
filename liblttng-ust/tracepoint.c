@@ -155,8 +155,9 @@ struct callsite_entry {
 static void *allocate_probes(int count)
 {
 	struct tp_probes *p =
-		zmalloc(count * sizeof(struct lttng_ust_tracepoint_probe)
-		+ sizeof(struct tp_probes));
+		lttng_ust_zmalloc(count *
+		sizeof(struct lttng_ust_tracepoint_probe)
+			+ sizeof(struct tp_probes));
 	return p == NULL ? NULL : p->probes;
 }
 
@@ -167,7 +168,7 @@ static void release_probes(void *old)
 		struct tp_probes *tp_probes = caa_container_of(old,
 			struct tp_probes, probes[0]);
 		urcu_bp_synchronize_rcu();
-		free(tp_probes);
+		lttng_ust_free(tp_probes);
 	}
 }
 
@@ -319,13 +320,14 @@ static struct tracepoint_entry *add_tracepoint(const char *name,
 	}
 
 	/*
-	 * Using zmalloc here to allocate a variable length elements: name and
-	 * signature. Could cause some memory fragmentation if overused.
+	 * Using lttng_ust_zmalloc here to allocate a variable length
+	 * elements: name and signature. Could cause some memory
+	 * fragmentation if overused.
 	 */
 	name_off = sizeof(struct tracepoint_entry);
 	sig_off = name_off + name_len + 1;
 
-	e = zmalloc(sizeof(struct tracepoint_entry) + name_len + 1 + sig_len + 1);
+	e = lttng_ust_zmalloc(sizeof(struct tracepoint_entry) + name_len + 1 + sig_len + 1);
 	if (!e)
 		return ERR_PTR(-ENOMEM);
 	e->name = (char *) e + name_off;
@@ -351,7 +353,7 @@ static struct tracepoint_entry *add_tracepoint(const char *name,
 static void remove_tracepoint(struct tracepoint_entry *e)
 {
 	cds_hlist_del(&e->hlist);
-	free(e);
+	lttng_ust_free(e);
 }
 
 /*
@@ -421,7 +423,7 @@ static void add_callsite(struct tracepoint_lib * lib, struct lttng_ust_tracepoin
 	}
 	hash = jhash(name, name_len, 0);
 	head = &callsite_table[hash & (CALLSITE_TABLE_SIZE - 1)];
-	e = zmalloc(sizeof(struct callsite_entry));
+	e = lttng_ust_zmalloc(sizeof(struct callsite_entry));
 	if (!e) {
 		PERROR("Unable to add callsite for tracepoint \"%s\"", name);
 		return;
@@ -454,7 +456,7 @@ static void remove_callsite(struct callsite_entry *e)
 	}
 	cds_hlist_del(&e->hlist);
 	cds_list_del(&e->node);
-	free(e);
+	lttng_ust_free(e);
 }
 
 /*
@@ -754,7 +756,7 @@ void __tracepoint_probe_prune_release_queue(void)
 
 	cds_list_for_each_entry_safe(pos, next, &release_probes, u.list) {
 		cds_list_del(&pos->u.list);
-		free(pos);
+		lttng_ust_free(pos);
 	}
 end:
 	pthread_mutex_unlock(&tracepoint_mutex);
@@ -844,7 +846,7 @@ void tracepoint_probe_update_all(void)
 	urcu_bp_synchronize_rcu();
 	cds_list_for_each_entry_safe(pos, next, &release_probes, u.list) {
 		cds_list_del(&pos->u.list);
-		free(pos);
+		lttng_ust_free(pos);
 	}
 end:
 	pthread_mutex_unlock(&tracepoint_mutex);
@@ -875,7 +877,7 @@ int tracepoint_register_lib(struct lttng_ust_tracepoint * const *tracepoints_sta
 
 	init_tracepoint();
 
-	pl = (struct tracepoint_lib *) zmalloc(sizeof(struct tracepoint_lib));
+	pl = (struct tracepoint_lib *) lttng_ust_zmalloc(sizeof(struct tracepoint_lib));
 	if (!pl) {
 		PERROR("Unable to register tracepoint lib");
 		return -1;
@@ -936,7 +938,7 @@ int tracepoint_unregister_lib(struct lttng_ust_tracepoint * const *tracepoints_s
 		lib_unregister_callsites(lib);
 		DBG("just unregistered a tracepoints section from %p",
 			lib->tracepoints_start);
-		free(lib);
+		lttng_ust_free(lib);
 		break;
 	}
 	pthread_mutex_unlock(&tracepoint_mutex);

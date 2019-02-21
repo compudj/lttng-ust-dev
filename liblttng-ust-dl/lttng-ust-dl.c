@@ -141,8 +141,8 @@ void lttng_ust_dl_dlopen(void *so_base, const char *so_name,
 	}
 
 end:
-	free(dbg_file);
-	free(build_id);
+	lttng_ust_free(dbg_file);
+	lttng_ust_free(build_id);
 	lttng_ust_elf_destroy(elf);
 	return;
 }
@@ -203,8 +203,8 @@ void lttng_ust_dl_dlmopen(void *so_base, Lmid_t nsid, const char *so_name,
 	}
 
 end:
-	free(dbg_file);
-	free(build_id);
+	lttng_ust_free(dbg_file);
+	lttng_ust_free(build_id);
 	lttng_ust_elf_destroy(elf);
 	return;
 }

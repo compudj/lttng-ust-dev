@@ -20,7 +20,30 @@
  */
 
 #include <stdlib.h>
+#include <string.h>
+#include <lttng/ust-malloc.h>
 
+static inline __attribute__((always_inline))
+void *lttng_ust_zmalloc(size_t len)
+{
+	return lttng_ust_calloc(len, 1);
+}
+
+static inline __attribute__((always_inline))
+char *lttng_ust_strdup(const char *str)
+{
+	size_t len;
+	char *res;
+
+	len = strlen(str) + 1;
+	res = lttng_ust_zmalloc(len);
+	if (!res)
+		return res;
+	memcpy(res, str, len);
+	return res;
+}
+
+/* Using process-wide allocator for ust-ctl. */
 static inline __attribute__((always_inline))
 void *zmalloc(size_t len)
 {

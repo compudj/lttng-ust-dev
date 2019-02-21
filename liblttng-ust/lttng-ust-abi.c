@@ -114,12 +114,12 @@ int objd_alloc(void *private_data, const struct lttng_ust_objd_ops *ops,
 			new_allocated_len = 1;
 		else
 			new_allocated_len = old_allocated_len << 1;
-		new_table = zmalloc(sizeof(struct lttng_ust_obj) * new_allocated_len);
+		new_table = lttng_ust_zmalloc(sizeof(struct lttng_ust_obj) * new_allocated_len);
 		if (!new_table)
 			return -ENOMEM;
 		memcpy(new_table, old_table,
 		       sizeof(struct lttng_ust_obj) * old_allocated_len);
-		free(old_table);
+		lttng_ust_free(old_table);
 		objd_table.array = new_table;
 		objd_table.allocated_len = new_allocated_len;
 	}
@@ -234,7 +234,7 @@ void objd_table_destroy(void)
 			continue;	/* only unref owner ref. */
 		(void) lttng_ust_objd_unref(i, 1);
 	}
-	free(objd_table.array);
+	lttng_ust_free(objd_table.array);
 	objd_table.array = NULL;
 	objd_table.len = 0;
 	objd_table.allocated_len = 0;
@@ -537,7 +537,7 @@ invalid:
 			PERROR("close");
 		}
 	}
-	free(chan_data);
+	lttng_ust_free(chan_data);
 	return ret;
 }
 
@@ -644,7 +644,7 @@ int lttng_abi_tracepoint_list(void *owner)
 		ret = list_objd;
 		goto objd_error;
 	}
-	list = zmalloc(sizeof(*list));
+	list = lttng_ust_zmalloc(sizeof(*list));
 	if (!list) {
 		ret = -ENOMEM;
 		goto alloc_error;
@@ -659,7 +659,7 @@ int lttng_abi_tracepoint_list(void *owner)
 	return list_objd;
 
 list_error:
-	free(list);
+	lttng_ust_free(list);
 alloc_error:
 	{
 		int err;
@@ -678,7 +678,7 @@ int lttng_release_tracepoint_list(int objd)
 
 	if (list) {
 		lttng_probes_prune_event_list(list);
-		free(list);
+		lttng_ust_free(list);
 		return 0;
 	} else {
 		return -EINVAL;
@@ -724,7 +724,7 @@ int lttng_abi_tracepoint_field_list(void *owner)
 		ret = list_objd;
 		goto objd_error;
 	}
-	list = zmalloc(sizeof(*list));
+	list = lttng_ust_zmalloc(sizeof(*list));
 	if (!list) {
 		ret = -ENOMEM;
 		goto alloc_error;
@@ -739,7 +739,7 @@ int lttng_abi_tracepoint_field_list(void *owner)
 	return list_objd;
 
 list_error:
-	free(list);
+	lttng_ust_free(list);
 alloc_error:
 	{
 		int err;
@@ -758,7 +758,7 @@ int lttng_release_tracepoint_field_list(int objd)
 
 	if (list) {
 		lttng_probes_prune_field_list(list);
-		free(list);
+		lttng_ust_free(list);
 		return 0;
 	} else {
 		return -EINVAL;

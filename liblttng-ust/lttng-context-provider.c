@@ -131,7 +131,7 @@ int lttng_ust_add_app_context_to_ctx_rcu(const char *name,
 	 * ctx array.
 	 */
 	memset(&new_field, 0, sizeof(new_field));
-	new_field.field_name = strdup(name);
+	new_field.field_name = lttng_ust_strdup(name);
 	if (!new_field.field_name)
 		return -ENOMEM;
 	new_field.event_field.name = new_field.field_name;
@@ -152,7 +152,7 @@ int lttng_ust_add_app_context_to_ctx_rcu(const char *name,
 	}
 	ret = lttng_context_add_rcu(ctx, &new_field);
 	if (ret) {
-		free(new_field.field_name);
+		lttng_ust_free(new_field.field_name);
 		return ret;
 	}
 	return 0;

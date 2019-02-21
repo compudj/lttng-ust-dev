@@ -58,7 +58,7 @@ int zero_file(int fd, size_t len)
 	pagelen = sysconf(_SC_PAGESIZE);
 	if (pagelen < 0)
 		return (int) pagelen;
-	zeropage = calloc(pagelen, 1);
+	zeropage = lttng_ust_calloc(pagelen, 1);
 	if (!zeropage)
 		return -ENOMEM;
 
@@ -75,7 +75,7 @@ int zero_file(int fd, size_t len)
 	}
 	ret = 0;
 error:
-	free(zeropage);
+	lttng_ust_free(zeropage);
 	return ret;
 }
 
@@ -83,7 +83,7 @@ struct shm_object_table *shm_object_table_create(size_t max_nb_obj)
 {
 	struct shm_object_table *table;
 
-	table = zmalloc(sizeof(struct shm_object_table) +
+	table = lttng_ust_zmalloc(sizeof(struct shm_object_table) +
 			max_nb_obj * sizeof(table->objects[0]));
 	if (!table)
 		return NULL;
@@ -195,7 +195,7 @@ struct shm_object *_shm_object_table_alloc_mem(struct shm_object_table *table,
 		return NULL;
 	obj = &table->objects[table->allocated_len];
 
-	memory_map = zmalloc(memory_map_size);
+	memory_map = lttng_ust_zmalloc(memory_map_size);
 	if (!memory_map)
 		goto alloc_error;
 
@@ -241,7 +241,7 @@ error_fcntl:
 		}
 	}
 error_pipe:
-	free(memory_map);
+	lttng_ust_free(memory_map);
 alloc_error:
 	return NULL;
 }
@@ -483,7 +483,7 @@ void shmp_object_destroy(struct shm_object *obj, int consumer)
 				}
 			}
 		}
-		free(obj->memory_map);
+		lttng_ust_free(obj->memory_map);
 		break;
 	}
 	default:
@@ -497,7 +497,7 @@ void shm_object_table_destroy(struct shm_object_table *table, int consumer)
 
 	for (i = 0; i < table->allocated_len; i++)
 		shmp_object_destroy(&table->objects[i], consumer);
-	free(table);
+	lttng_ust_free(table);
 }
 
 /*

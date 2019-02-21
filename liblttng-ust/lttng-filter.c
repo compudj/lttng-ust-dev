@@ -427,7 +427,7 @@ int _lttng_filter_event_link_bytecode(struct lttng_event *event,
 
 	/* We don't need the reloc table in the runtime */
 	runtime_alloc_len = sizeof(*runtime) + filter_bytecode->bc.reloc_offset;
-	runtime = zmalloc(runtime_alloc_len);
+	runtime = lttng_ust_zmalloc(runtime_alloc_len);
 	if (!runtime) {
 		ret = -ENOMEM;
 		goto alloc_error;
@@ -559,7 +559,7 @@ void lttng_free_enabler_filter_bytecode(struct lttng_enabler *enabler)
 
 	cds_list_for_each_entry_safe(filter_bytecode, tmp,
 			&enabler->filter_bytecode_head, node) {
-		free(filter_bytecode);
+		lttng_ust_free(filter_bytecode);
 	}
 }
 
@@ -569,7 +569,7 @@ void lttng_free_event_filter_runtime(struct lttng_event *event)
 
 	cds_list_for_each_entry_safe(runtime, tmp,
 			&event->bytecode_runtime_head, p.node) {
-		free(runtime->data);
-		free(runtime);
+		lttng_ust_free(runtime->data);
+		lttng_ust_free(runtime);
 	}
 }

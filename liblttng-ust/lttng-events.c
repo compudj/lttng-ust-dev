@@ -140,11 +140,11 @@ struct lttng_session *lttng_session_create(void)
 	struct lttng_session *session;
 	int i;
 
-	session = zmalloc(sizeof(struct lttng_session));
+	session = lttng_ust_zmalloc(sizeof(struct lttng_session));
 	if (!session)
 		return NULL;
 	if (lttng_session_context_init(&session->ctx)) {
-		free(session);
+		lttng_ust_free(session);
 		return NULL;
 	}
 	CDS_INIT_LIST_HEAD(&session->chan_head);
@@ -247,7 +247,7 @@ void lttng_session_destroy(struct lttng_session *session)
 		_lttng_channel_unmap(chan);
 	cds_list_del(&session->node);
 	lttng_destroy_context(session->ctx);
-	free(session);
+	lttng_ust_free(session);
 }
 
 static
@@ -278,7 +278,7 @@ int lttng_enum_create(const struct lttng_enum_desc *desc,
 		goto socket_error;
 	}
 
-	_enum = zmalloc(sizeof(*_enum));
+	_enum = lttng_ust_zmalloc(sizeof(*_enum));
 	if (!_enum) {
 		ret = -ENOMEM;
 		goto cache_error;
@@ -301,7 +301,7 @@ int lttng_enum_create(const struct lttng_enum_desc *desc,
 	return 0;
 
 sessiond_register_error:
-	free(_enum);
+	lttng_ust_free(_enum);
 cache_error:
 socket_error:
 exist:
@@ -560,7 +560,7 @@ int lttng_event_create(const struct lttng_event_desc *desc,
 	/*
 	 * Check if loglevel match. Refuse to connect event if not.
 	 */
-	event = zmalloc(sizeof(struct lttng_event));
+	event = lttng_ust_zmalloc(sizeof(struct lttng_event));
 	if (!event) {
 		ret = -ENOMEM;
 		goto cache_error;
@@ -607,7 +607,7 @@ int lttng_event_create(const struct lttng_event_desc *desc,
 	return 0;
 
 sessiond_register_error:
-	free(event);
+	lttng_ust_free(event);
 cache_error:
 create_enum_error:
 socket_error:
@@ -917,7 +917,7 @@ int lttng_enabler_ref_events(struct lttng_enabler *enabler)
 			 * If no backward ref, create it.
 			 * Add backward ref from event to enabler.
 			 */
-			enabler_ref = zmalloc(sizeof(*enabler_ref));
+			enabler_ref = lttng_ust_zmalloc(sizeof(*enabler_ref));
 			if (!enabler_ref)
 				return -ENOMEM;
 			enabler_ref->ref = enabler;
@@ -996,8 +996,8 @@ void _lttng_event_destroy(struct lttng_event *event)
 	/* Free event enabler refs */
 	cds_list_for_each_entry_safe(enabler_ref, tmp_enabler_ref,
 			&event->enablers_ref_head, node)
-		free(enabler_ref);
-	free(event);
+		lttng_ust_free(enabler_ref);
+	lttng_ust_free(event);
 }
 
 static
@@ -1005,7 +1005,7 @@ void _lttng_enum_destroy(struct lttng_enum *_enum)
 {
 	cds_list_del(&_enum->node);
 	cds_hlist_del(&_enum->hlist);
-	free(_enum);
+	lttng_ust_free(_enum);
 }
 
 void lttng_ust_events_exit(void)
@@ -1025,7 +1025,7 @@ struct lttng_enabler *lttng_enabler_create(enum lttng_enabler_type type,
 {
 	struct lttng_enabler *enabler;
 
-	enabler = zmalloc(sizeof(*enabler));
+	enabler = lttng_ust_zmalloc(sizeof(*enabler));
 	if (!enabler)
 		return NULL;
 	enabler->type = type;
@@ -1142,20 +1142,20 @@ void lttng_enabler_destroy(struct lttng_enabler *enabler)
 	/* Destroy filter bytecode */
 	cds_list_for_each_entry_safe(filter_node, tmp_filter_node,
 			&enabler->filter_bytecode_head, node) {
-		free(filter_node);
+		lttng_ust_free(filter_node);
 	}
 
 	/* Destroy excluders */
 	cds_list_for_each_entry_safe(excluder_node, tmp_excluder_node,
 			&enabler->excluder_head, node) {
-		free(excluder_node);
+		lttng_ust_free(excluder_node);
 	}
 
 	/* Destroy contexts */
 	lttng_destroy_context(enabler->ctx);
 
 	cds_list_del(&enabler->node);
-	free(enabler);
+	lttng_ust_free(enabler);
 }
 
 /*
