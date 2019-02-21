@@ -356,12 +356,12 @@ JNIEXPORT jlong JNICALL Java_org_lttng_ust_agent_context_LttngContextApi_registe
 		goto error_jstr;
 	}
 	/* Keep our own copy of the string so UST can use it. */
-	provider_name_cstr = strdup(provider_name_jstr);
+	provider_name_cstr = lttng_ust_strdup(provider_name_jstr);
 	(*env)->ReleaseStringUTFChars(env, provider_name, provider_name_jstr);
 	if (!provider_name_cstr) {
 		goto error_strdup;
 	}
-	provider = zmalloc(sizeof(*provider));
+	provider = lttng_ust_zmalloc(sizeof(*provider));
 	if (!provider) {
 		goto error_provider;
 	}
@@ -379,9 +379,9 @@ JNIEXPORT jlong JNICALL Java_org_lttng_ust_agent_context_LttngContextApi_registe
 
 	/* Error handling. */
 error_register:
-	free(provider);
+	lttng_ust_free(provider);
 error_provider:
-	free(provider_name_cstr);
+	lttng_ust_free(provider_name_cstr);
 error_strdup:
 error_jstr:
 	return 0;
@@ -406,6 +406,6 @@ JNIEXPORT void JNICALL Java_org_lttng_ust_agent_context_LttngContextApi_unregist
 
 	lttng_ust_context_provider_unregister(provider);
 
-	free(provider->name);
-	free(provider);
+	lttng_ust_free(provider->name);
+	lttng_ust_free(provider);
 }
