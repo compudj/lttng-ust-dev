@@ -22,6 +22,7 @@
 #include <string.h>
 
 #include <lttng/ust-elf.h>
+#include <lttng/ust-malloc.h>
 #include "tap.h"
 
 #define NUM_ARCH 4
