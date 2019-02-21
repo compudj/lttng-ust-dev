@@ -60,4 +60,7 @@ void *lttng_ust_tp_check_weak_hidden1(void);
 void *lttng_ust_tp_check_weak_hidden2(void);
 void *lttng_ust_tp_check_weak_hidden3(void);
 
+void lttng_ust_tracepoint_lock(void);
+void lttng_ust_tracepoint_unlock(void);
+
 #endif /* _LTTNG_TRACEPOINT_INTERNAL_H */

@@ -151,6 +151,16 @@ struct callsite_entry {
 	bool tp_entry_callsite_ref; /* Has a tp_entry took a ref on this callsite */
 };
 
+void lttng_ust_tracepoint_lock(void)
+{
+	pthread_mutex_lock(&tracepoint_mutex);
+}
+
+void lttng_ust_tracepoint_unlock(void)
+{
+	pthread_mutex_unlock(&tracepoint_mutex);
+}
+
 /* coverity[+alloc] */
 static void *allocate_probes(int count)
 {
@@ -877,8 +887,10 @@ int tracepoint_register_lib(struct lttng_ust_tracepoint * const *tracepoints_sta
 
 	init_tracepoint();
 
+	pthread_mutex_lock(&tracepoint_mutex);
 	pl = (struct tracepoint_lib *) lttng_ust_zmalloc(sizeof(struct tracepoint_lib));
 	if (!pl) {
+		pthread_mutex_unlock(&tracepoint_mutex);
 		PERROR("Unable to register tracepoint lib");
 		return -1;
 	}
@@ -886,7 +898,6 @@ int tracepoint_register_lib(struct lttng_ust_tracepoint * const *tracepoints_sta
 	pl->tracepoints_count = tracepoints_count;
 	CDS_INIT_LIST_HEAD(&pl->callsites);
 
-	pthread_mutex_lock(&tracepoint_mutex);
 	/*
 	 * We sort the libs by struct lib pointer address.
 	 */
