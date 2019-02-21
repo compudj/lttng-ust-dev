@@ -28,6 +28,7 @@
 /* Only use mmap, not sbrk, leaving sbrk for application malloc. */
 #define HAVE_MORECORE	0
 #define USE_DL_PREFIX
+#define USE_LOCKS	1
 
 #define dlcalloc               lttng_ust_calloc
 #define dlfree                 lttng_ust_free
