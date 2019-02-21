@@ -253,7 +253,7 @@ struct lttng_ust_elf *lttng_ust_elf_create(const char *path)
 	/* Initialize fd field to -1. 0 is a valid fd number */
 	elf->fd = -1;
 
-	elf->path = strdup(path);
+	elf->path = lttng_ust_strdup(path);
 	if (!elf->path) {
 		goto error;
 	}

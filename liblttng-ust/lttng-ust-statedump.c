@@ -85,7 +85,7 @@ struct lttng_ust_dl_node *alloc_dl_node(const struct bin_info_data *bin_data)
 	if (!e)
 		return NULL;
 	if (bin_data->dbg_file) {
-		e->bin_data.dbg_file = strdup(bin_data->dbg_file);
+		e->bin_data.dbg_file = lttng_ust_strdup(bin_data->dbg_file);
 		if (!e->bin_data.dbg_file)
 			goto error;
 	}
