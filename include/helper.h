@@ -36,7 +36,7 @@ char *lttng_ust_strdup(const char *str)
 	char *res;
 
 	len = strlen(str) + 1;
-	res = lttng_ust_zmalloc(len);
+	res = lttng_ust_malloc(len);
 	if (!res)
 		return res;
 	memcpy(res, str, len);
