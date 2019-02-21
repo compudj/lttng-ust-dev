@@ -23,6 +23,34 @@
 #ifndef MALLOC_280_H
 #define MALLOC_280_H
 
+/* LTTng-UST defines */
+
+/* Only use mmap, not sbrk, leaving sbrk for application malloc. */
+#define HAVE_MORECORE	0
+#define USE_DL_PREFIX
+
+#define dlcalloc               lttng_ust_calloc
+#define dlfree                 lttng_ust_free
+#define dlmalloc               lttng_ust_malloc
+#define dlmemalign             lttng_ust_memalign
+#define dlposix_memalign       lttng_ust_posix_memalign
+#define dlrealloc              lttng_ust_realloc
+#define dlvalloc               lttng_ust_valloc
+#define dlpvalloc              lttng_ust_pvalloc
+#define dlmallinfo             lttng_ust_mallinfo
+#define dlmallopt              lttng_ust_mallopt
+#define dlmalloc_trim          lttng_ust_malloc_trim
+#define dlmalloc_stats         lttng_ust_malloc_stats
+#define dlmalloc_usable_size   lttng_ust_malloc_usable_size
+#define dlmalloc_footprint     lttng_ust_malloc_footprint
+#define dlmalloc_max_footprint lttng_ust_malloc_max_footprint
+#define dlmalloc_footprint_limit lttng_ust_malloc_footprint_limit
+#define dlmalloc_set_footprint_limit lttng_ust_malloc_set_footprint_limit
+#define dlmalloc_inspect_all   lttng_ust_malloc_inspect_all
+#define dlindependent_calloc   lttng_ust_independent_calloc
+#define dlindependent_comalloc lttng_ust_independent_comalloc
+#define dlbulk_free            lttng_ust_bulk_free
+
 #ifdef __cplusplus
 extern "C" {
 #endif
