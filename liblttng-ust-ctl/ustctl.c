@@ -2245,3 +2245,27 @@ void ustctl_exit(void)
 	lttng_ring_buffer_client_overwrite_exit();
 	lttng_ring_buffer_metadata_client_exit();
 }
+
+/*
+ * ustctl does not include lttng-ust malloc, so we rely on libc
+ * allocator for consumer daemon.
+ */
+void lttng_ust_free(void *p)
+{
+	free(p);
+}
+
+void *lttng_ust_malloc(size_t len)
+{
+	return malloc(len);
+}
+
+void *lttng_ust_calloc(size_t n, size_t elem_size)
+{
+	return calloc(n, elem_size);
+}
+
+void *lttng_ust_realloc(void *p, size_t len)
+{
+	return realloc(p, len);
+}

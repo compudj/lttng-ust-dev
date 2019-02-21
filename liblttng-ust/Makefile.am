@@ -8,6 +8,7 @@ lib_LTLIBRARIES = liblttng-ust-tracepoint.la liblttng-ust.la
 liblttng_ust_tracepoint_la_SOURCES = \
 	tracepoint.c \
 	tracepoint-weak-test.c \
+	lttng-ust-malloc.c \
 	tracepoint-internal.h \
 	lttng-tracer-core.h \
 	jhash.h \
@@ -84,8 +85,7 @@ liblttng_ust_support_la_SOURCES = \
 	lttng-ring-buffer-client-overwrite-rt.c \
 	lttng-ring-buffer-metadata-client.h \
 	lttng-ring-buffer-metadata-client.c \
-	lttng-clock.c lttng-getcpu.c \
-	lttng-ust-malloc.c
+	lttng-clock.c lttng-getcpu.c
 
 liblttng_ust_la_SOURCES =
 
