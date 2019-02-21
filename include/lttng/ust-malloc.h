@@ -35,6 +35,7 @@
 #define dlmemalign             lttng_ust_memalign
 #define dlposix_memalign       lttng_ust_posix_memalign
 #define dlrealloc              lttng_ust_realloc
+#define dlrealloc_in_place     lttng_ust_realloc_in_place
 #define dlvalloc               lttng_ust_valloc
 #define dlpvalloc              lttng_ust_pvalloc
 #define dlmallinfo             lttng_ust_mallinfo
