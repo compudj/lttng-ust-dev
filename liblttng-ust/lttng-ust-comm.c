@@ -120,6 +120,23 @@ static int lttng_ust_comm_should_quit;
  */
 int lttng_ust_loaded __attribute__((weak));
 
+static sigset_t atfork_sigset;
+
+static void atfork_prepare(void)
+{
+	ust_before_fork(&atfork_sigset);
+}
+
+static void atfork_parent(void)
+{
+	ust_after_fork_parent(&atfork_sigset);
+}
+
+static void atfork_child(void)
+{
+	ust_after_fork_child(&atfork_sigset);
+}
+
 /*
  * Return 0 on success, -1 if should quit.
  * The lock is taken in both cases.
@@ -1746,6 +1763,11 @@ void __attribute__((constructor)) lttng_ust_init(void)
 	 * Invoke ust malloc wrapper init before starting other threads.
 	 */
 	lttng_ust_malloc_wrapper_init();
+
+	ret = pthread_atfork(atfork_prepare, atfork_parent, atfork_child);
+	if (ret) {
+		DBG("pthread_atfork returned %d", ret);
+	}
 
 	timeout_mode = get_constructor_timeout(&constructor_timeout);
 
