@@ -2047,6 +2047,10 @@ void ust_after_fork_child(sigset_t *restore_sigset)
 	urcu_bp_after_fork_child();
 	/* Release mutexes and reenable signals */
 	ust_after_fork_common(restore_sigset);
+	/*
+	 * It's safe to cleanup outside of the locks because the child
+	 * process is single-threaded at this point.
+	 */
 	lttng_ust_cleanup(0);
 	lttng_ust_init();
 }
