@@ -220,4 +220,14 @@ int lttng_trigger_enabler_attach_exclusion(
 		struct lttng_trigger_enabler *trigger_enabler,
 		struct lttng_ust_excluder_node *excluder);
 
+LTTNG_HIDDEN
+void lttng_free_trigger_filter_runtime(struct lttng_trigger *trigger);
+
+/*
+ * Connect the probe on all enablers matching this event description.
+ * Called on library load.
+ */
+LTTNG_HIDDEN
+int lttng_fix_pending_triggers(void);
+
 #endif /* _LTTNG_UST_EVENTS_INTERNAL_H */
