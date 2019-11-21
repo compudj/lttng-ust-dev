@@ -119,6 +119,12 @@ struct lttng_ust_trigger {
 	} u;
 } LTTNG_PACKED;
 
+#define LTTNG_TRIGGER_NOTIFICATION_PADDING 32
+struct lttng_ust_trigger_notification {
+	uint64_t id;
+	char padding[LTTNG_TRIGGER_NOTIFICATION_PADDING];
+} LTTNG_PACKED;
+
 #define LTTNG_UST_EVENT_PADDING1	16
 #define LTTNG_UST_EVENT_PADDING2	(LTTNG_UST_SYM_NAME_LEN + 32)
 struct lttng_ust_event {
