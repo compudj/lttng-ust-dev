@@ -38,6 +38,7 @@
  */
 
 #define _LGPL_SOURCE
+#include <fcntl.h>
 #include <stdint.h>
 #include <unistd.h>
 
@@ -346,11 +347,24 @@ static
 int lttng_abi_trigger_send_fd(void *owner, int trigger_notif_fd)
 {
 	struct lttng_trigger_group *trigger_group;
-	int trigger_group_objd, ret;
+	int trigger_group_objd, ret, fd_flag, close_ret;
 
 	trigger_group = lttng_trigger_group_create();
 	if (!trigger_group)
 		return -ENOMEM;
+
+	/*
+	 * Set this file descriptor as NON-BLOCKING.
+	 */
+	fd_flag = fcntl(trigger_notif_fd, F_GETFL);
+
+	fd_flag |= O_NONBLOCK;
+
+	ret = fcntl(trigger_notif_fd, F_SETFL, fd_flag);
+	if (ret) {
+		ret = -errno;
+		goto fd_error;
+	}
 
 	trigger_group_objd = objd_alloc(trigger_group,
 		&lttng_trigger_group_ops, owner, "trigger_group");
@@ -367,6 +381,12 @@ int lttng_abi_trigger_send_fd(void *owner, int trigger_notif_fd)
 
 objd_error:
 	lttng_trigger_group_destroy(trigger_group);
+fd_error:
+	close_ret = close(trigger_notif_fd);
+	if (close_ret) {
+		PERROR("close");
+	}
+
 	return ret;
 }
 
@@ -652,7 +672,7 @@ static int lttng_ust_trigger_enabler_create(int trigger_group_obj, void *owner,
 		struct lttng_ust_trigger *trigger_param,
 		enum lttng_enabler_format_type type)
 {
-	struct lttng_trigger_group *group_handle =
+	struct lttng_trigger_group *trigger_group =
 		objd_private(trigger_group_obj);
 	struct lttng_trigger_enabler *trigger_enabler;
 	int trigger_objd, ret;
@@ -665,7 +685,8 @@ static int lttng_ust_trigger_enabler_create(int trigger_group_obj, void *owner,
 		goto objd_error;
 	}
 
-	trigger_enabler = lttng_trigger_enabler_create(group_handle, type, trigger_param);
+	trigger_enabler = lttng_trigger_enabler_create(trigger_group, type,
+		trigger_param);
 	if (!trigger_enabler) {
 		ret = -ENOMEM;
 		goto trigger_error;
