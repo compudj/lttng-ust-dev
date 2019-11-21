@@ -23,10 +23,10 @@
 #define _GNU_SOURCE
 #define _LGPL_SOURCE
 #include <stdio.h>
-#include <urcu/list.h>
-#include <urcu/hlist.h>
-#include <pthread.h>
+#include <assert.h>
 #include <errno.h>
+#include <limits.h>
+#include <pthread.h>
 #include <sys/shm.h>
 #include <sys/ipc.h>
 #include <stdint.h>
@@ -36,12 +36,13 @@
 #include <stdbool.h>
 #include <unistd.h>
 #include <lttng/ust-endian.h>
-#include "clock.h"
 
 #include <urcu-bp.h>
-#include <urcu/compiler.h>
-#include <urcu/uatomic.h>
 #include <urcu/arch.h>
+#include <urcu/compiler.h>
+#include <urcu/hlist.h>
+#include <urcu/list.h>
+#include <urcu/uatomic.h>
 
 #include <lttng/tracepoint.h>
 #include <lttng/ust-events.h>
@@ -66,6 +67,7 @@
 #include "wait.h"
 #include "../libringbuffer/shm.h"
 #include "jhash.h"
+#include <lttng/ust-abi.h>
 
 /*
  * All operations within this file are called by the communication
@@ -81,12 +83,15 @@ struct cds_list_head *_lttng_get_sessions(void)
 }
 
 static void _lttng_event_destroy(struct lttng_event *event);
+static void _lttng_trigger_destroy(struct lttng_trigger *trigger);
 static void _lttng_enum_destroy(struct lttng_enum *_enum);
 
 static
 void lttng_session_lazy_sync_event_enablers(struct lttng_session *session);
 static
 void lttng_session_sync_event_enablers(struct lttng_session *session);
+static
+void lttng_trigger_group_sync_enablers(struct lttng_trigger_group *trigger_group);
 static
 void lttng_enabler_destroy(struct lttng_enabler *enabler);
 
@@ -166,13 +171,18 @@ struct lttng_session *lttng_session_create(void)
 struct lttng_trigger_group *lttng_trigger_group_create(void)
 {
 	struct lttng_trigger_group *trigger_group;
+	int i;
 
 	trigger_group = zmalloc(sizeof(struct lttng_trigger_group));
 	if (!trigger_group)
 		return NULL;
 
-	cds_list_add(&trigger_group->node, &trigger_groups);
 	CDS_INIT_LIST_HEAD(&trigger_group->enablers_head);
+	CDS_INIT_LIST_HEAD(&trigger_group->triggers_head);
+	for (i = 0; i < LTTNG_UST_TRIGGER_HT_SIZE; i++)
+		CDS_INIT_HLIST_HEAD(&trigger_group->triggers_ht.table[i]);
+
+	cds_list_add(&trigger_group->node, &trigger_groups);
 
 	return trigger_group;
 }
@@ -214,6 +224,21 @@ void register_event(struct lttng_event *event)
 }
 
 static
+void register_trigger(struct lttng_trigger *trigger)
+{
+	int ret;
+	const struct lttng_event_desc *desc;
+
+	assert(trigger->registered == 0);
+	desc = trigger->desc;
+	ret = __tracepoint_probe_register_queue_release(desc->name,
+		desc->u.ext.trigger_callback, trigger, desc->signature);
+	WARN_ON_ONCE(ret);
+	if (!ret)
+		trigger->registered = 1;
+}
+
+static
 void unregister_event(struct lttng_event *event)
 {
 	int ret;
@@ -229,6 +254,21 @@ void unregister_event(struct lttng_event *event)
 		event->registered = 0;
 }
 
+static
+void unregister_trigger(struct lttng_trigger *trigger)
+{
+	int ret;
+	const struct lttng_event_desc *desc;
+
+	assert(trigger->registered == 1);
+	desc = trigger->desc;
+	ret = __tracepoint_probe_unregister_queue_release(desc->name,
+		desc->u.ext.trigger_callback, trigger);
+	WARN_ON_ONCE(ret);
+	if (!ret)
+		trigger->registered = 0;
+}
+
 /*
  * Only used internally at session destruction.
  */
@@ -237,6 +277,16 @@ void _lttng_event_unregister(struct lttng_event *event)
 {
 	if (event->registered)
 		unregister_event(event);
+}
+
+/*
+ * Only used internally at session destruction.
+ */
+static
+void _lttng_trigger_unregister(struct lttng_trigger *trigger)
+{
+	if (trigger->registered)
+		unregister_trigger(trigger);
 }
 
 void lttng_session_destroy(struct lttng_session *session)
@@ -273,14 +323,24 @@ void lttng_trigger_group_destroy(
 {
 	int close_ret;
 	struct lttng_trigger_enabler *trigger_enabler, *tmptrigger_enabler;
+	struct lttng_trigger *trigger, *tmptrigger;
 
 	if (!trigger_group) {
 		return;
 	}
 
+	cds_list_for_each_entry(trigger, &trigger_group->triggers_head, node)
+		_lttng_trigger_unregister(trigger);
+
+	synchronize_trace();
+
 	cds_list_for_each_entry_safe(trigger_enabler, tmptrigger_enabler,
 			&trigger_group->enablers_head, node)
 		lttng_trigger_enabler_destroy(trigger_enabler);
+
+	cds_list_for_each_entry_safe(trigger, tmptrigger,
+			&trigger_group->triggers_head, node)
+		_lttng_trigger_destroy(trigger);
 
 	/* Close the notification fd to the listener of triggers. */
 
@@ -725,6 +785,66 @@ socket_error:
 }
 
 static
+int lttng_trigger_create(const struct lttng_event_desc *desc,
+		uint64_t id, struct lttng_trigger_group *trigger_group)
+{
+	struct lttng_trigger *trigger;
+	struct cds_hlist_head *head;
+	int ret = 0;
+
+	/*
+	 * Get the hashtable bucket the created lttng_trigger object should be
+	 * inserted.
+	 */
+	head = borrow_hash_table_bucket(trigger_group->triggers_ht.table,
+		LTTNG_UST_TRIGGER_HT_SIZE, desc);
+
+	trigger = zmalloc(sizeof(struct lttng_trigger));
+	if (!trigger) {
+		ret = -ENOMEM;
+		goto error;
+	}
+
+	trigger->group = trigger_group;
+	trigger->id = id;
+
+	/* Trigger will be enabled by enabler sync. */
+	trigger->enabled = 0;
+	trigger->registered = 0;
+
+	CDS_INIT_LIST_HEAD(&trigger->filter_bytecode_runtime_head);
+	CDS_INIT_LIST_HEAD(&trigger->enablers_ref_head);
+	trigger->desc = desc;
+
+	cds_list_add(&trigger->node, &trigger_group->triggers_head);
+	cds_hlist_add_head(&trigger->hlist, head);
+
+	return 0;
+
+error:
+	return ret;
+}
+
+static
+void _lttng_trigger_destroy(struct lttng_trigger *trigger)
+{
+	struct lttng_enabler_ref *enabler_ref, *tmp_enabler_ref;
+
+	/* Remove from trigger list. */
+	cds_list_del(&trigger->node);
+	/* Remove from trigger hash table. */
+	cds_hlist_del(&trigger->hlist);
+
+	lttng_free_trigger_filter_runtime(trigger);
+
+	/* Free trigger enabler refs */
+	cds_list_for_each_entry_safe(enabler_ref, tmp_enabler_ref,
+			&trigger->enablers_ref_head, node)
+		free(enabler_ref);
+	free(trigger);
+}
+
+static
 int lttng_desc_match_star_glob_enabler(const struct lttng_event_desc *desc,
 		struct lttng_enabler *enabler)
 {
@@ -822,6 +942,21 @@ int lttng_event_enabler_match_event(struct lttng_event_enabler *event_enabler,
 }
 
 static
+int lttng_trigger_enabler_match_trigger(
+		struct lttng_trigger_enabler *trigger_enabler,
+		struct lttng_trigger *trigger)
+{
+	int desc_matches = lttng_desc_match_enabler(trigger->desc,
+		lttng_trigger_enabler_as_enabler(trigger_enabler));
+
+	if (desc_matches && trigger->group == trigger_enabler->group &&
+			trigger->id == trigger_enabler->id)
+		return 1;
+	else
+		return 0;
+}
+
+static
 struct lttng_enabler_ref *lttng_enabler_ref(
 		struct cds_list_head *enabler_ref_list,
 		struct lttng_enabler *enabler)
@@ -897,7 +1032,9 @@ void lttng_create_event_if_missing(struct lttng_event_enabler *event_enabler)
 
 static
 void probe_provider_event_for_each(struct lttng_probe_desc *provider_desc,
-		void (*event_func)(struct lttng_session *session, struct lttng_event *event))
+		void (*event_func)(struct lttng_session *session,
+			struct lttng_event *event),
+		void (*trigger_func)(struct lttng_trigger *trigger))
 {
 	struct cds_hlist_node *node, *tmp_node;
 	struct cds_list_head *sessionsp;
@@ -912,6 +1049,8 @@ void probe_provider_event_for_each(struct lttng_probe_desc *provider_desc,
 	 */
 	for (i = 0; i < provider_desc->nr_events; i++) {
 		const struct lttng_event_desc *event_desc;
+		struct lttng_trigger_group *trigger_group;
+		struct lttng_trigger *trigger;
 		struct lttng_session *session;
 		struct cds_hlist_head *head;
 		struct lttng_event *event;
@@ -934,6 +1073,28 @@ void probe_provider_event_for_each(struct lttng_probe_desc *provider_desc,
 			cds_hlist_for_each_entry_safe(event, node, tmp_node, head, hlist) {
 				if (event_desc == event->desc) {
 					event_func(session, event);
+					break;
+				}
+			}
+		}
+
+		/*
+		 * Iterate over all trigger groups to find the current event
+		 * description.
+		 */
+		cds_list_for_each_entry(trigger_group, &trigger_groups, node) {
+			/*
+			 * Get the list of triggers in the hashtable bucket and
+			 * iterate to find the trigger matching this
+			 * descriptor.
+			 */
+			head = borrow_hash_table_bucket(
+				trigger_group->triggers_ht.table,
+				LTTNG_UST_TRIGGER_HT_SIZE, event_desc);
+
+			cds_hlist_for_each_entry_safe(trigger, node, tmp_node, head, hlist) {
+				if (event_desc == trigger->desc) {
+					trigger_func(trigger);
 					break;
 				}
 			}
@@ -994,7 +1155,8 @@ void lttng_probe_provider_unregister_events(
 	 * Iterate over all events in the probe provider descriptions and sessions
 	 * to queue the unregistration of the events.
 	 */
-	probe_provider_event_for_each(provider_desc, _unregister_event);
+	probe_provider_event_for_each(provider_desc, _unregister_event,
+		_lttng_trigger_unregister);
 
 	/* Wait for grace period. */
 	synchronize_trace();
@@ -1005,11 +1167,12 @@ void lttng_probe_provider_unregister_events(
 	 * It is now safe to destroy the events and remove them from the event list
 	 * and hashtables.
 	 */
-	probe_provider_event_for_each(provider_desc, _event_enum_destroy);
+	probe_provider_event_for_each(provider_desc, _event_enum_destroy,
+		_lttng_trigger_destroy);
 }
 
 /*
- * Create events associated with an enabler (if not already present),
+ * Create events associated with an event enabler (if not already present),
  * and add backward reference from the event to the enabler.
  */
 static
@@ -1072,6 +1235,16 @@ int lttng_fix_pending_events(void)
 
 	cds_list_for_each_entry(session, &sessions, node) {
 		lttng_session_lazy_sync_event_enablers(session);
+	}
+	return 0;
+}
+
+int lttng_fix_pending_triggers(void)
+{
+	struct lttng_trigger_group *trigger_group;
+
+	cds_list_for_each_entry(trigger_group, &trigger_groups, node) {
+		lttng_trigger_group_sync_enablers(trigger_group);
 	}
 	return 0;
 }
@@ -1185,14 +1358,18 @@ struct lttng_trigger_enabler *lttng_trigger_enabler_create(
 
 	trigger_enabler->id = trigger_param->id;
 
-	memcpy(&trigger_enabler->base.event_param, trigger_param,
-		sizeof(trigger_enabler->base.event_param));
+	memcpy(&trigger_enabler->base.event_param.name, trigger_param->name,
+		sizeof(trigger_enabler->base.event_param.name));
+	trigger_enabler->base.event_param.instrumentation = trigger_param->instrumentation;
+	trigger_enabler->base.event_param.loglevel = trigger_param->loglevel;
+	trigger_enabler->base.event_param.loglevel_type = trigger_param->loglevel_type;
 
 	trigger_enabler->base.enabled = 0;
+	trigger_enabler->group = trigger_group;
 
 	cds_list_add(&trigger_enabler->node, &trigger_group->enablers_head);
 
-	//TODO sync trigger enablers
+	lttng_trigger_group_sync_enablers(trigger_group);
 
 	return trigger_enabler;
 }
@@ -1252,14 +1429,16 @@ int lttng_event_enabler_attach_exclusion(struct lttng_event_enabler *event_enabl
 int lttng_trigger_enabler_enable(struct lttng_trigger_enabler *trigger_enabler)
 {
 	lttng_trigger_enabler_as_enabler(trigger_enabler)->enabled = 1;
-	//TODO sync_trigger_enabler
+	lttng_trigger_group_sync_enablers(trigger_enabler->group);
+
 	return 0;
 }
 
 int lttng_trigger_enabler_disable(struct lttng_trigger_enabler *trigger_enabler)
 {
 	lttng_trigger_enabler_as_enabler(trigger_enabler)->enabled = 0;
-	//TODO sync_trigger_enabler
+	lttng_trigger_group_sync_enablers(trigger_enabler->group);
+
 	return 0;
 }
 
@@ -1270,7 +1449,7 @@ int lttng_trigger_enabler_attach_bytecode(
 	_lttng_enabler_attach_bytecode(
 		lttng_trigger_enabler_as_enabler(trigger_enabler), bytecode);
 
-	//TODO sync_trigger_enabler
+	lttng_trigger_group_sync_enablers(trigger_enabler->group);
 	return 0;
 }
 
@@ -1281,7 +1460,7 @@ int lttng_trigger_enabler_attach_exclusion(
 	_lttng_enabler_attach_exclusion(
 		lttng_trigger_enabler_as_enabler(trigger_enabler), excluder);
 
-	//TODO sync_trigger_enabler
+	lttng_trigger_group_sync_enablers(trigger_enabler->group);
 	return 0;
 }
 
@@ -1445,6 +1624,184 @@ void lttng_session_sync_event_enablers(struct lttng_session *session)
 	__tracepoint_probe_prune_release_queue();
 }
 
+static
+void lttng_create_trigger_if_missing(struct lttng_trigger_enabler *trigger_enabler)
+{
+	struct lttng_trigger_group *trigger_group = trigger_enabler->group;
+	struct lttng_probe_desc *probe_desc;
+	struct cds_list_head *probe_list;
+	int i;
+
+	probe_list = lttng_get_probe_list_head();
+
+	cds_list_for_each_entry(probe_desc, probe_list, head) {
+		for (i = 0; i < probe_desc->nr_events; i++) {
+			int ret;
+			bool found = false;
+			const struct lttng_event_desc *desc;
+			struct lttng_trigger *trigger;
+			struct cds_hlist_head *head;
+			struct cds_hlist_node *node;
+
+			desc = probe_desc->event_desc[i];
+			if (!lttng_desc_match_enabler(desc,
+					lttng_trigger_enabler_as_enabler(trigger_enabler)))
+				continue;
+
+			/*
+			 * Given the current trigger group, get the bucket that
+			 * the target trigger would be if it was already
+			 * created.
+			 */
+			head = borrow_hash_table_bucket(
+				trigger_group->triggers_ht.table,
+				LTTNG_UST_TRIGGER_HT_SIZE, desc);
+
+			cds_hlist_for_each_entry(trigger, node, head, hlist) {
+				/*
+				 * Check if trigger already exists by checking
+				 * if the trigger and enabler share the same
+				 * description and id.
+				 */
+				if (trigger->desc == desc &&
+						trigger->id == trigger_enabler->id) {
+					found = true;
+					break;
+				}
+			}
+
+			if (found)
+				continue;
+
+			/*
+			 * We need to create a trigger for this event probe.
+			 */
+			ret = lttng_trigger_create(desc, trigger_enabler->id,
+				trigger_group);
+			if (ret) {
+				DBG("Unable to create trigger %s, error %d\n",
+					probe_desc->event_desc[i]->name, ret);
+			}
+		}
+	}
+}
+
+/*
+ * Create triggers associated with a trigger enabler (if not already present).
+ */
+static
+int lttng_trigger_enabler_ref_triggers(struct lttng_trigger_enabler *trigger_enabler)
+{
+	struct lttng_trigger_group *trigger_group = trigger_enabler->group;
+	struct lttng_trigger *trigger;
+
+	 /*
+	  * Only try to create triggers for enablers that are enabled, the user
+	  * might still be attaching filter or exclusion to the
+	  * trigger_enabler.
+	  */
+	if (!lttng_trigger_enabler_as_enabler(trigger_enabler)->enabled)
+		goto end;
+
+	/* First, ensure that probe triggers are created for this enabler. */
+	lttng_create_trigger_if_missing(trigger_enabler);
+
+	/* Link the created trigger with its associated enabler. */
+	cds_list_for_each_entry(trigger, &trigger_group->triggers_head, node) {
+		struct lttng_enabler_ref *enabler_ref;
+
+		if (!lttng_trigger_enabler_match_trigger(trigger_enabler, trigger))
+			continue;
+
+		enabler_ref = lttng_enabler_ref(&trigger->enablers_ref_head,
+			lttng_trigger_enabler_as_enabler(trigger_enabler));
+		if (!enabler_ref) {
+			/*
+			 * If no backward ref, create it.
+			 * Add backward ref from trigger to enabler.
+			 */
+			enabler_ref = zmalloc(sizeof(*enabler_ref));
+			if (!enabler_ref)
+				return -ENOMEM;
+
+			enabler_ref->ref = lttng_trigger_enabler_as_enabler(
+				trigger_enabler);
+			cds_list_add(&enabler_ref->node,
+				&trigger->enablers_ref_head);
+		}
+
+		/*
+		 * Link filter bytecodes if not linked yet.
+		 */
+		lttng_enabler_link_bytecode(trigger->desc,
+			&trigger_group->ctx, &trigger->filter_bytecode_runtime_head,
+			lttng_trigger_enabler_as_enabler(trigger_enabler));
+	}
+end:
+	return 0;
+}
+
+static
+void lttng_trigger_group_sync_enablers(struct lttng_trigger_group *trigger_group)
+{
+	struct lttng_trigger_enabler *trigger_enabler;
+	struct lttng_trigger *trigger;
+
+	cds_list_for_each_entry(trigger_enabler, &trigger_group->enablers_head, node)
+		lttng_trigger_enabler_ref_triggers(trigger_enabler);
+
+	/*
+	 * For each trigger, if at least one of its enablers is enabled,
+	 * we enable the trigger, else we disable it.
+	 */
+	cds_list_for_each_entry(trigger, &trigger_group->triggers_head, node) {
+		struct lttng_enabler_ref *enabler_ref;
+		struct lttng_bytecode_runtime *runtime;
+		int enabled = 0, has_enablers_without_bytecode = 0;
+
+		/* Enable triggers */
+		cds_list_for_each_entry(enabler_ref,
+				&trigger->enablers_ref_head, node) {
+			if (enabler_ref->ref->enabled) {
+				enabled = 1;
+				break;
+			}
+		}
+
+		CMM_STORE_SHARED(trigger->enabled, enabled);
+		/*
+		 * Sync tracepoint registration with trigger enabled
+		 * state.
+		 */
+		if (enabled) {
+			if (!trigger->registered)
+				register_trigger(trigger);
+		} else {
+			if (trigger->registered)
+				unregister_trigger(trigger);
+		}
+
+		/* Check if has enablers without bytecode enabled */
+		cds_list_for_each_entry(enabler_ref,
+				&trigger->enablers_ref_head, node) {
+			if (enabler_ref->ref->enabled
+					&& cds_list_empty(&enabler_ref->ref->filter_bytecode_head)) {
+				has_enablers_without_bytecode = 1;
+				break;
+			}
+		}
+		trigger->has_enablers_without_bytecode =
+			has_enablers_without_bytecode;
+
+		/* Enable filters */
+		cds_list_for_each_entry(runtime,
+				&trigger->filter_bytecode_runtime_head, node) {
+			lttng_filter_sync_state(runtime);
+		}
+	}
+	__tracepoint_probe_prune_release_queue();
+}
+
 /*
  * Apply enablers to session events, adding events to session if need
  * be. It is required after each modification applied to an active
@@ -1498,5 +1855,32 @@ void lttng_ust_context_set_session_provider(const char *name,
 			if (ret)
 				abort();
 		}
+	}
+}
+
+/*
+ * Update all trigger groups with the given app context.
+ * Called with ust lock held.
+ * This is invoked when an application context gets loaded/unloaded. It
+ * ensures the context callbacks are in sync with the application
+ * context (either app context callbacks, or dummy callbacks).
+ */
+void lttng_ust_context_set_trigger_group_provider(const char *name,
+		size_t (*get_size)(struct lttng_ctx_field *field, size_t offset),
+		void (*record)(struct lttng_ctx_field *field,
+			struct lttng_ust_lib_ring_buffer_ctx *ctx,
+			struct lttng_channel *chan),
+		void (*get_value)(struct lttng_ctx_field *field,
+			struct lttng_ctx_value *value))
+{
+	struct lttng_trigger_group *trigger_group;
+
+	cds_list_for_each_entry(trigger_group, &trigger_groups, node) {
+		int ret;
+
+		ret = lttng_ust_context_set_provider_rcu(&trigger_group->ctx,
+				name, get_size, record, get_value);
+		if (ret)
+			abort();
 	}
 }

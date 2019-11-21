@@ -196,6 +196,10 @@ int lttng_trigger_enabler_attach_exclusion(
 
 /* TODO doc */
 LTTNG_HIDDEN
+void lttng_free_trigger_filter_runtime(struct lttng_trigger *trigger);
+
+/* TODO doc */
+LTTNG_HIDDEN
 int lttng_fix_pending_triggers(void);
 
 #endif /* _LTTNG_UST_EVENTS_INTERNAL_H */
