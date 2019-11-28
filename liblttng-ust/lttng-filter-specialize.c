@@ -502,7 +502,7 @@ static int specialize_load_object(const struct lttng_event_field *field,
 	return 0;
 }
 
-static int specialize_context_lookup(struct lttng_session *session,
+static int specialize_context_lookup(struct lttng_ctx *ctx,
 		struct bytecode_runtime *runtime,
 		struct load_op *insn,
 		struct vstack_load *load)
@@ -513,11 +513,11 @@ static int specialize_context_lookup(struct lttng_session *session,
 	struct filter_get_index_data gid;
 	ssize_t data_offset;
 
-	idx = specialize_context_lookup_name(session->ctx, runtime, insn);
+	idx = specialize_context_lookup_name(ctx, runtime, insn);
 	if (idx < 0) {
 		return -ENOENT;
 	}
-	ctx_field = &session->ctx->fields[idx];
+	ctx_field = &ctx->fields[idx];
 	field = &ctx_field->event_field;
 	ret = specialize_load_object(field, load, true);
 	if (ret)
@@ -536,7 +536,7 @@ static int specialize_context_lookup(struct lttng_session *session,
 	return 0;
 }
 
-static int specialize_app_context_lookup(struct lttng_session *session,
+static int specialize_app_context_lookup(struct lttng_ctx *ctx,
 		struct bytecode_runtime *runtime,
 		struct load_op *insn,
 		struct vstack_load *load)
@@ -559,19 +559,18 @@ static int specialize_app_context_lookup(struct lttng_session *session,
 	}
 	strcpy(name, "$app.");
 	strcat(name, orig_name);
-	idx = lttng_get_context_index(session->ctx, name);
+	idx = lttng_get_context_index(ctx, name);
 	if (idx < 0) {
 		assert(lttng_context_is_app(name));
 		ret = lttng_ust_add_app_context_to_ctx_rcu(name,
-				&session->ctx);
+				&ctx);
 		if (ret)
 			return ret;
-		idx = lttng_get_context_index(session->ctx,
-			name);
+		idx = lttng_get_context_index(ctx, name);
 		if (idx < 0)
 			return -ENOENT;
 	}
-	ctx_field = &session->ctx->fields[idx];
+	ctx_field = &ctx->fields[idx];
 	field = &ctx_field->event_field;
 	ret = specialize_load_object(field, load, true);
 	if (ret)
@@ -676,7 +675,7 @@ int lttng_filter_specialize_bytecode(struct lttng_event *event,
 	int ret = -EINVAL;
 	struct vstack _stack;
 	struct vstack *stack = &_stack;
-	struct lttng_session *session = bytecode->p.session;
+	struct lttng_ctx *ctx = *bytecode->p.pctx;
 
 	vstack_init(stack);
 
@@ -1403,7 +1402,7 @@ int lttng_filter_specialize_bytecode(struct lttng_event *event,
 				goto end;
 			case LOAD_ROOT_CONTEXT:
 				/* Lookup context field. */
-				ret = specialize_context_lookup(session,
+				ret = specialize_context_lookup(ctx,
 					bytecode, insn,
 					&vstack_ax(stack)->load);
 				if (ret)
@@ -1411,7 +1410,7 @@ int lttng_filter_specialize_bytecode(struct lttng_event *event,
 				break;
 			case LOAD_ROOT_APP_CONTEXT:
 				/* Lookup app context field. */
-				ret = specialize_app_context_lookup(session,
+				ret = specialize_app_context_lookup(ctx,
 					bytecode, insn,
 					&vstack_ax(stack)->load);
 				if (ret)
