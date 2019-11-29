@@ -102,6 +102,25 @@ int ustctl_start_session(int sock, int handle);
 int ustctl_stop_session(int sock, int handle);
 
 /*
+ * ustctl_create_trigger_group creates a trigger group. It establishes the
+ * connection with the application by providing a file descriptor of the pipe
+ * to be used by the application when a trigger of that group is fired. It
+ * returns a handle to be used when creating trigger in that group.
+ */
+int ustctl_create_trigger_group(int sock, int pipe_fd,
+		struct lttng_ust_object_data **trigger_group);
+
+/*
+ * ustctl_create_trigger creates a trigger in a trigger group giving a trigger
+ * description and a trigger group handle. It returns a trigger handle to be
+ * used when enabling the trigger, attaching filter, attaching exclusion, and
+ * disabling the trigger.
+ */
+int ustctl_create_trigger(int sock, struct lttng_ust_trigger *trigger,
+		struct lttng_ust_object_data *trigger_group,
+		struct lttng_ust_object_data **trigger_data);
+
+/*
  * ustctl_tracepoint_list returns a tracepoint list handle, or negative
  * error value.
  */

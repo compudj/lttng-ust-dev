@@ -629,6 +629,14 @@ struct lttng_session {
 	struct lttng_ctx *ctx;			/* contexts for filters. */
 };
 
+struct lttng_trigger_group {
+	int objd;
+	void *owner;
+	int notification_fd;
+	struct cds_list_head node;		/* Trigger group handle list */
+	struct cds_list_head enablers_head;
+};
+
 struct lttng_transport {
 	char *name;
 	struct cds_list_head node;
