@@ -44,6 +44,13 @@ struct lttng_event_enabler {
 	struct lttng_ctx *ctx;
 };
 
+struct lttng_trigger_enabler {
+	struct lttng_enabler base;
+	uint64_t id;
+	struct cds_list_head node;	/* per-app list of trigger enablers */
+	struct lttng_trigger_group *group; /* weak ref */
+};
+
 struct lttng_ust_filter_bytecode_node {
 	struct cds_list_head node;
 	struct lttng_enabler *enabler;
@@ -71,6 +78,12 @@ struct lttng_enabler *lttng_event_enabler_as_enabler(
 	return &event_enabler->base;
 }
 
+static inline
+struct lttng_enabler *lttng_trigger_enabler_as_enabler(
+		struct lttng_trigger_enabler *trigger_enabler)
+{
+	return &trigger_enabler->base;
+}
 
 /*
  * Allocate and initialize a `struct lttng_event_enabler` object.
@@ -140,5 +153,49 @@ void lttng_enabler_link_bytecode(const struct lttng_event_desc *event_desc,
 		struct lttng_ctx **ctx,
 		struct cds_list_head *bytecode_runtime_head,
 		struct lttng_enabler *enabler);
+
+/* TODO doc */
+LTTNG_HIDDEN
+struct lttng_trigger_group *lttng_trigger_group_create(void);
+
+/* TODO doc */
+LTTNG_HIDDEN
+void lttng_trigger_group_destroy(
+		struct lttng_trigger_group *trigger_group);
+
+/* TODO doc */
+LTTNG_HIDDEN
+struct lttng_trigger_enabler *lttng_trigger_enabler_create(
+		struct lttng_trigger_group *trigger_group,
+		enum lttng_enabler_format_type format_type,
+		struct lttng_ust_trigger *trigger_param);
+
+/* TODO doc */
+LTTNG_HIDDEN
+void lttng_trigger_enabler_destroy(struct lttng_trigger_enabler *trigger_enabler);
+
+/* TODO doc */
+LTTNG_HIDDEN
+int lttng_trigger_enabler_enable(struct lttng_trigger_enabler *trigger_enabler);
+
+/* TODO doc */
+LTTNG_HIDDEN
+int lttng_trigger_enabler_disable(struct lttng_trigger_enabler *trigger_enabler);
+
+/* TODO doc */
+LTTNG_HIDDEN
+int lttng_trigger_enabler_attach_bytecode(
+		struct lttng_trigger_enabler *trigger_enabler,
+		struct lttng_ust_filter_bytecode_node *bytecode);
+
+/* TODO doc */
+LTTNG_HIDDEN
+int lttng_trigger_enabler_attach_exclusion(
+		struct lttng_trigger_enabler *trigger_enabler,
+		struct lttng_ust_excluder_node *excluder);
+
+/* TODO doc */
+LTTNG_HIDDEN
+int lttng_fix_pending_triggers(void);
 
 #endif /* _LTTNG_UST_EVENTS_INTERNAL_H */

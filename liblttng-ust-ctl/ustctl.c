@@ -132,6 +132,8 @@ int ustctl_release_object(int sock, struct lttng_ust_object_data *data)
 		break;
 	case LTTNG_UST_OBJECT_TYPE_EVENT:
 	case LTTNG_UST_OBJECT_TYPE_CONTEXT:
+	case LTTNG_UST_OBJECT_TYPE_TRIGGER_GROUP:
+	case LTTNG_UST_OBJECT_TYPE_TRIGGER:
 		break;
 	default:
 		assert(0);
@@ -416,6 +418,97 @@ int ustctl_stop_session(int sock, int handle)
 
 	obj.handle = handle;
 	return ustctl_disable(sock, &obj);
+}
+
+int ustctl_create_trigger_group(int sock, int pipe_fd,
+		struct lttng_ust_object_data **_trigger_group_data)
+{
+	struct lttng_ust_object_data *trigger_group_data;
+	struct ustcomm_ust_msg lum;
+	struct ustcomm_ust_reply lur;
+	ssize_t len;
+	int ret;
+
+	if (!_trigger_group_data)
+		return -EINVAL;
+
+	trigger_group_data = zmalloc(sizeof(*trigger_group_data));
+	if (!trigger_group_data)
+		return -ENOMEM;
+
+	trigger_group_data->type = LTTNG_UST_OBJECT_TYPE_TRIGGER_GROUP;
+
+	memset(&lum, 0, sizeof(lum));
+	lum.handle = LTTNG_UST_ROOT_HANDLE;
+	lum.cmd = LTTNG_UST_TRIGGER_GROUP_CREATE;
+
+	ret = ustcomm_send_app_msg(sock, &lum);
+	if (ret)
+		goto error;
+
+	/* Send trigger notification pipe. */
+	len = ustcomm_send_fds_unix_sock(sock, &pipe_fd, 1);
+	if (len <= 0) {
+		ret = len;
+		goto error;
+	}
+
+	ret = ustcomm_recv_app_reply(sock, &lur, lum.handle, lum.cmd);
+	if (ret)
+		goto error;
+
+	trigger_group_data->handle = lur.ret_val;
+	DBG("received trigger group handle %d", trigger_group_data->handle);
+
+	*_trigger_group_data = trigger_group_data;
+
+	ret = 0;
+	goto end;
+error:
+	free(trigger_group_data);
+
+end:
+	return ret;
+}
+
+int ustctl_create_trigger(int sock, struct lttng_ust_trigger *trigger,
+		struct lttng_ust_object_data *trigger_group,
+		struct lttng_ust_object_data **_trigger_data)
+{
+	struct ustcomm_ust_msg lum;
+	struct ustcomm_ust_reply lur;
+	struct lttng_ust_object_data *trigger_data;
+	int ret;
+
+	if (!trigger_group || !_trigger_data)
+		return -EINVAL;
+
+	trigger_data = zmalloc(sizeof(*trigger_data));
+	if (!trigger_data)
+		return -ENOMEM;
+
+	trigger_data->type = LTTNG_UST_OBJECT_TYPE_TRIGGER;
+
+	memset(&lum, 0, sizeof(lum));
+	lum.handle = trigger_group->handle;
+	lum.cmd = LTTNG_UST_TRIGGER_CREATE;
+
+	strncpy(lum.u.trigger.name, trigger->name,
+		LTTNG_UST_SYM_NAME_LEN);
+	lum.u.trigger.instrumentation = trigger->instrumentation;
+	lum.u.trigger.loglevel_type = trigger->loglevel_type;
+	lum.u.trigger.loglevel = trigger->loglevel;
+	lum.u.trigger.id = trigger->id;
+	ret = ustcomm_send_app_cmd(sock, &lum, &lur);
+	if (ret) {
+		free(trigger_data);
+		return ret;
+	}
+	trigger_data->handle = lur.ret_val;
+	DBG("received event handle %u", trigger_data->handle);
+	*_trigger_data = trigger_data;
+
+	return ret;
 }
 
 int ustctl_tracepoint_list(int sock)

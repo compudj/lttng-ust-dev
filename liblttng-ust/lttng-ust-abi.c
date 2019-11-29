@@ -280,9 +280,11 @@ void lttng_ust_objd_table_owner_cleanup(void *owner)
  */
 
 static const struct lttng_ust_objd_ops lttng_ops;
+static const struct lttng_ust_objd_ops lttng_trigger_group_ops;
 static const struct lttng_ust_objd_ops lttng_session_ops;
 static const struct lttng_ust_objd_ops lttng_channel_ops;
 static const struct lttng_ust_objd_ops lttng_event_enabler_ops;
+static const struct lttng_ust_objd_ops lttng_trigger_enabler_ops;
 static const struct lttng_ust_objd_ops lttng_tracepoint_list_ops;
 static const struct lttng_ust_objd_ops lttng_tracepoint_field_list_ops;
 
@@ -341,6 +343,34 @@ long lttng_abi_tracer_version(int objd,
 }
 
 static
+int lttng_abi_trigger_send_fd(void *owner, int trigger_notif_fd)
+{
+	struct lttng_trigger_group *trigger_group;
+	int trigger_group_objd, ret;
+
+	trigger_group = lttng_trigger_group_create();
+	if (!trigger_group)
+		return -ENOMEM;
+
+	trigger_group_objd = objd_alloc(trigger_group,
+		&lttng_trigger_group_ops, owner, "trigger_group");
+	if (trigger_group_objd < 0) {
+		ret = trigger_group_objd;
+		goto objd_error;
+	}
+
+	trigger_group->objd = trigger_group_objd;
+	trigger_group->owner = owner;
+	trigger_group->notification_fd = trigger_notif_fd;
+
+	return trigger_group_objd;
+
+objd_error:
+	lttng_trigger_group_destroy(trigger_group);
+	return ret;
+}
+
+static
 long lttng_abi_add_context(int objd,
 	struct lttng_ust_context *context_param,
 	union ust_args *uargs,
@@ -389,6 +419,9 @@ long lttng_cmd(int objd, unsigned int cmd, unsigned long arg,
 	case LTTNG_UST_WAIT_QUIESCENT:
 		synchronize_trace();
 		return 0;
+	case LTTNG_UST_TRIGGER_GROUP_CREATE:
+		return lttng_abi_trigger_send_fd(owner,
+			uargs->trigger_handle.trigger_notif_fd);
 	default:
 		return -EINVAL;
 	}
@@ -613,6 +646,126 @@ int lttng_release_session(int objd)
 static const struct lttng_ust_objd_ops lttng_session_ops = {
 	.release = lttng_release_session,
 	.cmd = lttng_session_cmd,
+};
+
+static int lttng_ust_trigger_enabler_create(int trigger_group_obj, void *owner,
+		struct lttng_ust_trigger *trigger_param,
+		enum lttng_enabler_format_type type)
+{
+	struct lttng_trigger_group *group_handle =
+		objd_private(trigger_group_obj);
+	struct lttng_trigger_enabler *trigger_enabler;
+	int trigger_objd, ret;
+
+	trigger_param->name[LTTNG_UST_SYM_NAME_LEN - 1] = '\0';
+	trigger_objd = objd_alloc(NULL, &lttng_trigger_enabler_ops, owner,
+		"trigger enabler");
+	if (trigger_objd < 0) {
+		ret = trigger_objd;
+		goto objd_error;
+	}
+
+	trigger_enabler = lttng_trigger_enabler_create(group_handle, type, trigger_param);
+	if (!trigger_enabler) {
+		ret = -ENOMEM;
+		goto trigger_error;
+	}
+
+	objd_set_private(trigger_objd, trigger_enabler);
+	/* The trigger holds a reference on the trigger group. */
+	objd_ref(trigger_enabler->group->objd);
+
+	return trigger_objd;
+
+trigger_error:
+	{
+		int err;
+
+		err = lttng_ust_objd_unref(trigger_objd, 1);
+		assert(!err);
+	}
+objd_error:
+	return ret;
+}
+
+static
+long lttng_trigger_enabler_cmd(int objd, unsigned int cmd, unsigned long arg,
+		union ust_args *uargs, void *owner)
+{
+	struct lttng_trigger_enabler *trigger_enabler = objd_private(objd);
+	switch (cmd) {
+	case LTTNG_UST_FILTER:
+		return lttng_trigger_enabler_attach_bytecode(trigger_enabler,
+			(struct lttng_ust_filter_bytecode_node *) arg);
+	case LTTNG_UST_EXCLUSION:
+		return lttng_trigger_enabler_attach_exclusion(trigger_enabler,
+			(struct lttng_ust_excluder_node *) arg);
+	case LTTNG_UST_ENABLE:
+		return lttng_trigger_enabler_enable(trigger_enabler);
+	case LTTNG_UST_DISABLE:
+		return lttng_trigger_enabler_disable(trigger_enabler);
+	default:
+		return -EINVAL;
+	}
+}
+
+static
+long lttng_trigger_group_cmd(int objd, unsigned int cmd, unsigned long arg,
+		union ust_args *uargs, void *owner)
+{
+	switch (cmd) {
+	case LTTNG_UST_TRIGGER_CREATE:
+	{
+		struct lttng_ust_trigger *trigger_param =
+			(struct lttng_ust_trigger *) arg;
+		if (strutils_is_star_glob_pattern(trigger_param->name)) {
+			/*
+			 * If the event name is a star globbing pattern,
+			 * we create the special star globbing enabler.
+			 */
+			return lttng_ust_trigger_enabler_create(objd, owner,
+				trigger_param, LTTNG_ENABLER_FORMAT_STAR_GLOB);
+		} else {
+			return lttng_ust_trigger_enabler_create(objd, owner,
+				trigger_param, LTTNG_ENABLER_FORMAT_EVENT);
+		}
+	}
+	default:
+		return -EINVAL;
+	}
+}
+
+static
+int lttng_trigger_enabler_release(int objd)
+{
+	struct lttng_trigger_enabler *trigger_enabler = objd_private(objd);
+
+	if (trigger_enabler)
+		return lttng_ust_objd_unref(trigger_enabler->group->objd, 0);
+	return 0;
+}
+
+static const struct lttng_ust_objd_ops lttng_trigger_enabler_ops = {
+	.release = lttng_trigger_enabler_release,
+	.cmd = lttng_trigger_enabler_cmd,
+};
+
+static
+int lttng_release_trigger_group(int objd)
+{
+	struct lttng_trigger_group *trigger_group = objd_private(objd);
+
+	if (trigger_group) {
+		lttng_trigger_group_destroy(trigger_group);
+		return 0;
+	} else {
+		return -EINVAL;
+	}
+}
+
+static const struct lttng_ust_objd_ops lttng_trigger_group_ops = {
+	.release = lttng_release_trigger_group,
+	.cmd = lttng_trigger_group_cmd,
 };
 
 static
