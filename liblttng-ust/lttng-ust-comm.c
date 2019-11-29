@@ -321,6 +321,9 @@ static const char *cmd_name_mapping[] = {
 	[ LTTNG_UST_REGISTER_DONE ] = "Registration Done",
 	[ LTTNG_UST_TRACEPOINT_FIELD_LIST ] = "Create Tracepoint Field List",
 
+	[ LTTNG_UST_TRIGGER_GROUP_CREATE ] = "Create trigger group",
+	[ LTTNG_UST_TRIGGER_CREATE ] = "Create trigger",
+
 	/* Session FD commands */
 	[ LTTNG_UST_CHANNEL ] = "Create Channel",
 	[ LTTNG_UST_SESSION_START ] = "Start Session",
@@ -906,6 +909,43 @@ int handle_message(struct sock_info *sock_info,
 			ret = -ENOSYS;
 			free(node);
 		}
+		break;
+	}
+	case LTTNG_UST_TRIGGER_GROUP_CREATE:
+	{
+		int trigger_notif_fd;
+
+		len = ustcomm_recv_trigger_notif_fd_from_sessiond(sock,
+			&trigger_notif_fd);
+		switch (len) {
+		case 0:	/* orderly shutdown */
+			ret = 0;
+			goto error;
+		case 1:
+			break;
+		default:
+			if (len < 0) {
+				DBG("Receive failed from lttng-sessiond with errno %d", (int) -len);
+				if (len == -ECONNRESET) {
+					ERR("%s remote end closed connection", sock_info->name);
+					ret = len;
+					goto error;
+				}
+				ret = len;
+				goto error;
+			} else {
+				DBG("incorrect trigger fd message size: %zd", len);
+				ret = -EINVAL;
+				goto error;
+			}
+		}
+		args.trigger_handle.trigger_notif_fd = trigger_notif_fd;
+		if (ops->cmd)
+			ret = ops->cmd(lum->handle, lum->cmd,
+					(unsigned long) &lum->u,
+					&args, sock_info);
+		else
+			ret = -ENOSYS;
 		break;
 	}
 	case LTTNG_UST_CHANNEL:
