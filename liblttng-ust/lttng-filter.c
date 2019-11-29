@@ -188,14 +188,13 @@ const char *print_op(enum filter_op op)
 }
 
 static
-int apply_field_reloc(struct lttng_event *event,
+int apply_field_reloc(const struct lttng_event_desc *event_desc,
 		struct bytecode_runtime *runtime,
 		uint32_t runtime_len,
 		uint32_t reloc_offset,
 		const char *field_name,
 		enum filter_op filter_op)
 {
-	const struct lttng_event_desc *desc;
 	const struct lttng_event_field *fields, *field = NULL;
 	unsigned int nr_fields, i;
 	struct load_op *op;
@@ -204,13 +203,12 @@ int apply_field_reloc(struct lttng_event *event,
 	dbg_printf("Apply field reloc: %u %s\n", reloc_offset, field_name);
 
 	/* Lookup event by name */
-	desc = event->desc;
-	if (!desc)
+	if (!event_desc)
 		return -EINVAL;
-	fields = desc->fields;
+	fields = event_desc->fields;
 	if (!fields)
 		return -EINVAL;
-	nr_fields = desc->nr_fields;
+	nr_fields = event_desc->nr_fields;
 	for (i = 0; i < nr_fields; i++) {
 		if (!strcmp(fields[i].name, field_name)) {
 			field = &fields[i];
@@ -282,8 +280,7 @@ int apply_field_reloc(struct lttng_event *event,
 }
 
 static
-int apply_context_reloc(struct lttng_event *event,
-		struct bytecode_runtime *runtime,
+int apply_context_reloc(struct bytecode_runtime *runtime,
 		uint32_t runtime_len,
 		uint32_t reloc_offset,
 		const char *context_name,
@@ -358,7 +355,7 @@ int apply_context_reloc(struct lttng_event *event,
 }
 
 static
-int apply_reloc(struct lttng_event *event,
+int apply_reloc(const struct lttng_event_desc *event_desc,
 		struct bytecode_runtime *runtime,
 		uint32_t runtime_len,
 		uint32_t reloc_offset,
@@ -375,10 +372,10 @@ int apply_reloc(struct lttng_event *event,
 	op = (struct load_op *) &runtime->code[reloc_offset];
 	switch (op->op) {
 	case FILTER_OP_LOAD_FIELD_REF:
-		return apply_field_reloc(event, runtime, runtime_len,
+		return apply_field_reloc(event_desc, runtime, runtime_len,
 			reloc_offset, name, op->op);
 	case FILTER_OP_GET_CONTEXT_REF:
-		return apply_context_reloc(event, runtime, runtime_len,
+		return apply_context_reloc(runtime, runtime_len,
 			reloc_offset, name, op->op);
 	case FILTER_OP_GET_SYMBOL:
 	case FILTER_OP_GET_SYMBOL_FIELD:
@@ -396,12 +393,11 @@ int apply_reloc(struct lttng_event *event,
 
 static
 int bytecode_is_linked(struct lttng_ust_filter_bytecode_node *filter_bytecode,
-		struct lttng_event *event)
+		struct cds_list_head *bytecode_runtime_head)
 {
 	struct lttng_bytecode_runtime *bc_runtime;
 
-	cds_list_for_each_entry(bc_runtime,
-			&event->bytecode_runtime_head, node) {
+	cds_list_for_each_entry(bc_runtime, bytecode_runtime_head, node) {
 		if (bc_runtime->bc == filter_bytecode)
 			return 1;
 	}
@@ -413,7 +409,8 @@ int bytecode_is_linked(struct lttng_ust_filter_bytecode_node *filter_bytecode,
  * bytecode runtime.
  */
 static
-int _lttng_filter_event_link_bytecode(struct lttng_event *event,
+int _lttng_filter_link_bytecode(const struct lttng_event_desc *event_desc,
+		struct lttng_ctx **ctx,
 		struct lttng_ust_filter_bytecode_node *filter_bytecode,
 		struct cds_list_head *insert_loc)
 {
@@ -424,7 +421,7 @@ int _lttng_filter_event_link_bytecode(struct lttng_event *event,
 	if (!filter_bytecode)
 		return 0;
 	/* Bytecode already linked */
-	if (bytecode_is_linked(filter_bytecode, event))
+	if (bytecode_is_linked(filter_bytecode, insert_loc))
 		return 0;
 
 	dbg_printf("Linking...\n");
@@ -437,7 +434,7 @@ int _lttng_filter_event_link_bytecode(struct lttng_event *event,
 		goto alloc_error;
 	}
 	runtime->p.bc = filter_bytecode;
-	runtime->p.pctx = &event->chan->session->ctx;
+	runtime->p.pctx = ctx;
 	runtime->len = filter_bytecode->bc.reloc_offset;
 	/* copy original bytecode */
 	memcpy(runtime->code, filter_bytecode->bc.data, runtime->len);
@@ -453,7 +450,7 @@ int _lttng_filter_event_link_bytecode(struct lttng_event *event,
 		const char *name =
 			(const char *) &filter_bytecode->bc.data[offset + sizeof(uint16_t)];
 
-		ret = apply_reloc(event, runtime, runtime->len, reloc_offset, name);
+		ret = apply_reloc(event_desc, runtime, runtime->len, reloc_offset, name);
 		if (ret) {
 			goto link_error;
 		}
@@ -465,7 +462,7 @@ int _lttng_filter_event_link_bytecode(struct lttng_event *event,
 		goto link_error;
 	}
 	/* Specialize bytecode */
-	ret = lttng_filter_specialize_bytecode(event, runtime);
+	ret = lttng_filter_specialize_bytecode(event_desc, runtime);
 	if (ret) {
 		goto link_error;
 	}
@@ -497,23 +494,23 @@ void lttng_filter_sync_state(struct lttng_bytecode_runtime *runtime)
 /*
  * Link bytecode for all enablers referenced by an event.
  */
-void lttng_event_enabler_link_bytecode(struct lttng_event *event,
-		struct lttng_event_enabler *event_enabler)
+void lttng_enabler_link_bytecode(const struct lttng_event_desc *event_desc,
+		struct lttng_ctx **ctx,
+		struct cds_list_head *bytecode_runtime_head,
+		struct lttng_enabler *enabler)
 {
 	struct lttng_ust_filter_bytecode_node *bc;
 	struct lttng_bytecode_runtime *runtime;
-	struct lttng_enabler *base_enabler = lttng_event_enabler_as_enabler(event_enabler);
 
-	/* Can only be called for events with desc attached */
-	assert(event->desc);
+	assert(event_desc);
 
 	/* Link each bytecode. */
-	cds_list_for_each_entry(bc, &base_enabler->filter_bytecode_head, node) {
+	cds_list_for_each_entry(bc, &enabler->filter_bytecode_head, node) {
 		int found = 0, ret;
 		struct cds_list_head *insert_loc;
 
 		cds_list_for_each_entry(runtime,
-				&event->bytecode_runtime_head, node) {
+				bytecode_runtime_head, node) {
 			if (runtime->bc == bc) {
 				found = 1;
 				break;
@@ -528,19 +525,20 @@ void lttng_event_enabler_link_bytecode(struct lttng_event *event,
 		 * order.
 		 */
 		cds_list_for_each_entry_reverse(runtime,
-				&event->bytecode_runtime_head, node) {
+				bytecode_runtime_head, node) {
 			if (runtime->bc->bc.seqnum < bc->bc.seqnum) {
 				/* insert here */
 				insert_loc = &runtime->node;
 				goto add_within;
 			}
 		}
+
 		/* Add to head to list */
-		insert_loc = &event->bytecode_runtime_head;
+		insert_loc = bytecode_runtime_head;
 	add_within:
 		dbg_printf("linking bytecode\n");
-		ret = _lttng_filter_event_link_bytecode(event, bc,
-				insert_loc);
+		ret = _lttng_filter_link_bytecode(event_desc, ctx, bc,
+			insert_loc);
 		if (ret) {
 			dbg_printf("[lttng filter] warning: cannot link event bytecode\n");
 		}

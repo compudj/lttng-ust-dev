@@ -527,14 +527,13 @@ end:
 	return ret;
 }
 
-static int specialize_event_payload_lookup(struct lttng_event *event,
+static int specialize_payload_lookup(const struct lttng_event_desc *event_desc,
 		struct bytecode_runtime *runtime,
 		struct load_op *insn,
 		struct vstack_load *load)
 {
 	const char *name;
 	uint16_t offset;
-	const struct lttng_event_desc *desc = event->desc;
 	unsigned int i, nr_fields;
 	bool found = false;
 	uint32_t field_offset = 0;
@@ -543,11 +542,11 @@ static int specialize_event_payload_lookup(struct lttng_event *event,
 	struct filter_get_index_data gid;
 	ssize_t data_offset;
 
-	nr_fields = desc->nr_fields;
+	nr_fields = event_desc->nr_fields;
 	offset = ((struct get_symbol *) insn->data)->offset;
 	name = runtime->p.bc->bc.data + runtime->p.bc->bc.reloc_offset + offset;
 	for (i = 0; i < nr_fields; i++) {
-		field = &desc->fields[i];
+		field = &event_desc->fields[i];
 		if (!strcmp(field->name, name)) {
 			found = true;
 			break;
@@ -600,7 +599,7 @@ end:
 	return ret;
 }
 
-int lttng_filter_specialize_bytecode(struct lttng_event *event,
+int lttng_filter_specialize_bytecode(const struct lttng_event_desc *event_desc,
 		struct bytecode_runtime *bytecode)
 {
 	void *pc, *next_pc, *start_pc;
@@ -1350,7 +1349,7 @@ int lttng_filter_specialize_bytecode(struct lttng_event *event,
 				break;
 			case LOAD_ROOT_PAYLOAD:
 				/* Lookup event payload field. */
-				ret = specialize_event_payload_lookup(event,
+				ret = specialize_payload_lookup(event_desc,
 					bytecode, insn,
 					&vstack_ax(stack)->load);
 				if (ret)
