@@ -34,6 +34,7 @@
 #include <inttypes.h>
 #include <time.h>
 #include <stdbool.h>
+#include <unistd.h>
 #include <lttng/ust-endian.h>
 #include "clock.h"
 
@@ -49,6 +50,7 @@
 #include <helper.h>
 #include <lttng/ust-ctl.h>
 #include <ust-comm.h>
+#include <ust-fd.h>
 #include <lttng/ust-dynamic-type.h>
 #include <lttng/ust-context-provider.h>
 #include "error.h"
@@ -71,6 +73,7 @@
  */
 
 static CDS_LIST_HEAD(sessions);
+static CDS_LIST_HEAD(trigger_groups);
 
 struct cds_list_head *_lttng_get_sessions(void)
 {
@@ -158,6 +161,20 @@ struct lttng_session *lttng_session_create(void)
 		CDS_INIT_HLIST_HEAD(&session->enums_ht.table[i]);
 	cds_list_add(&session->node, &sessions);
 	return session;
+}
+
+struct lttng_trigger_group *lttng_trigger_group_create(void)
+{
+	struct lttng_trigger_group *trigger_group;
+
+	trigger_group = zmalloc(sizeof(struct lttng_trigger_group));
+	if (!trigger_group)
+		return NULL;
+
+	cds_list_add(&trigger_group->node, &trigger_groups);
+	CDS_INIT_LIST_HEAD(&trigger_group->enablers_head);
+
+	return trigger_group;
 }
 
 /*
@@ -251,6 +268,37 @@ void lttng_session_destroy(struct lttng_session *session)
 	free(session);
 }
 
+void lttng_trigger_group_destroy(
+		struct lttng_trigger_group *trigger_group)
+{
+	int close_ret;
+	struct lttng_trigger_enabler *trigger_enabler, *tmptrigger_enabler;
+
+	if (!trigger_group) {
+		return;
+	}
+
+	cds_list_for_each_entry_safe(trigger_enabler, tmptrigger_enabler,
+			&trigger_group->enablers_head, node)
+		lttng_trigger_enabler_destroy(trigger_enabler);
+
+	/* Close the notification fd to the listener of triggers. */
+
+	lttng_ust_lock_fd_tracker();
+	close_ret = close(trigger_group->notification_fd);
+	if (!close_ret) {
+		lttng_ust_delete_fd_from_tracker(trigger_group->notification_fd);
+	} else {
+		PERROR("close");
+		abort();
+	}
+	lttng_ust_unlock_fd_tracker();
+
+	cds_list_del(&trigger_group->node);
+
+	free(trigger_group);
+}
+
 static
 void lttng_enabler_destroy(struct lttng_enabler *enabler)
 {
@@ -272,6 +320,19 @@ void lttng_enabler_destroy(struct lttng_enabler *enabler)
 			&enabler->excluder_head, node) {
 		free(excluder_node);
 	}
+}
+
+ void lttng_trigger_enabler_destroy(struct lttng_trigger_enabler *trigger_enabler)
+{
+	if (!trigger_enabler) {
+		return;
+	}
+
+	cds_list_del(&trigger_enabler->node);
+
+	lttng_enabler_destroy(lttng_trigger_enabler_as_enabler(trigger_enabler));
+
+	free(trigger_enabler);
 }
 
 static
@@ -1085,6 +1146,34 @@ struct lttng_event_enabler *lttng_event_enabler_create(
 	return event_enabler;
 }
 
+struct lttng_trigger_enabler *lttng_trigger_enabler_create(
+		struct lttng_trigger_group *trigger_group,
+		enum lttng_enabler_format_type format_type,
+		struct lttng_ust_trigger *trigger_param)
+{
+	struct lttng_trigger_enabler *trigger_enabler;
+
+	trigger_enabler = zmalloc(sizeof(*trigger_enabler));
+	if (!trigger_enabler)
+		return NULL;
+	trigger_enabler->base.format_type = format_type;
+	CDS_INIT_LIST_HEAD(&trigger_enabler->base.filter_bytecode_head);
+	CDS_INIT_LIST_HEAD(&trigger_enabler->base.excluder_head);
+
+	trigger_enabler->id = trigger_param->id;
+
+	memcpy(&trigger_enabler->base.event_param, trigger_param,
+		sizeof(trigger_enabler->base.event_param));
+
+	trigger_enabler->base.enabled = 0;
+
+	cds_list_add(&trigger_enabler->node, &trigger_group->enablers_head);
+
+	//TODO sync trigger enablers
+
+	return trigger_enabler;
+}
+
 int lttng_event_enabler_enable(struct lttng_event_enabler *event_enabler)
 {
 	lttng_event_enabler_as_enabler(event_enabler)->enabled = 1;
@@ -1134,6 +1223,42 @@ int lttng_event_enabler_attach_exclusion(struct lttng_event_enabler *event_enabl
 		lttng_event_enabler_as_enabler(event_enabler), excluder);
 
 	lttng_session_lazy_sync_event_enablers(event_enabler->chan->session);
+	return 0;
+}
+
+int lttng_trigger_enabler_enable(struct lttng_trigger_enabler *trigger_enabler)
+{
+	lttng_trigger_enabler_as_enabler(trigger_enabler)->enabled = 1;
+	//TODO sync_trigger_enabler
+	return 0;
+}
+
+int lttng_trigger_enabler_disable(struct lttng_trigger_enabler *trigger_enabler)
+{
+	lttng_trigger_enabler_as_enabler(trigger_enabler)->enabled = 0;
+	//TODO sync_trigger_enabler
+	return 0;
+}
+
+int lttng_trigger_enabler_attach_bytecode(
+		struct lttng_trigger_enabler *trigger_enabler,
+		struct lttng_ust_filter_bytecode_node *bytecode)
+{
+	_lttng_enabler_attach_bytecode(
+		lttng_trigger_enabler_as_enabler(trigger_enabler), bytecode);
+
+	//TODO sync_trigger_enabler
+	return 0;
+}
+
+int lttng_trigger_enabler_attach_exclusion(
+		struct lttng_trigger_enabler *trigger_enabler,
+		struct lttng_ust_excluder_node *excluder)
+{
+	_lttng_enabler_attach_exclusion(
+		lttng_trigger_enabler_as_enabler(trigger_enabler), excluder);
+
+	//TODO sync_trigger_enabler
 	return 0;
 }
 

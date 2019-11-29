@@ -664,6 +664,46 @@ error_check:
 	return len;
 }
 
+ssize_t ustcomm_recv_trigger_notif_fd_from_sessiond(int sock,
+		int *_trigger_notif_fd)
+{
+	ssize_t nr_fd;
+	int trigger_notif_fd, ret;
+
+	/* Receive trigger notification fd */
+	lttng_ust_lock_fd_tracker();
+	nr_fd = ustcomm_recv_fds_unix_sock(sock, &trigger_notif_fd, 1);
+	if (nr_fd <= 0) {
+		lttng_ust_unlock_fd_tracker();
+		if (nr_fd < 0) {
+			ret = nr_fd;
+			goto error;
+		} else {
+			ret = -EIO;
+			goto error;
+		}
+	}
+
+	ret = lttng_ust_add_fd_to_tracker(trigger_notif_fd);
+	if (ret < 0) {
+		ret = close(trigger_notif_fd);
+		if (ret) {
+			PERROR("close on trigger notif fd");
+		}
+		ret = -EIO;
+		lttng_ust_unlock_fd_tracker();
+		goto error;
+	}
+
+	*_trigger_notif_fd = ret;
+	lttng_ust_unlock_fd_tracker();
+
+	ret = nr_fd;
+
+error:
+	return ret;
+}
+
 int ustcomm_recv_stream_from_sessiond(int sock,
 		uint64_t *memory_map_size,
 		int *shm_fd, int *wakeup_fd)
