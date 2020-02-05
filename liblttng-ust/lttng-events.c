@@ -1749,6 +1749,14 @@ void lttng_trigger_group_sync_enablers(struct lttng_trigger_group *trigger_group
 	struct lttng_trigger *trigger;
 
 	cds_list_for_each_entry(trigger_enabler, &trigger_group->enablers_head, node) {
+		 /*
+		  * Only link enablers that are enabled to triggers, the user
+		  * might still be attaching filter or exclusion to the
+		  * trigger_enabler.
+		  */
+		if (!lttng_trigger_enabler_as_enabler(trigger_enabler)->enabled)
+			continue;
+
 		lttng_trigger_enabler_ref_triggers(trigger_enabler);
 	}
 
