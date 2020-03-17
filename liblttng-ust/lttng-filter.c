@@ -569,10 +569,10 @@ void free_filter_runtime(struct cds_list_head *bytecode_runtime_head)
 
 void lttng_free_event_filter_runtime(struct lttng_event *event)
 {
-	free_filter_runtime(&event->bytecode_runtime_head);
+	free_filter_runtime(&event->filter_bytecode_runtime_head);
 }
 
 void lttng_free_trigger_filter_runtime(struct lttng_trigger *trigger)
 {
-	free_filter_runtime(&trigger->bytecode_runtime_head);
+	free_filter_runtime(&trigger->filter_bytecode_runtime_head);
 }
