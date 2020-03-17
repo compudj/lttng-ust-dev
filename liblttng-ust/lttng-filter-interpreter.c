@@ -29,6 +29,8 @@
 #include <stdint.h>
 #include <urcu-pointer.h>
 #include <byteswap.h>
+#include <ust-events.h>
+
 #include "lttng-filter.h"
 #include "string-utils.h"
 
@@ -161,7 +163,7 @@ int stack_strcmp(struct estack *stack, int top, const char *cmp_type)
 	return diff;
 }
 
-uint64_t lttng_filter_false(void *filter_data,
+uint64_t lttng_interpret_bytecode_false(void *filter_data,
 		const char *filter_stack_data, void *ax)
 {
 	return 0;
@@ -621,17 +623,57 @@ end:
 	return ret;
 }
 
+static
+void lttng_interpret_bytcode_output_capture(const struct estack_entry *ax,
+		struct lttng_trigger_notification_capture *capture)
+{
+	switch (ax->type) {
+	case REG_S64:
+		capture->type = LTTNG_CAPTURE_TYPE_S64;
+		capture->u.s =  ax->u.v;
+		break;
+	case REG_DOUBLE:
+		capture->type = LTTNG_CAPTURE_TYPE_DOUBLE;
+		capture->u.d =  ax->u.d;
+		break;
+	case REG_STRING:
+		capture->type = LTTNG_CAPTURE_TYPE_STRING;
+		capture->u.str.str =  ax->u.s.str;
+		capture->u.str.len =  ax->u.s.seq_len;
+		break;
+	case REG_PTR:
+		switch (ax->u.ptr.object_type) {
+			// TODO maybe we don't need to differeciate array and
+			// sequence as we process them the same way latxter.
+		case OBJECT_TYPE_SEQUENCE:
+			capture->type = LTTNG_CAPTURE_TYPE_SEQUENCE;
+			break;
+		case OBJECT_TYPE_ARRAY:
+			capture->type = LTTNG_CAPTURE_TYPE_ARRAY;
+			break;
+		default:
+			abort();
+		}
+		capture->u.ptr.ptr = ax->u.ptr.ptr;
+		capture->u.ptr.field = ax->u.ptr.field;
+		break;
+	case REG_STAR_GLOB_STRING:
+	case REG_UNKNOWN:
+	default:
+		abort();
+	}
+}
 /*
  * Return 0 (discard), or raise the 0x1 flag (log event).
  * Currently, other flags are kept for future extensions and have no
  * effect.
  */
-uint64_t lttng_filter_interpret_bytecode(void *filter_data,
-		const char *filter_stack_data, void *output_ax)
+uint64_t lttng_interpret_bytecode(void *filter_data,
+		const char *filter_stack_data, void *_capture)
 {
 	struct bytecode_runtime *bytecode = filter_data;
 	struct lttng_ctx *ctx = rcu_dereference(*bytecode->p.pctx);
-	struct estack_entry *output_ax_entry = output_ax;
+	struct lttng_trigger_notification_capture *capture = _capture;
 	void *pc, *next_pc, *start_pc;
 	int ret = -EINVAL;
 	uint64_t retval = 0;
@@ -2360,8 +2402,9 @@ end:
 	if (ret)
 		return 0;
 
-	if (output_ax_entry) {
-		output_ax_entry = estack_ax(stack, top);
+	if (capture) {
+		lttng_interpret_bytcode_output_capture(estack_ax(stack, top),
+				capture);
 	}
 
 	return retval;

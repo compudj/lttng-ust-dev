@@ -102,6 +102,13 @@ struct lttng_ust_stream {
 	 */
 } LTTNG_PACKED;
 
+#define LTTNG_TRIGGER_NOTIFICATION_PADDING 32
+struct lttng_ust_trigger_notification {
+	uint64_t id;
+	uint16_t capture_buf_size;
+	char padding[LTTNG_TRIGGER_NOTIFICATION_PADDING];
+} LTTNG_PACKED;
+
 #define LTTNG_UST_TRIGGER_PADDING1	16
 #define LTTNG_UST_TRIGGER_PADDING2	(LTTNG_UST_SYM_NAME_LEN + 32)
 struct lttng_ust_trigger {
@@ -117,12 +124,6 @@ struct lttng_ust_trigger {
 	union {
 		char padding[LTTNG_UST_TRIGGER_PADDING2];
 	} u;
-} LTTNG_PACKED;
-
-#define LTTNG_TRIGGER_NOTIFICATION_PADDING 32
-struct lttng_ust_trigger_notification {
-	uint64_t id;
-	char padding[LTTNG_TRIGGER_NOTIFICATION_PADDING];
 } LTTNG_PACKED;
 
 #define LTTNG_UST_EVENT_PADDING1	16
@@ -349,6 +350,7 @@ struct lttng_ust_event_exclusion {
 #define LTTNG_UST_TRIGGER_GROUP_CREATE		_UST_CMD(0xB0)
 #define LTTNG_UST_TRIGGER_CREATE		\
 	_UST_CMDW(0xB1, struct lttng_ust_trigger)
+#define LTTNG_UST_CAPTURE			_UST_CMD(0xB2)
 
 #define LTTNG_UST_ROOT_HANDLE	0
 

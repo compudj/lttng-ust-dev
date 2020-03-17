@@ -881,6 +881,7 @@ static									      \
 void __trigger_probe__##_provider##___##_name(_TP_ARGS_DATA_PROTO(_args))     \
 {									      \
 	struct lttng_trigger *__trigger = (struct lttng_trigger *) __tp_data; \
+	struct lttng_trigger_notification notif = {0}; \
 	const size_t __num_fields = _TP_ARRAY_SIZE(__event_fields___##_provider##___##_name) - 1;\
 	union {								      \
 		size_t __dynamic_len[__num_fields];			      \
@@ -905,7 +906,21 @@ void __trigger_probe__##_provider##___##_name(_TP_ARGS_DATA_PROTO(_args))     \
 			return;						      \
 	}								      \
 									      \
-	lttng_trigger_send_notification(__trigger);			      \
+	lttng_trigger_notification_init(&notif, __trigger);		      \
+									      \
+	if (caa_unlikely(!cds_list_empty(&__trigger->capture_bytecode_runtime_head))) { \
+		struct lttng_bytecode_runtime *bc_runtime;		      \
+									      \
+		tp_list_for_each_entry_rcu(bc_runtime, &__trigger->filter_bytecode_runtime_head, node) { \
+			struct lttng_trigger_notification_capture capture; \
+			int ret = bc_runtime->filter(bc_runtime, __stackvar.__filter_stack_data, &capture); \
+			if (ret)					      \
+				return;					      \
+			lttng_trigger_notification_append_capture(&notif, &capture); \
+		}							      \
+	}								      \
+									      \
+	lttng_trigger_notification_send(&notif);		      \
 }
 
 #include TRACEPOINT_INCLUDE

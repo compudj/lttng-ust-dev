@@ -33,6 +33,7 @@
 #include <stdint.h>
 #include <lttng/ust-config.h>
 #include <lttng/ust-abi.h>
+#include <lttng/ust-msgpack.h>
 #include <lttng/ust-tracer.h>
 #include <lttng/ust-endian.h>
 #include <float.h>
@@ -492,7 +493,9 @@ struct lttng_trigger {
 	uint64_t id;
 	int enabled;
 	int registered;			/* has reg'd tracepoint probe */
+	size_t num_captures;		/* Needed to allocate the msgpack array. */
 	struct cds_list_head filter_bytecode_runtime_head;
+	struct cds_list_head capture_bytecode_runtime_head;
 	int has_enablers_without_bytecode;
 	struct cds_list_head enablers_ref_head;
 	const struct lttng_event_desc *desc;
@@ -673,13 +676,79 @@ struct lttng_transport {
 	const struct lttng_ust_lib_ring_buffer_config *client_config;
 };
 
+enum lttng_trigger_notification_capture_type {
+	LTTNG_CAPTURE_TYPE_S64,
+	LTTNG_CAPTURE_TYPE_U64,
+	LTTNG_CAPTURE_TYPE_DOUBLE,
+	LTTNG_CAPTURE_TYPE_STRING,
+	LTTNG_CAPTURE_TYPE_ARRAY,
+	LTTNG_CAPTURE_TYPE_SEQUENCE,
+};
+
+/*
+ * Describes how to capture compound types.
+ * Currently supported type is the array of integers.
+ */
+struct lttng_trigger_notification_capture_ptr {
+	enum lttng_trigger_notification_capture_type type;
+	enum lttng_trigger_notification_capture_type object_type;
+	const void *ptr;
+
+	union {
+		size_t array_len;
+	} u;
+
+	/* Inner field. */
+	const struct lttng_event_field *field;
+};
+
+/*
+ * Represents one captured field.
+ * Currently capturable field classes are integer, double, string and array of
+ * integer.
+ */
+struct lttng_trigger_notification_capture {
+	enum lttng_trigger_notification_capture_type type;
+	union {
+		int64_t s;
+		uint64_t u;
+		double d;
+
+		struct {
+			const char *str;
+			size_t len;
+		} str;
+		struct lttng_trigger_notification_capture_ptr ptr;
+	} u;
+};
+
+#define LTTNG_TRIGGER_CAPTURE_BUFFER_SIZE \
+		(PIPE_BUF - sizeof(struct lttng_ust_trigger_notification))
+struct lttng_trigger_notification {
+	int notification_fd;
+	uint64_t trigger_id;
+	uint8_t capture_buf[LTTNG_TRIGGER_CAPTURE_BUFFER_SIZE];
+	uint16_t capture_buf_size;
+	struct lttng_msgpack_writer writer;
+	size_t num_captures;
+};
+
 struct lttng_session *lttng_session_create(void);
 int lttng_session_enable(struct lttng_session *session);
 int lttng_session_disable(struct lttng_session *session);
 int lttng_session_statedump(struct lttng_session *session);
 void lttng_session_destroy(struct lttng_session *session);
 
-void lttng_trigger_send_notification(struct lttng_trigger *trigger);
+void lttng_trigger_notification_init(
+		struct lttng_trigger_notification *notif,
+		struct lttng_trigger *trigger);
+
+void lttng_trigger_notification_append_capture(
+		struct lttng_trigger_notification *notif,
+		struct lttng_trigger_notification_capture *capture);
+
+void lttng_trigger_notification_send(
+		struct lttng_trigger_notification *notif);
 
 struct lttng_channel *lttng_channel_create(struct lttng_session *session,
 				       const char *transport_name,
