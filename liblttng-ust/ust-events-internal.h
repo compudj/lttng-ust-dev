@@ -48,6 +48,7 @@ struct lttng_trigger_enabler {
 	struct lttng_enabler base;
 	uint64_t id;
 	struct cds_list_head node;	/* per-app list of trigger enablers */
+	struct cds_list_head capture_bytecode_head;
 	struct lttng_trigger_group *group; /* weak ref */
 };
 
@@ -138,6 +139,10 @@ int lttng_trigger_enabler_disable(struct lttng_trigger_enabler *trigger_enabler)
 /* TODO doc */
 LTTNG_HIDDEN
 int lttng_trigger_enabler_attach_filter_bytecode(
+		struct lttng_trigger_enabler *trigger_enabler,
+		struct lttng_ust_filter_bytecode_node *bytecode);
+
+int lttng_trigger_enabler_attach_capture_bytecode(
 		struct lttng_trigger_enabler *trigger_enabler,
 		struct lttng_ust_filter_bytecode_node *bytecode);
 

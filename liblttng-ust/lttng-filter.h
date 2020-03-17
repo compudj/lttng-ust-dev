@@ -294,9 +294,9 @@ int lttng_filter_validate_bytecode(struct bytecode_runtime *bytecode);
 int lttng_filter_specialize_bytecode(const struct lttng_event_desc *event_desc,
 		struct bytecode_runtime *bytecode);
 
-uint64_t lttng_filter_false(void *filter_data,
+uint64_t lttng_interpret_bytecode_false(void *filter_data,
 		const char *filter_stack_data, void *ax);
-uint64_t lttng_filter_interpret_bytecode(void *filter_data,
+uint64_t lttng_interpret_bytecode(void *filter_data,
 		const char *filter_stack_data, void *ax);
 
 #endif /* _LTTNG_FILTER_H */

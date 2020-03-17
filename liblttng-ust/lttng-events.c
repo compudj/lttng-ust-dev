@@ -44,6 +44,7 @@
 #include <urcu/list.h>
 #include <urcu/uatomic.h>
 
+#include <byteswap.h>
 #include <lttng/tracepoint.h>
 #include <lttng/ust-events.h>
 
@@ -67,6 +68,7 @@
 #include "ust-events-internal.h"
 #include "wait.h"
 #include "../libringbuffer/shm.h"
+#include "../libmsgpack/msgpack.h"
 #include "jhash.h"
 #include <lttng/ust-abi.h>
 
@@ -1431,6 +1433,17 @@ int lttng_trigger_enabler_attach_filter_bytecode(
 	return 0;
 }
 
+int lttng_trigger_enabler_attach_capture_bytecode(
+		struct lttng_trigger_enabler *trigger_enabler,
+		struct lttng_ust_filter_bytecode_node *bytecode)
+{
+	bytecode->enabler = lttng_trigger_enabler_as_enabler(trigger_enabler);
+	cds_list_add_tail(&bytecode->node, &trigger_enabler->capture_bytecode_head);
+
+	lttng_trigger_group_sync_enablers(trigger_enabler->group);
+	return 0;
+}
+
 int lttng_trigger_enabler_attach_exclusion(
 		struct lttng_trigger_enabler *trigger_enabler,
 		struct lttng_ust_excluder_node *excluder)
@@ -1664,7 +1677,190 @@ void lttng_create_trigger_if_missing(struct lttng_trigger_enabler *trigger_enabl
 	}
 }
 
-void lttng_trigger_send_notification(struct lttng_trigger *trigger)
+void lttng_trigger_notification_init(struct lttng_trigger_notification *notif,
+		struct lttng_trigger *trigger)
+{
+	struct lttng_msgpack_writer *writer = &notif->writer;
+	notif->trigger_id = trigger->id;
+	notif->notification_fd = trigger->group->notification_fd;
+	notif->buf_len = PIPE_BUF - 1;
+	notif->num_captures = trigger->num_captures;
+
+	lttng_msgpack_writer_init(writer, notif->buf, notif->buf_len);
+
+	lttng_msgpack_begin_map(writer, 2);
+
+	lttng_msgpack_write_str(writer, "id");
+	lttng_msgpack_write_u64(writer, notif->trigger_id);
+
+	lttng_msgpack_write_str(writer, "captures");
+
+	lttng_msgpack_begin_array(writer, notif->num_captures);
+}
+
+#define array_element_field_int_size(elem) elem->type.u.basic.integer.size
+#define array_element_field_int_align(elem) elem->type.u.basic.integer.alignment
+#define array_element_field_int_byte_order(elem) elem->type.u.basic.integer.reverse_byte_order;
+#define array_element_field_int_signed(elem) elem->type.u.basic.integer.signedness;
+
+static
+int64_t capture_array_element_signed(uint8_t *ptr, const struct lttng_event_field *elem)
+{
+	int64_t value;
+	unsigned int size = array_element_field_int_size(elem);
+	bool byte_order_reversed = array_element_field_int_byte_order(elem);
+
+	switch (size) {
+	case 8:
+		value = *ptr;
+		break;
+	case 16:
+	{
+		int16_t tmp;
+		tmp = *(int16_t *) ptr;
+		if (byte_order_reversed)
+			tmp = bswap_16(tmp);
+
+		value = tmp;
+		break;
+	}
+	case 32:
+	{
+		int32_t tmp;
+		tmp = *(int32_t *) ptr;
+		if (byte_order_reversed)
+			tmp = bswap_32(tmp);
+
+		value = tmp;
+		break;
+	}
+	case 64:
+	{
+		int64_t tmp;
+		tmp = *(int64_t *) ptr;
+		if (byte_order_reversed)
+			tmp = bswap_64(tmp);
+
+		value = tmp;
+		break;
+	}
+	default:
+		abort();
+	}
+
+	return value;
+}
+
+static
+uint64_t capture_array_element_unsigned(uint8_t *ptr, const struct lttng_event_field *elem)
+{
+	uint64_t value;
+	unsigned int size = array_element_field_int_size(elem);
+	bool byte_order_reversed = array_element_field_int_byte_order(elem);
+
+	switch (size) {
+	case 8:
+		value = *ptr;
+		break;
+	case 16:
+	{
+		uint16_t tmp;
+		tmp = *(uint16_t *) ptr;
+		if (byte_order_reversed)
+			tmp = bswap_16(tmp);
+
+		value = tmp;
+		break;
+	}
+	case 32:
+	{
+		uint32_t tmp;
+		tmp = *(uint32_t *) ptr;
+		if (byte_order_reversed)
+			tmp = bswap_32(tmp);
+
+		value = tmp;
+		break;
+	}
+	case 64:
+	{
+		uint64_t tmp;
+		tmp = *(uint64_t *) ptr;
+		if (byte_order_reversed)
+			tmp = bswap_64(tmp);
+
+		value = tmp;
+		break;
+	}
+	default:
+		abort();
+	}
+
+	return value;
+}
+
+static
+void capture_array(struct lttng_msgpack_writer *writer,
+		struct lttng_trigger_notification_capture_ptr *capture_ptr)
+{
+	int i;
+	uint8_t *ptr;
+
+	lttng_msgpack_begin_array(writer, capture_ptr->u.array_len);
+
+	ptr = (uint8_t *) capture_ptr->ptr;
+
+	for (i = 0; i < capture_ptr->u.array_len; i++) {
+		switch (capture_ptr->object_type) {
+		case LTTNG_CAPTURE_TYPE_S64:
+			lttng_msgpack_write_i64(writer,
+					capture_array_element_signed(ptr, capture_ptr->field));
+			break;
+		case LTTNG_CAPTURE_TYPE_U64:
+			lttng_msgpack_write_u64(writer,
+					capture_array_element_unsigned(ptr, capture_ptr->field));
+			break;
+		default:
+			/* Capture of array of non-integer are not supported. */
+			abort();
+		}
+
+		ptr += array_element_field_int_align(capture_ptr->field);
+	}
+	lttng_msgpack_end_array(writer);
+}
+
+void lttng_trigger_notification_append_capture(
+		struct lttng_trigger_notification *notif,
+		struct lttng_trigger_notification_capture *capture)
+{
+	struct lttng_msgpack_writer *writer = &notif->writer;
+
+	switch (capture->type) {
+	case LTTNG_CAPTURE_TYPE_S64:
+		lttng_msgpack_write_i64(writer, capture->u.s);
+		break;
+	case LTTNG_CAPTURE_TYPE_U64:
+		lttng_msgpack_write_u64(writer, capture->u.u);
+		break;
+	case LTTNG_CAPTURE_TYPE_DOUBLE:
+		lttng_msgpack_write_f64(writer, capture->u.d);
+		break;
+	case LTTNG_CAPTURE_TYPE_STRING:
+		lttng_msgpack_write_str(writer, capture->u.str.str);
+		break;
+	case LTTNG_CAPTURE_TYPE_ARRAY:
+		capture_array(writer, &capture->u.ptr);
+		break;
+	case LTTNG_CAPTURE_TYPE_SEQUENCE:
+		capture_array(writer, &capture->u.ptr);
+		break;
+	default:
+		abort();
+	}
+}
+
+void lttng_trigger_notification_send(struct lttng_trigger_notification *notif)
 {
 	/*
 	 * We want this write to be atomic AND non-blocking, meaning that we
@@ -1673,17 +1869,13 @@ void lttng_trigger_send_notification(struct lttng_trigger *trigger)
 	 * value must be atomic, so we assert that the message we send is less
 	 * than PIPE_BUF.
 	 */
-	struct lttng_ust_trigger_notification notif;
 	ssize_t ret;
+	size_t content_len = notif->writer.buffer - notif->writer.write_pos;
 
-	assert(trigger);
-	assert(trigger->group);
-	assert(sizeof(notif) <= PIPE_BUF);
+	assert(notif);
+	assert(content_len > 0 && content_len < PIPE_BUF);
 
-	notif.id = trigger->id;
-
-	ret = patient_write(trigger->group->notification_fd, &notif,
-		sizeof(notif));
+	ret = patient_write(notif->notification_fd, &notif->buf, content_len);
 	if (ret == -1) {
 		if (errno == EAGAIN) {
 			DBG("Cannot send trigger notification without blocking: %s",
