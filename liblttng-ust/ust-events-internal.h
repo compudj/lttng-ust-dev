@@ -122,7 +122,8 @@ int lttng_event_enabler_disable(struct lttng_event_enabler *enabler);
  * events related to this enabler.
  */
 LTTNG_HIDDEN
-int lttng_event_enabler_attach_bytecode(struct lttng_event_enabler *enabler,
+int lttng_event_enabler_attach_filter_bytecode(
+		struct lttng_event_enabler *enabler,
 		struct lttng_ust_filter_bytecode_node *bytecode);
 
 /*
@@ -207,7 +208,7 @@ int lttng_trigger_enabler_disable(struct lttng_trigger_enabler *trigger_enabler)
  * triggers related to this enabler.
  */
 LTTNG_HIDDEN
-int lttng_trigger_enabler_attach_bytecode(
+int lttng_trigger_enabler_attach_filter_bytecode(
 		struct lttng_trigger_enabler *trigger_enabler,
 		struct lttng_ust_filter_bytecode_node *bytecode);
 
