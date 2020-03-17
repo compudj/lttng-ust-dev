@@ -716,7 +716,8 @@ long lttng_trigger_enabler_cmd(int objd, unsigned int cmd, unsigned long arg,
 	struct lttng_trigger_enabler *trigger_enabler = objd_private(objd);
 	switch (cmd) {
 	case LTTNG_UST_FILTER:
-		return lttng_trigger_enabler_attach_bytecode(trigger_enabler,
+		return lttng_trigger_enabler_attach_filter_bytecode(
+			trigger_enabler,
 			(struct lttng_ust_filter_bytecode_node *) arg);
 	case LTTNG_UST_EXCLUSION:
 		return lttng_trigger_enabler_attach_exclusion(trigger_enabler,
@@ -1144,7 +1145,7 @@ long lttng_event_enabler_cmd(int objd, unsigned int cmd, unsigned long arg,
 	{
 		int ret;
 
-		ret = lttng_event_enabler_attach_bytecode(enabler,
+		ret = lttng_event_enabler_attach_filter_bytecode(enabler,
 				(struct lttng_ust_filter_bytecode_node *) arg);
 		if (ret)
 			return ret;
