@@ -826,7 +826,7 @@ void __event_probe__##_provider##___##_name(_TP_ARGS_DATA_PROTO(_args))	      \
 			_TP_ARGS_DATA_VAR(_args));			      \
 		tp_list_for_each_entry_rcu(bc_runtime, &__event->filter_bytecode_runtime_head, node) { \
 			if (caa_unlikely(bc_runtime->filter(bc_runtime,	      \
-					__stackvar.__filter_stack_data) & LTTNG_FILTER_RECORD_FLAG)) { \
+					__stackvar.__filter_stack_data, NULL) & LTTNG_FILTER_RECORD_FLAG)) { \
 				__filter_record = 1;			      \
 				break;					      \
 			}						      \
@@ -908,7 +908,7 @@ void __trigger_probe__##_provider##___##_name(_TP_ARGS_DATA_PROTO(_args))     \
 			_TP_ARGS_DATA_VAR(_args));			      \
 		tp_list_for_each_entry_rcu(bc_runtime, &__trigger->filter_bytecode_runtime_head, node) { \
 			if (caa_unlikely(bc_runtime->filter(bc_runtime,	      \
-					__stackvar.__filter_stack_data) & LTTNG_FILTER_RECORD_FLAG)) \
+					__stackvar.__filter_stack_data, NULL) & LTTNG_FILTER_RECORD_FLAG)) \
 				__filter_record = 1;			      \
 		}							      \
 		if (caa_likely(!__filter_record))			      \

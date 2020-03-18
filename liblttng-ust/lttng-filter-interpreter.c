@@ -162,7 +162,7 @@ int stack_strcmp(struct estack *stack, int top, const char *cmp_type)
 }
 
 uint64_t lttng_filter_false(void *filter_data,
-		const char *filter_stack_data)
+		const char *filter_stack_data, void *ax)
 {
 	return 0;
 }
@@ -597,10 +597,11 @@ end:
  * effect.
  */
 uint64_t lttng_filter_interpret_bytecode(void *filter_data,
-		const char *filter_stack_data)
+		const char *filter_stack_data, void *output_ax)
 {
 	struct bytecode_runtime *bytecode = filter_data;
 	struct lttng_ctx *ctx = rcu_dereference(*bytecode->p.pctx);
+	struct estack_entry *output_ax_entry = output_ax;
 	void *pc, *next_pc, *start_pc;
 	int ret = -EINVAL;
 	uint64_t retval = 0;
@@ -2328,6 +2329,11 @@ end:
 	/* return 0 (discard) on error */
 	if (ret)
 		return 0;
+
+	if (output_ax_entry) {
+		output_ax_entry = estack_ax(stack, top);
+	}
+
 	return retval;
 }
 
