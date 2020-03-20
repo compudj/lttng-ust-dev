@@ -518,6 +518,7 @@ AC_CONFIG_FILES([
 	include/Makefile
 	include/lttng/ust-version.h
 	snprintf/Makefile
+	libmsgpack/Makefile
 	libringbuffer/Makefile
 	liblttng-ust-comm/Makefile
 	liblttng-ust/Makefile
@@ -552,6 +553,7 @@ AC_CONFIG_FILES([
 	tests/snprintf/Makefile
 	tests/ust-elf/Makefile
 	tests/benchmark/Makefile
+	tests/libmsgpack/Makefile
 	tests/utils/Makefile
 	tests/test-app-ctx/Makefile
 	tests/gcc-weak-hidden/Makefile
