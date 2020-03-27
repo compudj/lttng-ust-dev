@@ -164,7 +164,8 @@ int stack_strcmp(struct estack *stack, int top, const char *cmp_type)
 }
 
 uint64_t lttng_interpret_bytecode_false(void *filter_data,
-		const char *filter_stack_data, void *ax)
+		const char *filter_stack_data,
+		struct lttng_interpreter_output *output)
 {
 	return 0;
 }
@@ -234,8 +235,7 @@ static int context_get_index(struct lttng_ctx *ctx,
 	ctx_field = &ctx->fields[idx];
 	field = &ctx_field->event_field;
 	ptr->type = LOAD_OBJECT;
-	/* field is only used for types nested within variants. */
-	ptr->field = NULL;
+	ptr->field = field;
 
 	switch (field->type.atype) {
 	case atype_integer:
@@ -370,7 +370,7 @@ static int dynamic_get_index(struct lttng_ctx *ctx,
 			stack_top->u.ptr.ptr = ptr;
 			stack_top->u.ptr.object_type = gid->elem.type;
 			stack_top->u.ptr.rev_bo = gid->elem.rev_bo;
-			/* field is only used for types nested within variants. */
+			assert(stack_top->u.ptr.field->type.atype == atype_array);
 			stack_top->u.ptr.field = NULL;
 			break;
 		}
@@ -389,7 +389,7 @@ static int dynamic_get_index(struct lttng_ctx *ctx,
 			stack_top->u.ptr.ptr = ptr;
 			stack_top->u.ptr.object_type = gid->elem.type;
 			stack_top->u.ptr.rev_bo = gid->elem.rev_bo;
-			/* field is only used for types nested within variants. */
+			assert(stack_top->u.ptr.field->type.atype == atype_sequence);
 			stack_top->u.ptr.field = NULL;
 			break;
 		}
@@ -422,8 +422,7 @@ static int dynamic_get_index(struct lttng_ctx *ctx,
 			stack_top->u.ptr.ptr = *(const char * const *) stack_top->u.ptr.ptr;
 		stack_top->u.ptr.object_type = gid->elem.type;
 		stack_top->u.ptr.type = LOAD_OBJECT;
-		/* field is only used for types nested within variants. */
-		stack_top->u.ptr.field = NULL;
+		stack_top->u.ptr.field = gid->field;
 		break;
 	}
 	return 0;
@@ -594,38 +593,44 @@ end:
 }
 
 static
-void lttng_interpret_bytcode_output_capture(const struct estack_entry *ax,
-		struct lttng_trigger_notification_capture *capture)
+void lttng_interpret_bytecode_output(const struct estack_entry *ax,
+		struct lttng_interpreter_output *output)
 {
 	switch (ax->type) {
 	case REG_S64:
-		capture->type = LTTNG_CAPTURE_TYPE_S64;
-		capture->u.s =  ax->u.v;
+		output->type = LTTNG_INTERPRETER_TYPE_S64;
+		output->u.s = ax->u.v;
+		break;
+	case REG_U64:
+		output->type = LTTNG_INTERPRETER_TYPE_U64;
+		output->u.u = (uint64_t) ax->u.v;
 		break;
 	case REG_DOUBLE:
-		capture->type = LTTNG_CAPTURE_TYPE_DOUBLE;
-		capture->u.d =  ax->u.d;
+		output->type = LTTNG_INTERPRETER_TYPE_DOUBLE;
+		output->u.d = ax->u.d;
 		break;
 	case REG_STRING:
-		capture->type = LTTNG_CAPTURE_TYPE_STRING;
-		capture->u.str.str =  ax->u.s.str;
-		capture->u.str.len =  ax->u.s.seq_len;
+		output->type = LTTNG_INTERPRETER_TYPE_STRING;
+		output->u.str.str = ax->u.s.str;
+		output->u.str.len = ax->u.s.seq_len;
 		break;
 	case REG_PTR:
+		assert(ax->u.ptr.field);
 		switch (ax->u.ptr.object_type) {
-			// TODO maybe we don't need to differeciate array and
-			// sequence as we process them the same way latxter.
 		case OBJECT_TYPE_SEQUENCE:
-			capture->type = LTTNG_CAPTURE_TYPE_SEQUENCE;
+			output->u.sequence.ptr = *(const char **) (ax->u.ptr.ptr + sizeof(unsigned long));
+			output->u.sequence.nr_elem = *(unsigned long *) ax->u.ptr.ptr;
 			break;
 		case OBJECT_TYPE_ARRAY:
-			capture->type = LTTNG_CAPTURE_TYPE_ARRAY;
+			/* Skip count (unsigned long) */
+			output->u.sequence.ptr = *(const char **) (ax->u.ptr.ptr + sizeof(unsigned long));
+			output->u.sequence.nr_elem = ax->u.ptr.field->type.u.array.length;
 			break;
 		default:
 			abort();
 		}
-		capture->u.ptr.ptr = ax->u.ptr.ptr;
-		capture->u.ptr.field = ax->u.ptr.field;
+		output->type = LTTNG_INTERPRETER_TYPE_SEQUENCE;
+		output->u.sequence.field = ax->u.ptr.field;
 		break;
 	case REG_STAR_GLOB_STRING:
 	case REG_UNKNOWN:
@@ -639,11 +644,11 @@ void lttng_interpret_bytcode_output_capture(const struct estack_entry *ax,
  * effect.
  */
 uint64_t lttng_interpret_bytecode(void *filter_data,
-		const char *filter_stack_data, void *_capture)
+		const char *filter_stack_data,
+		struct lttng_interpreter_output *output)
 {
 	struct bytecode_runtime *bytecode = filter_data;
 	struct lttng_ctx *ctx = rcu_dereference(*bytecode->p.pctx);
-	struct lttng_trigger_notification_capture *capture = _capture;
 	void *pc, *next_pc, *start_pc;
 	int ret = -EINVAL;
 	uint64_t retval = 0;
@@ -811,7 +816,15 @@ uint64_t lttng_interpret_bytecode(void *filter_data,
 				break;
 			case REG_DOUBLE:
 			case REG_STRING:
+			case REG_PTR:
+				if (!output) {
+					ret = -EINVAL;
+					goto end;
+				}
+				retval = 0;
+				break;
 			case REG_STAR_GLOB_STRING:
+			case REG_UNKNOWN:
 			default:
 				ret = -EINVAL;
 				goto end;
@@ -2464,9 +2477,9 @@ end:
 	if (ret)
 		return 0;
 
-	if (capture) {
-		lttng_interpret_bytcode_output_capture(estack_ax(stack, top),
-				capture);
+	if (output) {
+		lttng_interpret_bytecode_output(estack_ax(stack, top),
+				output);
 	}
 
 	return retval;

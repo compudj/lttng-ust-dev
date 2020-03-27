@@ -128,6 +128,13 @@ struct filter_get_index_data {
 	uint64_t offset;	/* in bytes */
 	size_t ctx_index;
 	size_t array_len;
+	/*
+	 * Field is only populated for LOAD_ROOT_CONTEXT, LOAD_ROOT_APP_CONTEXT
+	 * and LOAD_ROOT_PAYLOAD. Left NULL for LOAD_OBJECT, considering that the
+	 * interpreter needs to find it from the event fields and types to
+	 * support variants.
+	 */
+	const struct lttng_event_field *field;
 	struct {
 		size_t len;
 		enum object_type type;
@@ -208,6 +215,7 @@ struct load_ptr {
 	enum load_type type;
 	enum object_type object_type;
 	const void *ptr;
+	size_t nr_elem;
 	bool rev_bo;
 	/* Temporary place-holders for contexts. */
 	union {
@@ -215,10 +223,6 @@ struct load_ptr {
 		uint64_t u64;
 		double d;
 	} u;
-	/*
-	 * "field" is only needed when nested under a variant, in which
-	 * case we cannot specialize the nested operations.
-	 */
 	const struct lttng_event_field *field;
 };
 
@@ -296,8 +300,10 @@ int lttng_filter_specialize_bytecode(const struct lttng_event_desc *event_desc,
 		struct bytecode_runtime *bytecode);
 
 uint64_t lttng_interpret_bytecode_false(void *filter_data,
-		const char *filter_stack_data, void *ax);
+		const char *filter_stack_data,
+		struct lttng_interpreter_output *output);
 uint64_t lttng_interpret_bytecode(void *filter_data,
-		const char *filter_stack_data, void *ax);
+		const char *filter_stack_data,
+		struct lttng_interpreter_output *output);
 
 #endif /* _LTTNG_FILTER_H */

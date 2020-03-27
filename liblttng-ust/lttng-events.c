@@ -1698,17 +1698,17 @@ void lttng_trigger_notification_init(struct lttng_trigger_notification *notif,
 	lttng_msgpack_begin_array(writer, notif->num_captures);
 }
 
-#define array_element_field_int_size(elem) elem->type.u.basic.integer.size
-#define array_element_field_int_align(elem) elem->type.u.basic.integer.alignment
-#define array_element_field_int_byte_order(elem) elem->type.u.basic.integer.reverse_byte_order;
-#define array_element_field_int_signed(elem) elem->type.u.basic.integer.signedness;
+#define sequence_element_type_int_size(type) (type)->size
+#define sequence_element_type_int_align(type) (type)->alignment
+#define sequence_element_type_int_byte_order(type) (type)->reverse_byte_order
+#define sequence_element_type_int_signed(type) (type)->signedness
 
 static
-int64_t capture_array_element_signed(uint8_t *ptr, const struct lttng_event_field *elem)
+int64_t capture_sequence_element_signed(uint8_t *ptr, const struct lttng_integer_type *type)
 {
 	int64_t value;
-	unsigned int size = array_element_field_int_size(elem);
-	bool byte_order_reversed = array_element_field_int_byte_order(elem);
+	unsigned int size = sequence_element_type_int_size(type);
+	bool byte_order_reversed = sequence_element_type_int_byte_order(type);
 
 	switch (size) {
 	case 8:
@@ -1752,11 +1752,11 @@ int64_t capture_array_element_signed(uint8_t *ptr, const struct lttng_event_fiel
 }
 
 static
-uint64_t capture_array_element_unsigned(uint8_t *ptr, const struct lttng_event_field *elem)
+uint64_t capture_sequence_element_unsigned(uint8_t *ptr, const struct lttng_integer_type *type)
 {
 	uint64_t value;
-	unsigned int size = array_element_field_int_size(elem);
-	bool byte_order_reversed = array_element_field_int_byte_order(elem);
+	unsigned int size = sequence_element_type_int_size(type);
+	bool byte_order_reversed = sequence_element_type_int_byte_order(type);
 
 	switch (size) {
 	case 8:
@@ -1800,60 +1800,68 @@ uint64_t capture_array_element_unsigned(uint8_t *ptr, const struct lttng_event_f
 }
 
 static
-void capture_array(struct lttng_msgpack_writer *writer,
-		struct lttng_trigger_notification_capture_ptr *capture_ptr)
+void capture_sequence(struct lttng_msgpack_writer *writer,
+		struct lttng_interpreter_output *output)
 {
-	int i;
+	const struct lttng_integer_type *nested_type;
+	enum lttng_abstract_types elem_type;
 	uint8_t *ptr;
+	bool signedness;
+	int i;
 
-	lttng_msgpack_begin_array(writer, capture_ptr->u.array_len);
+	lttng_msgpack_begin_array(writer, output->u.sequence.nr_elem);
 
-	ptr = (uint8_t *) capture_ptr->ptr;
-
-	for (i = 0; i < capture_ptr->u.array_len; i++) {
-		switch (capture_ptr->object_type) {
-		case LTTNG_CAPTURE_TYPE_S64:
-			lttng_msgpack_write_i64(writer,
-					capture_array_element_signed(ptr, capture_ptr->field));
-			break;
-		case LTTNG_CAPTURE_TYPE_U64:
-			lttng_msgpack_write_u64(writer,
-					capture_array_element_unsigned(ptr, capture_ptr->field));
-			break;
-		default:
-			/* Capture of array of non-integer are not supported. */
-			abort();
-		}
-
-		ptr += array_element_field_int_align(capture_ptr->field);
+	ptr = (uint8_t *) output->u.sequence.ptr;
+	elem_type = output->u.sequence.field->type.atype;
+	switch (elem_type) {
+	case atype_integer:
+		nested_type = &output->u.sequence.field->type.u.basic.integer;
+		break;
+	case atype_enum:
+		/* Treat enumeration as an integer. */
+		nested_type = &output->u.sequence.field->type.u.basic.enumeration.container_type;
+		break;
+	default:
+		/* Capture of array of non-integer are not supported. */
+		abort();
 	}
+	signedness = nested_type->signedness;
+	for (i = 0; i < output->u.sequence.nr_elem; i++) {
+		if (signedness) {
+			lttng_msgpack_write_i64(writer,
+				capture_sequence_element_signed(ptr, nested_type));
+		} else {
+			lttng_msgpack_write_u64(writer,
+				capture_sequence_element_unsigned(ptr, nested_type));
+		}
+		break;
+		ptr += sequence_element_type_int_align(nested_type);
+	}
+
 	lttng_msgpack_end_array(writer);
 }
 
 void lttng_trigger_notification_append_capture(
 		struct lttng_trigger_notification *notif,
-		struct lttng_trigger_notification_capture *capture)
+		struct lttng_interpreter_output *output)
 {
 	struct lttng_msgpack_writer *writer = &notif->writer;
 
-	switch (capture->type) {
-	case LTTNG_CAPTURE_TYPE_S64:
-		lttng_msgpack_write_i64(writer, capture->u.s);
+	switch (output->type) {
+	case LTTNG_INTERPRETER_TYPE_S64:
+		lttng_msgpack_write_i64(writer, output->u.s);
 		break;
-	case LTTNG_CAPTURE_TYPE_U64:
-		lttng_msgpack_write_u64(writer, capture->u.u);
+	case LTTNG_INTERPRETER_TYPE_U64:
+		lttng_msgpack_write_u64(writer, output->u.u);
 		break;
-	case LTTNG_CAPTURE_TYPE_DOUBLE:
-		lttng_msgpack_write_f64(writer, capture->u.d);
+	case LTTNG_INTERPRETER_TYPE_DOUBLE:
+		lttng_msgpack_write_f64(writer, output->u.d);
 		break;
-	case LTTNG_CAPTURE_TYPE_STRING:
-		lttng_msgpack_write_str(writer, capture->u.str.str);
+	case LTTNG_INTERPRETER_TYPE_STRING:
+		lttng_msgpack_write_str(writer, output->u.str.str);
 		break;
-	case LTTNG_CAPTURE_TYPE_ARRAY:
-		capture_array(writer, &capture->u.ptr);
-		break;
-	case LTTNG_CAPTURE_TYPE_SEQUENCE:
-		capture_array(writer, &capture->u.ptr);
+	case LTTNG_INTERPRETER_TYPE_SEQUENCE:
+		capture_sequence(writer, output);
 		break;
 	default:
 		abort();
