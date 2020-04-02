@@ -260,13 +260,30 @@ static int specialize_get_index(struct bytecode_runtime *runtime,
 		case OBJECT_TYPE_ARRAY:
 		{
 			const struct lttng_event_field *field;
+			const struct lttng_integer_type *integer_type;
 			uint32_t elem_len, num_elems;
 			int signedness;
 
 			field = stack_top->load.field;
-			elem_len = field->type.u.array.elem_type.u.basic.integer.size;
-			signedness = field->type.u.array.elem_type.u.basic.integer.signedness;
-			num_elems = field->type.u.array.length;
+			switch (field->type.atype) {
+			case atype_array:
+				integer_type = &field->type.u.array.elem_type.u.basic.integer;
+				num_elems = field->type.u.array.length;
+				break;
+			case atype_array_nested:
+				if (field->type.u.array_nested.elem_type->atype != atype_integer) {
+					ret = -EINVAL;
+					goto end;
+				}
+				integer_type = &field->type.u.array_nested.elem_type->u.basic.integer;
+				num_elems = field->type.u.array_nested.length;
+				break;
+			default:
+				ret = -EINVAL;
+				goto end;
+			}
+			elem_len = integer_type->size;
+			signedness = integer_type->signedness;
 			if (index >= num_elems) {
 				ret = -EINVAL;
 				goto end;
@@ -279,7 +296,7 @@ static int specialize_get_index(struct bytecode_runtime *runtime,
 			gid.array_len = num_elems * (elem_len / CHAR_BIT);
 			gid.elem.type = stack_top->load.object_type;
 			gid.elem.len = elem_len;
-			if (field->type.u.array.elem_type.u.basic.integer.reverse_byte_order)
+			if (integer_type->reverse_byte_order)
 				gid.elem.rev_bo = true;
 			stack_top->load.rev_bo = gid.elem.rev_bo;
 			break;
@@ -287,12 +304,28 @@ static int specialize_get_index(struct bytecode_runtime *runtime,
 		case OBJECT_TYPE_SEQUENCE:
 		{
 			const struct lttng_event_field *field;
+			const struct lttng_integer_type *integer_type;
 			uint32_t elem_len;
 			int signedness;
 
 			field = stack_top->load.field;
-			elem_len = field->type.u.sequence.elem_type.u.basic.integer.size;
-			signedness = field->type.u.sequence.elem_type.u.basic.integer.signedness;
+			switch (field->type.atype) {
+			case atype_sequence:
+				integer_type = &field->type.u.sequence.elem_type.u.basic.integer;
+				break;
+			case atype_sequence_nested:
+				if (field->type.u.sequence_nested.elem_type->atype != atype_integer) {
+					ret = -EINVAL;
+					goto end;
+				}
+				integer_type = &field->type.u.sequence_nested.elem_type->u.basic.integer;
+				break;
+			default:
+				ret = -EINVAL;
+				goto end;
+			}
+			elem_len = integer_type->size;
+			signedness = integer_type->signedness;
 			ret = specialize_get_index_object_type(&stack_top->load.object_type,
 					signedness, elem_len);
 			if (ret)
@@ -300,7 +333,7 @@ static int specialize_get_index(struct bytecode_runtime *runtime,
 			gid.offset = index * (elem_len / CHAR_BIT);
 			gid.elem.type = stack_top->load.object_type;
 			gid.elem.len = elem_len;
-			if (field->type.u.sequence.elem_type.u.basic.integer.reverse_byte_order)
+			if (integer_type->reverse_byte_order)
 				gid.elem.rev_bo = true;
 			stack_top->load.rev_bo = gid.elem.rev_bo;
 			break;
@@ -401,6 +434,22 @@ static int specialize_load_object(const struct lttng_event_field *field,
 			}
 		}
 		break;
+	case atype_array_nested:
+		if (field->type.u.array_nested.elem_type->atype != atype_integer) {
+			ERR("Array nesting only supports integer types.");
+			return -EINVAL;
+		}
+		if (is_context) {
+			load->object_type = OBJECT_TYPE_STRING;
+		} else {
+			if (field->type.u.array_nested.elem_type->u.basic.integer.encoding == lttng_encode_none) {
+				load->object_type = OBJECT_TYPE_ARRAY;
+				load->field = field;
+			} else {
+				load->object_type = OBJECT_TYPE_STRING_SEQUENCE;
+			}
+		}
+		break;
 	case atype_sequence:
 		if (field->type.u.sequence.elem_type.atype != atype_integer) {
 			ERR("Sequence nesting only supports integer types.");
@@ -417,6 +466,23 @@ static int specialize_load_object(const struct lttng_event_field *field,
 			}
 		}
 		break;
+	case atype_sequence_nested:
+		if (field->type.u.sequence_nested.elem_type->atype != atype_integer) {
+			ERR("Sequence nesting only supports integer types.");
+			return -EINVAL;
+		}
+		if (is_context) {
+			load->object_type = OBJECT_TYPE_STRING;
+		} else {
+			if (field->type.u.sequence_nested.elem_type->u.basic.integer.encoding == lttng_encode_none) {
+				load->object_type = OBJECT_TYPE_SEQUENCE;
+				load->field = field;
+			} else {
+				load->object_type = OBJECT_TYPE_STRING_SEQUENCE;
+			}
+		}
+		break;
+
 	case atype_string:
 		load->object_type = OBJECT_TYPE_STRING;
 		break;
@@ -560,7 +626,9 @@ static int specialize_event_payload_lookup(struct lttng_event *event,
 			field_offset += sizeof(int64_t);
 			break;
 		case atype_array:
+		case atype_array_nested:
 		case atype_sequence:
+		case atype_sequence_nested:
 			field_offset += sizeof(unsigned long);
 			field_offset += sizeof(void *);
 			break;

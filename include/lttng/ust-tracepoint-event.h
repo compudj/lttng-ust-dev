@@ -255,12 +255,13 @@ void __event_template_proto___##_provider##___##_name(_TP_ARGS_DATA_PROTO(_args)
 	  .name = #_item,					\
 	  .type =						\
 		{						\
-		  .atype = atype_array,				\
+		  .atype = atype_array_nested,			\
 		  .u =						\
 			{					\
-			  .array =				\
+			  .array_nested =			\
 				{				\
-				  .elem_type = __type_integer(_type, _byte_order, _elem_type_base, _encoding), \
+				  .elem_type = __LTTNG_COMPOUND_LITERAL(struct lttng_type, \
+					__type_integer(_type, _byte_order, _elem_type_base, _encoding)), \
 				  .length = _length,		\
 				}				\
 			}					\
@@ -276,13 +277,15 @@ void __event_template_proto___##_provider##___##_name(_TP_ARGS_DATA_PROTO(_args)
 	  .name = #_item,					\
 	  .type =						\
 		{						\
-		  .atype = atype_sequence,			\
+		  .atype = atype_sequence_nested,		\
 		  .u =						\
 			{					\
-			  .sequence =				\
+			  .sequence_nested =			\
 				{				\
-				  .length_type = __type_integer(_length_type, BYTE_ORDER, 10, none), \
-				  .elem_type = __type_integer(_type, _byte_order, _elem_type_base, _encoding), \
+				  .length_type = __LTTNG_COMPOUND_LITERAL(struct lttng_type, \
+					__type_integer(_length_type, BYTE_ORDER, 10, none)), \
+				  .elem_type = __LTTNG_COMPOUND_LITERAL(struct lttng_type, \
+					__type_integer(_type, _byte_order, _elem_type_base, _encoding)), \
 				},				\
 			},					\
 		},						\

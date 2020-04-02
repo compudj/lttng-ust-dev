@@ -391,9 +391,23 @@ int lttng_probes_get_field_list(struct lttng_ust_field_list *list)
 					else
 						list_entry->field.type = LTTNG_UST_FIELD_STRING;
 					break;
+				case atype_array_nested:
+					if (event_field->type.u.array_nested.elem_type->atype != atype_integer
+						|| event_field->type.u.array_nested.elem_type->u.basic.integer.encoding == lttng_encode_none)
+						list_entry->field.type = LTTNG_UST_FIELD_OTHER;
+					else
+						list_entry->field.type = LTTNG_UST_FIELD_STRING;
+					break;
 				case atype_sequence:
 					if (event_field->type.u.sequence.elem_type.atype != atype_integer
 						|| event_field->type.u.sequence.elem_type.u.basic.integer.encoding == lttng_encode_none)
+						list_entry->field.type = LTTNG_UST_FIELD_OTHER;
+					else
+						list_entry->field.type = LTTNG_UST_FIELD_STRING;
+					break;
+				case atype_sequence_nested:
+					if (event_field->type.u.sequence_nested.elem_type->atype != atype_integer
+						|| event_field->type.u.sequence_nested.elem_type->u.basic.integer.encoding == lttng_encode_none)
 						list_entry->field.type = LTTNG_UST_FIELD_OTHER;
 					else
 						list_entry->field.type = LTTNG_UST_FIELD_STRING;

@@ -89,12 +89,14 @@ enum lttng_client_types {
 enum lttng_abstract_types {
 	atype_integer,
 	atype_enum,
-	atype_array,
-	atype_sequence,
+	atype_array,	/* legacy */
+	atype_sequence,	/* legacy */
 	atype_string,
 	atype_float,
 	atype_dynamic,
 	atype_struct,
+	atype_array_nested,
+	atype_sequence_nested,
 	NR_ABSTRACT_TYPES,
 };
 
@@ -224,15 +226,23 @@ struct lttng_type {
 		struct {
 			struct lttng_basic_type elem_type;
 			unsigned int length;		/* num. elems. */
-		} array;
+		} array;	/* legacy */
 		struct {
 			struct lttng_basic_type length_type;
 			struct lttng_basic_type elem_type;
-		} sequence;
+		} sequence;	/* legacy */
 		struct {
 			uint32_t nr_fields;
 			struct lttng_event_field *fields;	/* Array of fields. */
 		} _struct;
+		struct {
+			struct lttng_type *elem_type;
+			unsigned int length;		/* num. elems. */
+		} array_nested;
+		struct {
+			struct lttng_type *length_type;
+			struct lttng_type *elem_type;
+		} sequence_nested;
 		char padding[LTTNG_UST_TYPE_PADDING];
 	} u;
 };

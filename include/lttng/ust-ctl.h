@@ -320,6 +320,8 @@ enum ustctl_abstract_types {
 	ustctl_atype_float,
 	ustctl_atype_variant,
 	ustctl_atype_struct,
+	ustctl_atype_array_nested,
+	ustctl_atype_sequence_nested,
 	NR_USTCTL_ABSTRACT_TYPES,
 };
 
@@ -417,6 +419,14 @@ struct ustctl_type {
 			uint32_t nr_fields;
 			/* Followed by nr_fields struct ustctl_field. */
 		} _struct;
+		struct {
+			/* elem_type follows after this struct ustctl_field. */
+			uint32_t length;		/* num. elems. */
+		} array_nested;
+		struct {
+			/* length_type follows after this struct ustctl_field. */
+			/* elem_type follows after the length_type. */
+		} sequence_nested;
 		char padding[USTCTL_UST_TYPE_PADDING];
 	} u;
 } LTTNG_PACKED;

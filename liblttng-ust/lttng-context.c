@@ -195,7 +195,31 @@ void lttng_context_update(struct lttng_ctx *ctx)
 				break;
 
 			case atype_array:
+			case atype_array_nested:
 			case atype_sequence:
+			case atype_sequence_nested:
+			default:
+				WARN_ON_ONCE(1);
+				break;
+			}
+			break;
+		}
+		case atype_array_nested:
+		{
+			struct lttng_type *nested_type;
+
+			nested_type = type->u.array_nested.elem_type;
+			switch (nested_type->atype) {
+			case atype_integer:
+				field_align = nested_type->u.basic.integer.alignment;
+				break;
+			case atype_string:
+				break;
+
+			case atype_array:
+			case atype_array_nested:
+			case atype_sequence:
+			case atype_sequence_nested:
 			default:
 				WARN_ON_ONCE(1);
 				break;
@@ -214,7 +238,9 @@ void lttng_context_update(struct lttng_ctx *ctx)
 
 			case atype_string:
 			case atype_array:
+			case atype_array_nested:
 			case atype_sequence:
+			case atype_sequence_nested:
 			default:
 				WARN_ON_ONCE(1);
 				break;
@@ -232,7 +258,50 @@ void lttng_context_update(struct lttng_ctx *ctx)
 				break;
 
 			case atype_array:
+			case atype_array_nested:
 			case atype_sequence:
+			case atype_sequence_nested:
+			default:
+				WARN_ON_ONCE(1);
+				break;
+			}
+			break;
+		}
+		case atype_sequence_nested:
+		{
+			struct lttng_type *nested_type, *length_type;
+
+			length_type = type->u.sequence_nested.length_type;
+			switch (length_type->atype) {
+			case atype_integer:
+				field_align = length_type->u.basic.integer.alignment;
+				break;
+
+			case atype_string:
+			case atype_array:
+			case atype_array_nested:
+			case atype_sequence:
+			case atype_sequence_nested:
+			default:
+				WARN_ON_ONCE(1);
+				break;
+			}
+
+			nested_type = type->u.sequence_nested.elem_type;
+			switch (nested_type->atype) {
+			case atype_integer:
+				field_align = max_t(size_t,
+					field_align,
+					nested_type->u.basic.integer.alignment);
+				break;
+
+			case atype_string:
+				break;
+
+			case atype_array:
+			case atype_array_nested:
+			case atype_sequence:
+			case atype_sequence_nested:
 			default:
 				WARN_ON_ONCE(1);
 				break;

@@ -222,7 +222,9 @@ int apply_field_reloc(struct lttng_event *event,
 			field_offset += sizeof(int64_t);
 			break;
 		case atype_array:
+		case atype_array_nested:
 		case atype_sequence:
+		case atype_sequence_nested:
 			field_offset += sizeof(unsigned long);
 			field_offset += sizeof(void *);
 			break;
@@ -258,7 +260,9 @@ int apply_field_reloc(struct lttng_event *event,
 			op->op = FILTER_OP_LOAD_FIELD_REF_S64;
 			break;
 		case atype_array:
+		case atype_array_nested:
 		case atype_sequence:
+		case atype_sequence_nested:
 			op->op = FILTER_OP_LOAD_FIELD_REF_SEQUENCE;
 			break;
 		case atype_string:
@@ -335,7 +339,9 @@ int apply_context_reloc(struct lttng_event *event,
 			/* Sequence and array supported as string */
 		case atype_string:
 		case atype_array:
+		case atype_array_nested:
 		case atype_sequence:
+		case atype_sequence_nested:
 			op->op = FILTER_OP_GET_CONTEXT_REF_STRING;
 			break;
 		case atype_float:

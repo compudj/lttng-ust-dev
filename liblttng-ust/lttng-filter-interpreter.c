@@ -278,12 +278,42 @@ static int context_get_index(struct lttng_ctx *ctx,
 		ctx_field->get_value(ctx_field, &v);
 		ptr->ptr = v.u.str;
 		break;
+	case atype_array_nested:
+		if (field->type.u.array_nested.elem_type->atype != atype_integer) {
+			ERR("Array nesting only supports integer types.");
+			return -EINVAL;
+		}
+		if (field->type.u.array_nested.elem_type->u.basic.integer.encoding == lttng_encode_none) {
+			ERR("Only string arrays are supported for contexts.");
+			return -EINVAL;
+		}
+		ptr->object_type = OBJECT_TYPE_STRING;
+		ctx_field->get_value(ctx_field, &v);
+		ptr->ptr = v.u.str;
+		break;
 	case atype_sequence:
 		if (field->type.u.sequence.elem_type.atype != atype_integer) {
 			ERR("Sequence nesting only supports integer types.");
 			return -EINVAL;
 		}
 		if (field->type.u.sequence.elem_type.u.basic.integer.encoding == lttng_encode_none) {
+			ERR("Only string sequences are supported for contexts.");
+			return -EINVAL;
+		}
+		ptr->object_type = OBJECT_TYPE_STRING;
+		ctx_field->get_value(ctx_field, &v);
+		ptr->ptr = v.u.str;
+		break;
+	case atype_sequence_nested:
+		if (field->type.u.sequence_nested.elem_type->atype != atype_integer) {
+			ERR("Sequence nesting only supports integer types.");
+			return -EINVAL;
+		}
+		if (field->type.u.sequence_nested.length_type->atype != atype_integer) {
+			ERR("Sequence nesting only supports integer length types.");
+			return -EINVAL;
+		}
+		if (field->type.u.sequence_nested.elem_type->u.basic.integer.encoding == lttng_encode_none) {
 			ERR("Only string sequences are supported for contexts.");
 			return -EINVAL;
 		}
