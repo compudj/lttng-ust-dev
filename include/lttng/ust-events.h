@@ -430,11 +430,13 @@ enum lttng_filter_ret {
 	/* Other bits are kept for future use. */
 };
 
+struct lttng_interpreter_output;
+
 struct lttng_bytecode_runtime {
 	/* Associated bytecode */
 	struct lttng_ust_filter_bytecode_node *bc;
 	uint64_t (*filter)(void *filter_data, const char *filter_stack_data,
-			void *output_ax);
+			struct lttng_interpreter_output *output);
 	int link_failed;
 	struct cds_list_head node;	/* list of bytecode runtime in event */
 	/*
@@ -676,39 +678,21 @@ struct lttng_transport {
 	const struct lttng_ust_lib_ring_buffer_config *client_config;
 };
 
-enum lttng_trigger_notification_capture_type {
-	LTTNG_CAPTURE_TYPE_S64,
-	LTTNG_CAPTURE_TYPE_U64,
-	LTTNG_CAPTURE_TYPE_DOUBLE,
-	LTTNG_CAPTURE_TYPE_STRING,
-	LTTNG_CAPTURE_TYPE_ARRAY,
-	LTTNG_CAPTURE_TYPE_SEQUENCE,
+enum lttng_interpreter_type {
+	LTTNG_INTERPRETER_TYPE_S64,
+	LTTNG_INTERPRETER_TYPE_U64,
+	LTTNG_INTERPRETER_TYPE_DOUBLE,
+	LTTNG_INTERPRETER_TYPE_STRING,
+	LTTNG_INTERPRETER_TYPE_SEQUENCE,
 };
 
 /*
- * Describes how to capture compound types.
- * Currently supported type is the array of integers.
+ * Represents the output parameter of the lttng interpreter.
+ * Currently capturable field classes are integer, double, string and sequence
+ * of integer.
  */
-struct lttng_trigger_notification_capture_ptr {
-	enum lttng_trigger_notification_capture_type type;
-	enum lttng_trigger_notification_capture_type object_type;
-	const void *ptr;
-
-	union {
-		size_t array_len;
-	} u;
-
-	/* Inner field. */
-	const struct lttng_event_field *field;
-};
-
-/*
- * Represents one captured field.
- * Currently capturable field classes are integer, double, string and array of
- * integer.
- */
-struct lttng_trigger_notification_capture {
-	enum lttng_trigger_notification_capture_type type;
+struct lttng_interpreter_output {
+	enum lttng_interpreter_type type;
 	union {
 		int64_t s;
 		uint64_t u;
@@ -718,7 +702,13 @@ struct lttng_trigger_notification_capture {
 			const char *str;
 			size_t len;
 		} str;
-		struct lttng_trigger_notification_capture_ptr ptr;
+		struct {
+			const void *ptr;
+			size_t nr_elem;
+
+			/* Inner type. */
+			const struct lttng_type *nested_type;
+		} sequence;
 	} u;
 };
 
@@ -745,7 +735,7 @@ void lttng_trigger_notification_init(
 
 void lttng_trigger_notification_append_capture(
 		struct lttng_trigger_notification *notif,
-		struct lttng_trigger_notification_capture *capture);
+		struct lttng_interpreter_output *output);
 
 void lttng_trigger_notification_send(
 		struct lttng_trigger_notification *notif);

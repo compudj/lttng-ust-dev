@@ -881,7 +881,7 @@ static									      \
 void __trigger_probe__##_provider##___##_name(_TP_ARGS_DATA_PROTO(_args))     \
 {									      \
 	struct lttng_trigger *__trigger = (struct lttng_trigger *) __tp_data; \
-	struct lttng_trigger_notification notif = {0}; \
+	struct lttng_trigger_notification __notif = {0}; \
 	const size_t __num_fields = _TP_ARRAY_SIZE(__event_fields___##_provider##___##_name) - 1;\
 	union {								      \
 		size_t __dynamic_len[__num_fields];			      \
@@ -892,13 +892,13 @@ void __trigger_probe__##_provider##___##_name(_TP_ARGS_DATA_PROTO(_args))     \
 	if (caa_unlikely(!TP_RCU_LINK_TEST()))				      \
 		return;							      \
 	if (caa_unlikely(!cds_list_empty(&__trigger->filter_bytecode_runtime_head))) { \
-		struct lttng_bytecode_runtime *bc_runtime;		      \
+		struct lttng_bytecode_runtime *__filter_bc_runtime;		      \
 		int __filter_record = __trigger->has_enablers_without_bytecode; \
 									      \
 		__event_prepare_filter_stack__##_provider##___##_name(__stackvar.__filter_stack_data, \
 			_TP_ARGS_DATA_VAR(_args));			      \
-		tp_list_for_each_entry_rcu(bc_runtime, &__trigger->filter_bytecode_runtime_head, node) { \
-			if (caa_unlikely(bc_runtime->filter(bc_runtime,	      \
+		tp_list_for_each_entry_rcu(__filter_bc_runtime, &__trigger->filter_bytecode_runtime_head, node) { \
+			if (caa_unlikely(__filter_bc_runtime->filter(__filter_bc_runtime,	\
 					__stackvar.__filter_stack_data, NULL) & LTTNG_FILTER_RECORD_FLAG)) \
 				__filter_record = 1;			      \
 		}							      \
@@ -906,21 +906,21 @@ void __trigger_probe__##_provider##___##_name(_TP_ARGS_DATA_PROTO(_args))     \
 			return;						      \
 	}								      \
 									      \
-	lttng_trigger_notification_init(&notif, __trigger);		      \
+	lttng_trigger_notification_init(&__notif, __trigger);		      \
 									      \
 	if (caa_unlikely(!cds_list_empty(&__trigger->capture_bytecode_runtime_head))) { \
-		struct lttng_bytecode_runtime *bc_runtime;		      \
+		struct lttng_bytecode_runtime *__capture_bc_runtime;		      \
 									      \
-		tp_list_for_each_entry_rcu(bc_runtime, &__trigger->filter_bytecode_runtime_head, node) { \
-			struct lttng_trigger_notification_capture capture; \
-			int ret = bc_runtime->filter(bc_runtime, __stackvar.__filter_stack_data, &capture); \
-			if (ret)					      \
+		tp_list_for_each_entry_rcu(__capture_bc_runtime, &__trigger->capture_bytecode_runtime_head, node) { \
+			struct lttng_interpreter_output __output;	      \
+									      \
+			if (__capture_bc_runtime->filter(__capture_bc_runtime,		      \
+				__stackvar.__filter_stack_data, &__output))   \
 				return;					      \
-			lttng_trigger_notification_append_capture(&notif, &capture); \
+			lttng_trigger_notification_append_capture(&__notif, &__output); \
 		}							      \
 	}								      \
-									      \
-	lttng_trigger_notification_send(&notif);		      \
+	lttng_trigger_notification_send(&__notif);			      \
 }
 
 #include TRACEPOINT_INCLUDE
