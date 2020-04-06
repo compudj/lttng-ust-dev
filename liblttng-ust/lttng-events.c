@@ -814,6 +814,7 @@ int lttng_trigger_create(const struct lttng_event_desc *desc,
 	trigger->registered = 0;
 
 	CDS_INIT_LIST_HEAD(&trigger->filter_bytecode_runtime_head);
+	CDS_INIT_LIST_HEAD(&trigger->capture_bytecode_runtime_head);
 	CDS_INIT_LIST_HEAD(&trigger->enablers_ref_head);
 	trigger->desc = desc;
 
@@ -1355,9 +1356,11 @@ struct lttng_trigger_enabler *lttng_trigger_enabler_create(
 		return NULL;
 	trigger_enabler->base.format_type = format_type;
 	CDS_INIT_LIST_HEAD(&trigger_enabler->base.filter_bytecode_head);
+	CDS_INIT_LIST_HEAD(&trigger_enabler->capture_bytecode_head);
 	CDS_INIT_LIST_HEAD(&trigger_enabler->base.excluder_head);
 
 	trigger_enabler->id = trigger_param->id;
+	trigger_enabler->num_captures = 0;
 
 	memcpy(&trigger_enabler->base.event_param.name, trigger_param->name,
 		sizeof(trigger_enabler->base.event_param.name));
@@ -1449,6 +1452,18 @@ int lttng_trigger_enabler_attach_filter_bytecode(
 {
 	_lttng_enabler_attach_filter_bytecode(
 		lttng_trigger_enabler_as_enabler(trigger_enabler), bytecode);
+
+	lttng_trigger_group_sync_enablers(trigger_enabler->group);
+	return 0;
+}
+
+int lttng_trigger_enabler_attach_capture_bytecode(
+		struct lttng_trigger_enabler *trigger_enabler,
+		struct lttng_ust_bytecode_node *bytecode)
+{
+	bytecode->enabler = lttng_trigger_enabler_as_enabler(trigger_enabler);
+	cds_list_add_tail(&bytecode->node, &trigger_enabler->capture_bytecode_head);
+	trigger_enabler->num_captures++;
 
 	lttng_trigger_group_sync_enablers(trigger_enabler->group);
 	return 0;
@@ -1647,6 +1662,7 @@ void lttng_create_trigger_if_missing(struct lttng_trigger_enabler *trigger_enabl
 			struct cds_hlist_node *node;
 
 			desc = probe_desc->event_desc[i];
+
 			if (!lttng_desc_match_enabler(desc,
 					lttng_trigger_enabler_as_enabler(trigger_enabler)))
 				continue;
@@ -1739,6 +1755,14 @@ int lttng_trigger_enabler_ref_triggers(struct lttng_trigger_enabler *trigger_ena
 		lttng_enabler_link_bytecode(trigger->desc,
 			&trigger_group->ctx, &trigger->filter_bytecode_runtime_head,
 			&lttng_trigger_enabler_as_enabler(trigger_enabler)->filter_bytecode_head);
+
+		/*
+		 * Link capture bytecodes if not linked yet.
+		 */
+		lttng_enabler_link_bytecode(trigger->desc,
+			&trigger_group->ctx, &trigger->capture_bytecode_runtime_head,
+			&trigger_enabler->capture_bytecode_head);
+		trigger->num_captures = trigger_enabler->num_captures;
 	}
 end:
 	return 0;
@@ -1800,6 +1824,12 @@ void lttng_trigger_group_sync_enablers(struct lttng_trigger_group *trigger_group
 		cds_list_for_each_entry(runtime,
 				&trigger->filter_bytecode_runtime_head, node) {
 			lttng_bytecode_filter_sync_state(runtime);
+		}
+
+		/* Enable captures. */
+		cds_list_for_each_entry(runtime,
+				&trigger->capture_bytecode_runtime_head, node) {
+			lttng_bytecode_capture_sync_state(runtime);
 		}
 	}
 	__tracepoint_probe_prune_release_queue();

@@ -48,11 +48,14 @@ struct lttng_trigger_enabler {
 	struct lttng_enabler base;
 	uint64_t id;
 	struct cds_list_head node;	/* per-app list of trigger enablers */
+	struct cds_list_head capture_bytecode_head;
 	struct lttng_trigger_group *group; /* weak ref */
+	uint64_t num_captures;
 };
 
 enum lttng_ust_bytecode_node_type{
 	LTTNG_UST_BYTECODE_NODE_TYPE_FILTER,
+	LTTNG_UST_BYTECODE_NODE_TYPE_CAPTURE,
 };
 
 
@@ -216,6 +219,15 @@ int lttng_trigger_enabler_disable(struct lttng_trigger_enabler *trigger_enabler)
  */
 LTTNG_HIDDEN
 int lttng_trigger_enabler_attach_filter_bytecode(
+		struct lttng_trigger_enabler *trigger_enabler,
+		struct lttng_ust_bytecode_node *bytecode);
+
+/*
+ * Attach capture bytecode program to `struct lttng_trigger_enabler` and all
+ * triggers related to this enabler.
+ */
+LTTNG_HIDDEN
+int lttng_trigger_enabler_attach_capture_bytecode(
 		struct lttng_trigger_enabler *trigger_enabler,
 		struct lttng_ust_bytecode_node *bytecode);
 

@@ -123,6 +123,7 @@ struct lttng_ust_trigger {
 #define LTTNG_TRIGGER_NOTIFICATION_PADDING 32
 struct lttng_ust_trigger_notification {
 	uint64_t id;
+	uint16_t capture_buf_size;
 	char padding[LTTNG_TRIGGER_NOTIFICATION_PADDING];
 } LTTNG_PACKED;
 
@@ -292,6 +293,16 @@ struct lttng_ust_filter_bytecode {
 	char data[0];
 } LTTNG_PACKED;
 
+#define CAPTURE_BYTECODE_MAX_LEN	65536
+#define LTTNG_UST_CAPTURE_PADDING	32
+struct lttng_ust_capture_bytecode {
+	uint32_t len;
+	uint32_t reloc_offset;
+	uint64_t seqnum;
+	char padding[LTTNG_UST_CAPTURE_PADDING];
+	char data[0];
+} LTTNG_PACKED;
+
 #define LTTNG_UST_EXCLUSION_PADDING	32
 struct lttng_ust_event_exclusion {
 	uint32_t count;
@@ -351,6 +362,7 @@ struct lttng_ust_event_exclusion {
 #define LTTNG_UST_TRIGGER_GROUP_CREATE		_UST_CMD(0xB0)
 #define LTTNG_UST_TRIGGER_CREATE		\
 	_UST_CMDW(0xB1, struct lttng_ust_trigger)
+#define LTTNG_UST_CAPTURE			_UST_CMD(0xB2)
 
 #define LTTNG_UST_ROOT_HANDLE	0
 
