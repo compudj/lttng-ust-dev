@@ -722,6 +722,10 @@ long lttng_trigger_enabler_cmd(int objd, unsigned int cmd, unsigned long arg,
 	case LTTNG_UST_EXCLUSION:
 		return lttng_trigger_enabler_attach_exclusion(trigger_enabler,
 			(struct lttng_ust_excluder_node *) arg);
+	case LTTNG_UST_CAPTURE:
+		return lttng_trigger_enabler_attach_capture_bytecode(
+			trigger_enabler,
+			(struct lttng_ust_bytecode_node *) arg);
 	case LTTNG_UST_ENABLE:
 		return lttng_trigger_enabler_enable(trigger_enabler);
 	case LTTNG_UST_DISABLE:
