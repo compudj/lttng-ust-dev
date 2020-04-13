@@ -362,7 +362,7 @@ void lttng_trigger_group_destroy(
 static
 void lttng_enabler_destroy(struct lttng_enabler *enabler)
 {
-	struct lttng_ust_filter_bytecode_node *filter_node, *tmp_filter_node;
+	struct lttng_ust_bytecode_node *filter_node, *tmp_filter_node;
 	struct lttng_ust_excluder_node *excluder_node, *tmp_excluder_node;
 
 	if (!enabler) {
@@ -1392,14 +1392,14 @@ int lttng_event_enabler_disable(struct lttng_event_enabler *event_enabler)
 
 static
 void _lttng_enabler_attach_filter_bytecode(struct lttng_enabler *enabler,
-		struct lttng_ust_filter_bytecode_node *bytecode)
+		struct lttng_ust_bytecode_node *bytecode)
 {
 	bytecode->enabler = enabler;
 	cds_list_add_tail(&bytecode->node, &enabler->filter_bytecode_head);
 }
 
 int lttng_event_enabler_attach_filter_bytecode(struct lttng_event_enabler *event_enabler,
-		struct lttng_ust_filter_bytecode_node *bytecode)
+		struct lttng_ust_bytecode_node *bytecode)
 {
 	_lttng_enabler_attach_filter_bytecode(
 		lttng_event_enabler_as_enabler(event_enabler), bytecode);
@@ -1444,7 +1444,7 @@ int lttng_trigger_enabler_disable(struct lttng_trigger_enabler *trigger_enabler)
 
 int lttng_trigger_enabler_attach_filter_bytecode(
 		struct lttng_trigger_enabler *trigger_enabler,
-		struct lttng_ust_filter_bytecode_node *bytecode)
+		struct lttng_ust_bytecode_node *bytecode)
 {
 	_lttng_enabler_attach_filter_bytecode(
 		lttng_trigger_enabler_as_enabler(trigger_enabler), bytecode);
