@@ -455,6 +455,9 @@ static int dynamic_get_index(struct lttng_ctx *ctx,
 		stack_top->u.ptr.field = gid->field;
 		break;
 	}
+
+	stack_top->type = REG_PTR;
+
 	return 0;
 
 end:
