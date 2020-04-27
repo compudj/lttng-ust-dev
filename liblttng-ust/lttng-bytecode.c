@@ -493,7 +493,7 @@ alloc_error:
 	return ret;
 }
 
-void lttng_filter_sync_state(struct lttng_bytecode_runtime *runtime)
+void lttng_bytecode_filter_sync_state(struct lttng_bytecode_runtime *runtime)
 {
 	struct lttng_ust_bytecode_node *bc = runtime->bc;
 
@@ -588,4 +588,9 @@ void lttng_free_event_filter_runtime(struct lttng_event *event)
 void lttng_free_trigger_filter_runtime(struct lttng_trigger *trigger)
 {
 	free_filter_runtime(&trigger->filter_bytecode_runtime_head);
+}
+
+/* For backward compatibility. Leave those exported symbols in place. */
+void lttng_filter_sync_state(struct lttng_bytecode_runtime *runtime)
+{
 }

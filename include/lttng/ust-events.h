@@ -810,7 +810,6 @@ struct lttng_ust_field_iter *
 	lttng_ust_field_list_get_iter_next(struct lttng_ust_field_list *list);
 
 void lttng_free_event_filter_runtime(struct lttng_event *event);
-void lttng_filter_sync_state(struct lttng_bytecode_runtime *runtime);
 
 struct cds_list_head *lttng_get_probe_list_head(void);
 int lttng_session_active(void);
@@ -846,6 +845,7 @@ int lttng_enabler_attach_exclusion(struct lttng_enabler *enabler,
 		struct lttng_ust_excluder_node *excluder);
 void lttng_enabler_event_link_bytecode(struct lttng_event *event,
 		struct lttng_enabler *enabler);
+void lttng_filter_sync_state(struct lttng_bytecode_runtime *runtime);
 
 #ifdef __cplusplus
 }
