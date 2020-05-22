@@ -64,6 +64,7 @@
 #include "lttng-tracer.h"
 #include "lttng-tracer-core.h"
 #include "lttng-ust-statedump.h"
+#include "context-internal.h"
 #include "ust-events-internal.h"
 #include "wait.h"
 #include "../libringbuffer/shm.h"
@@ -153,7 +154,7 @@ struct lttng_session *lttng_session_create(void)
 	session = zmalloc(sizeof(struct lttng_session));
 	if (!session)
 		return NULL;
-	if (lttng_session_context_init(&session->ctx)) {
+	if (lttng_context_init_all(&session->ctx)) {
 		free(session);
 		return NULL;
 	}
@@ -177,6 +178,11 @@ struct lttng_trigger_group *lttng_trigger_group_create(void)
 	trigger_group = zmalloc(sizeof(struct lttng_trigger_group));
 	if (!trigger_group)
 		return NULL;
+	/* Add all contexts. */
+	if (lttng_context_init_all(&trigger_group->ctx)) {
+		free(trigger_group);
+		return NULL;
+	}
 
 	CDS_INIT_LIST_HEAD(&trigger_group->enablers_head);
 	CDS_INIT_LIST_HEAD(&trigger_group->triggers_head);
@@ -184,6 +190,7 @@ struct lttng_trigger_group *lttng_trigger_group_create(void)
 		CDS_INIT_HLIST_HEAD(&trigger_group->triggers_ht.table[i]);
 
 	cds_list_add(&trigger_group->node, &trigger_groups);
+
 
 	return trigger_group;
 }
