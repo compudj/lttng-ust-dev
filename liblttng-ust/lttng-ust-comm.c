@@ -344,6 +344,11 @@ static const char *cmd_name_mapping[] = {
 	/* Event FD commands */
 	[ LTTNG_UST_FILTER ] = "Create Filter",
 	[ LTTNG_UST_EXCLUSION ] = "Add exclusions to event",
+
+	/* Session and trigger FD commands */
+	[ LTTNG_UST_COUNTER ] = "Create Counter",
+	[ LTTNG_UST_COUNTER_GLOBAL ] = "Create Counter Global",
+	[ LTTNG_UST_COUNTER_CPU ] = "Create Counter CPU",
 };
 
 static const char *str_timeout;
@@ -1025,6 +1030,79 @@ int handle_message(struct sock_info *sock_info,
 			ret = -ENOSYS;
 		}
 		break;
+	case LTTNG_UST_COUNTER:
+	{
+		void *counter_data;
+
+		len = ustcomm_recv_counter_from_sessiond(sock,
+				&counter_data, lum->u.counter.len);
+		switch (len) {
+		case 0:	/* orderly shutdown */
+			ret = 0;
+			goto error;
+		default:
+			if (len == lum->u.counter.len) {
+				DBG("counter data received");
+				break;
+			} else if (len < 0) {
+				DBG("Receive failed from lttng-sessiond with errno %d", (int) -len);
+				if (len == -ECONNRESET) {
+					ERR("%s remote end closed connection", sock_info->name);
+					ret = len;
+					goto error;
+				}
+				ret = len;
+				goto error;
+			} else {
+				DBG("incorrect counter data message size: %zd", len);
+				ret = -EINVAL;
+				goto error;
+			}
+		}
+		args.counter.counter_data = counter_data;
+		if (ops->cmd)
+			ret = ops->cmd(lum->handle, lum->cmd,
+					(unsigned long) &lum->u,
+					&args, sock_info);
+		else
+			ret = -ENOSYS;
+		break;
+	}
+	case LTTNG_UST_COUNTER_GLOBAL:
+	{
+		/* Receive shm_fd */
+		ret = ustcomm_recv_counter_shm_from_sessiond(sock,
+			&args.counter_shm.shm_fd);
+		if (ret) {
+			goto error;
+		}
+
+		if (ops->cmd)
+			ret = ops->cmd(lum->handle, lum->cmd,
+					(unsigned long) &lum->u,
+					&args, sock_info);
+		else
+			ret = -ENOSYS;
+		break;
+	}
+	case LTTNG_UST_COUNTER_CPU:
+	{
+		/* Receive shm_fd */
+		ret = ustcomm_recv_counter_shm_from_sessiond(sock,
+			&args.counter_shm.shm_fd);
+		if (ret) {
+			goto error;
+		}
+
+		if (ops->cmd)
+			ret = ops->cmd(lum->handle, lum->cmd,
+					(unsigned long) &lum->u,
+					&args, sock_info);
+		else
+			ret = -ENOSYS;
+		break;
+	}
+
 	default:
 		if (ops->cmd)
 			ret = ops->cmd(lum->handle, lum->cmd,

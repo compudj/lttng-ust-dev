@@ -119,6 +119,27 @@ struct lttng_ust_event {
 	} u;
 } LTTNG_PACKED;
 
+#define LTTNG_UST_COUNTER_PADDING1	(LTTNG_UST_SYM_NAME_LEN + 32)
+#define LTTNG_UST_COUNTER_DATA_MAX_LEN	4096U
+struct lttng_ust_counter {
+	uint64_t len;
+	char padding[LTTNG_UST_COUNTER_PADDING1];
+	char data[];	/* variable sized data */
+} LTTNG_PACKED;
+
+#define LTTNG_UST_COUNTER_GLOBAL_PADDING1	(LTTNG_UST_SYM_NAME_LEN + 32)
+struct lttng_ust_counter_global {
+	uint64_t len;		/* shm len */
+	char padding[LTTNG_UST_COUNTER_GLOBAL_PADDING1];
+} LTTNG_PACKED;
+
+#define LTTNG_UST_COUNTER_CPU_PADDING1	(LTTNG_UST_SYM_NAME_LEN + 32)
+struct lttng_ust_counter_cpu {
+	uint64_t len;		/* shm len */
+	uint32_t cpu_nr;
+	char padding[LTTNG_UST_COUNTER_CPU_PADDING1];
+} LTTNG_PACKED;
+
 enum lttng_ust_field_type {
 	LTTNG_UST_FIELD_OTHER			= 0,
 	LTTNG_UST_FIELD_INTEGER			= 1,
@@ -217,6 +238,9 @@ enum lttng_ust_object_type {
 	LTTNG_UST_OBJECT_TYPE_STREAM = 1,
 	LTTNG_UST_OBJECT_TYPE_EVENT = 2,
 	LTTNG_UST_OBJECT_TYPE_CONTEXT = 3,
+	LTTNG_UST_OBJECT_TYPE_COUNTER = 4,
+	LTTNG_UST_OBJECT_TYPE_COUNTER_GLOBAL = 5,
+	LTTNG_UST_OBJECT_TYPE_COUNTER_CPU = 6,
 };
 
 #define LTTNG_UST_OBJECT_DATA_PADDING1	32
@@ -238,6 +262,16 @@ struct lttng_ust_object_data {
 			int wakeup_fd;
 			uint32_t stream_nr;
 		} stream;
+		struct {
+			void *data;
+		} counter;
+		struct {
+			int shm_fd;
+		} counter_global;
+		struct {
+			int shm_fd;
+			uint32_t cpu_nr;
+		} counter_cpu;
 		char padding2[LTTNG_UST_OBJECT_DATA_PADDING2];
 	} u;
 } LTTNG_PACKED;
@@ -322,6 +356,14 @@ struct lttng_ust_event_exclusion {
 #define LTTNG_UST_FILTER			_UST_CMD(0xA0)
 #define LTTNG_UST_EXCLUSION			_UST_CMD(0xA1)
 
+/* Session and Trigger group FD commands */
+#define LTTNG_UST_COUNTER			\
+	_UST_CMDW(0xB0, struct lttng_ust_counter)
+#define LTTNG_UST_COUNTER_GLOBAL		\
+	_UST_CMDW(0xB1, struct lttng_ust_counter_global)
+#define LTTNG_UST_COUNTER_CPU			\
+	_UST_CMDW(0xB2, struct lttng_ust_counter_cpu)
+
 #define LTTNG_UST_ROOT_HANDLE	0
 
 struct lttng_ust_obj;
@@ -341,6 +383,12 @@ union ust_args {
 	struct {
 		char *ctxname;
 	} app_context;
+	struct {
+		void *counter_data;
+	} counter;
+	struct {
+		int shm_fd;
+	} counter_shm;
 };
 
 struct lttng_ust_objd_ops {

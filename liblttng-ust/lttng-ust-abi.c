@@ -583,6 +583,11 @@ long lttng_session_cmd(int objd, unsigned int cmd, unsigned long arg,
 		return lttng_session_disable(session);
 	case LTTNG_UST_SESSION_STATEDUMP:
 		return lttng_session_statedump(session);
+	case LTTNG_UST_COUNTER:
+	case LTTNG_UST_COUNTER_GLOBAL:
+	case LTTNG_UST_COUNTER_CPU:
+		/* Not implemented yet. */
+		return -EINVAL;
 	default:
 		return -EINVAL;
 	}

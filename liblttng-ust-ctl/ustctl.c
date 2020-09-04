@@ -38,6 +38,10 @@
 #include "../liblttng-ust/clock.h"
 #include "../liblttng-ust/getenv.h"
 
+#include "../libcounter/shm.h"
+#include "../libcounter/smp.h"
+#include "../libcounter/counter.h"
+
 /*
  * Number of milliseconds to retry before failing metadata writes on
  * buffer full condition. (10 seconds)
@@ -66,6 +70,21 @@ struct ustctl_consumer_stream {
 	int shm_fd, wait_fd, wakeup_fd;
 	int cpu;
 	uint64_t memory_map_size;
+};
+
+struct ustctl_counter_attr {
+	uint64_t nr_dimensions;
+	int64_t global_sum_step;
+	int64_t max_nr_elem[];	/* nr_dimensions */
+} LTTNG_PACKED;
+
+/*
+ * Counter representation within daemon.
+ */
+struct ustctl_daemon_counter {
+	struct lib_counter *counter;
+	const struct lttng_counter_ops *ops;
+	struct ustctl_counter_attr *attr;	/* initial attributes */
 };
 
 extern void lttng_ring_buffer_client_overwrite_init(void);
@@ -136,6 +155,30 @@ int ustctl_release_object(int sock, struct lttng_ust_object_data *data)
 		break;
 	case LTTNG_UST_OBJECT_TYPE_EVENT:
 	case LTTNG_UST_OBJECT_TYPE_CONTEXT:
+		break;
+	case LTTNG_UST_OBJECT_TYPE_COUNTER:
+		free(data->u.counter.data);
+		data->u.counter.data = NULL;
+		break;
+	case LTTNG_UST_OBJECT_TYPE_COUNTER_GLOBAL:
+		if (data->u.counter_global.shm_fd >= 0) {
+			ret = close(data->u.counter_global.shm_fd);
+			if (ret < 0) {
+				ret = -errno;
+				return ret;
+			}
+			data->u.counter_global.shm_fd = -1;
+		}
+		break;
+	case LTTNG_UST_OBJECT_TYPE_COUNTER_CPU:
+		if (data->u.counter_cpu.shm_fd >= 0) {
+			ret = close(data->u.counter_cpu.shm_fd);
+			if (ret < 0) {
+				ret = -errno;
+				return ret;
+			}
+			data->u.counter_cpu.shm_fd = -1;
+		}
 		break;
 	default:
 		assert(0);
@@ -2238,6 +2281,324 @@ int ustctl_regenerate_statedump(int sock, int handle)
 		return ret;
 	DBG("Regenerated statedump for handle %u", handle);
 	return 0;
+}
+
+/* counter operations */
+
+int ustctl_get_nr_cpu_per_counter(void)
+{
+	return lttng_counter_num_possible_cpus();
+}
+
+struct ustctl_daemon_counter *
+	ustctl_create_counter(size_t nr_dimensions,
+		const size_t *max_nr_elem,
+		int64_t global_sum_step,
+		int nr_counter_cpu_fds,
+		const int *counter_cpu_fds,
+		enum ustctl_counter_bitness bitness,
+		enum ustctl_counter_arithmetic arithmetic,
+		uint32_t alloc_flags)
+{
+	const char *transport_name;
+	struct ustctl_daemon_counter *counter;
+	struct lttng_counter_transport *transport;
+	size_t i;
+
+	/* Currently, only per-cpu allocation is supported. */
+	switch (alloc_flags) {
+	case USTCTL_COUNTER_ALLOC_PER_CPU:
+		break;
+
+	case USTCTL_COUNTER_ALLOC_PER_CPU | USTCTL_COUNTER_ALLOC_GLOBAL:
+	case USTCTL_COUNTER_ALLOC_GLOBAL:
+	default:
+		return NULL;
+	}
+	switch (bitness) {
+	case USTCTL_COUNTER_BITNESS_32:
+		switch (arithmetic) {
+		case USTCTL_COUNTER_ARITHMETIC_OVERFLOW:
+			transport_name = "counter-per-cpu-32-overflow";
+			break;
+		case USTCTL_COUNTER_ARITHMETIC_SATURATION:
+			transport_name = "counter-per-cpu-32-saturation";
+			break;
+		default:
+			return NULL;
+		}
+		break;
+	case USTCTL_COUNTER_BITNESS_64:
+		switch (arithmetic) {
+		case USTCTL_COUNTER_ARITHMETIC_OVERFLOW:
+			transport_name = "counter-per-cpu-64-overflow";
+			break;
+		case USTCTL_COUNTER_ARITHMETIC_SATURATION:
+			transport_name = "counter-per-cpu-64-saturation";
+			break;
+		default:
+			return NULL;
+		}
+		break;
+	default:
+		return NULL;
+	}
+
+	transport = lttng_counter_transport_find(transport_name);
+	if (!transport) {
+		DBG("LTTng transport %s not found\n",
+			transport_name);
+		return NULL;
+	}
+
+	counter = zmalloc(sizeof(*counter));
+	if (!counter)
+		return NULL;
+	counter->attr = zmalloc(sizeof(*counter->attr) +
+				nr_dimensions * sizeof(counter->attr->max_nr_elem[0]));
+	if (!counter->attr)
+		goto free_counter;
+	counter->attr->nr_dimensions = nr_dimensions;
+	counter->attr->global_sum_step = global_sum_step;
+	for (i = 0; i < nr_dimensions; i++)
+		counter->attr->max_nr_elem[i] = max_nr_elem[i];
+	counter->counter = transport->ops.counter_create(nr_dimensions,
+		max_nr_elem, global_sum_step, -1, nr_counter_cpu_fds, counter_cpu_fds, true);
+	if (!counter->counter)
+		goto free_attr;
+	counter->ops = &transport->ops;
+	return counter;
+
+free_attr:
+	free(counter->attr);
+free_counter:
+	free(counter);
+	return NULL;
+}
+
+int ustctl_create_counter_data(struct ustctl_daemon_counter *counter,
+		struct lttng_ust_object_data **_counter_data)
+{
+	struct lttng_ust_object_data *counter_data;
+	int ret;
+
+	counter_data = zmalloc(sizeof(*counter_data));
+	if (!counter_data) {
+		ret = -ENOMEM;
+		goto error_alloc;
+	}
+	counter_data->type = LTTNG_UST_OBJECT_TYPE_COUNTER;
+	counter_data->handle = -1;
+
+	counter_data->size = sizeof(*counter->attr) +
+			counter->attr->nr_dimensions * sizeof(counter->attr->max_nr_elem[0]);
+	counter_data->u.counter.data = zmalloc(counter_data->size);
+	if (!counter_data->u.counter.data)
+		goto error_alloc_data;
+	memcpy(counter_data->u.counter.data, counter->attr, counter_data->size);
+	*_counter_data = counter_data;
+	return 0;
+
+error_alloc_data:
+	free(counter_data);
+error_alloc:
+	return ret;
+}
+
+int ustctl_create_counter_global_data(struct ustctl_daemon_counter *counter,
+		struct lttng_ust_object_data **_counter_global_data)
+{
+	struct lttng_ust_object_data *counter_global_data;
+	int ret, fd;
+	size_t len;
+
+	if (lttng_counter_get_global_shm(counter->counter, &fd, &len))
+		return -EINVAL;
+	counter_global_data = zmalloc(sizeof(*counter_global_data));
+	if (!counter_global_data) {
+		ret = -ENOMEM;
+		goto error_alloc;
+	}
+	counter_global_data->type = LTTNG_UST_OBJECT_TYPE_COUNTER_GLOBAL;
+	counter_global_data->handle = -1;
+	counter_global_data->size = len;
+	counter_global_data->u.counter_global.shm_fd = fd;
+	*_counter_global_data = counter_global_data;
+	return 0;
+
+error_alloc:
+	return ret;
+}
+
+int ustctl_create_counter_cpu_data(struct ustctl_daemon_counter *counter, int cpu,
+		struct lttng_ust_object_data **_counter_cpu_data)
+{
+	struct lttng_ust_object_data *counter_cpu_data;
+	int ret, fd;
+	size_t len;
+
+	if (lttng_counter_get_cpu_shm(counter->counter, cpu, &fd, &len))
+		return -EINVAL;
+	counter_cpu_data = zmalloc(sizeof(*counter_cpu_data));
+	if (!counter_cpu_data) {
+		ret = -ENOMEM;
+		goto error_alloc;
+	}
+	counter_cpu_data->type = LTTNG_UST_OBJECT_TYPE_COUNTER_CPU;
+	counter_cpu_data->handle = -1;
+	counter_cpu_data->size = len;
+	counter_cpu_data->u.counter_cpu.shm_fd = fd;
+	counter_cpu_data->u.counter_cpu.cpu_nr = cpu;
+	*_counter_cpu_data = counter_cpu_data;
+	return 0;
+
+error_alloc:
+	return ret;
+}
+
+void ustctl_destroy_counter(struct ustctl_daemon_counter *counter)
+{
+	counter->ops->counter_destroy(counter->counter);
+	free(counter->attr);
+	free(counter);
+}
+
+int ustctl_send_counter_data_to_ust(int sock, int parent_handle,
+		struct lttng_ust_object_data *counter_data)
+{
+	struct ustcomm_ust_msg lum;
+	struct ustcomm_ust_reply lur;
+	int ret;
+	size_t size;
+	ssize_t len;
+
+	if (!counter_data)
+		return -EINVAL;
+
+	size = counter_data->size;
+	memset(&lum, 0, sizeof(lum));
+	lum.handle = parent_handle;
+	lum.cmd = LTTNG_UST_COUNTER;
+	lum.u.counter.len = size;
+	ret = ustcomm_send_app_msg(sock, &lum);
+	if (ret)
+		return ret;
+
+	/* Send counter data */
+	len = ustcomm_send_unix_sock(sock, counter_data->u.counter.data, size);
+	if (len != size) {
+		if (len < 0)
+			return len;
+		else
+			return -EIO;
+	}
+
+	ret = ustcomm_recv_app_reply(sock, &lur, lum.handle, lum.cmd);
+	if (!ret) {
+		counter_data->handle = lur.ret_val;
+	}
+	return ret;
+}
+
+int ustctl_send_counter_global_data_to_ust(int sock,
+		struct lttng_ust_object_data *counter_data,
+		struct lttng_ust_object_data *counter_global_data)
+{
+	struct ustcomm_ust_msg lum;
+	struct ustcomm_ust_reply lur;
+	int ret;
+	size_t size;
+	ssize_t len;
+
+	if (!counter_data || !counter_global_data)
+		return -EINVAL;
+
+	size = counter_global_data->size;
+	memset(&lum, 0, sizeof(lum));
+	lum.handle = counter_data->handle;	/* parent handle */
+	lum.cmd = LTTNG_UST_COUNTER_GLOBAL;
+	lum.u.counter_global.len = size;
+	ret = ustcomm_send_app_msg(sock, &lum);
+	if (ret)
+		return ret;
+
+	len = ustcomm_send_fds_unix_sock(sock,
+			&counter_global_data->u.counter_global.shm_fd, 1);
+	if (len <= 0) {
+		if (len < 0)
+			return len;
+		else
+			return -EIO;
+	}
+
+	ret = ustcomm_recv_app_reply(sock, &lur, lum.handle, lum.cmd);
+	if (!ret) {
+		counter_global_data->handle = lur.ret_val;
+	}
+	return ret;
+}
+
+int ustctl_send_counter_cpu_data_to_ust(int sock,
+		struct lttng_ust_object_data *counter_data,
+		struct lttng_ust_object_data *counter_cpu_data)
+{
+	struct ustcomm_ust_msg lum;
+	struct ustcomm_ust_reply lur;
+	int ret;
+	size_t size;
+	ssize_t len;
+
+	if (!counter_data || !counter_cpu_data)
+		return -EINVAL;
+
+	size = counter_cpu_data->size;
+	memset(&lum, 0, sizeof(lum));
+	lum.handle = counter_data->handle;	/* parent handle */
+	lum.cmd = LTTNG_UST_COUNTER_CPU;
+	lum.u.counter_cpu.len = size;
+	lum.u.counter_cpu.cpu_nr = counter_cpu_data->u.counter_cpu.cpu_nr;
+	ret = ustcomm_send_app_msg(sock, &lum);
+	if (ret)
+		return ret;
+
+	len = ustcomm_send_fds_unix_sock(sock,
+			&counter_cpu_data->u.counter_cpu.shm_fd, 1);
+	if (len <= 0) {
+		if (len < 0)
+			return len;
+		else
+			return -EIO;
+	}
+
+	ret = ustcomm_recv_app_reply(sock, &lur, lum.handle, lum.cmd);
+	if (!ret) {
+		counter_cpu_data->handle = lur.ret_val;
+	}
+	return ret;
+}
+
+int ustctl_counter_read(struct ustctl_daemon_counter *counter,
+		const size_t *dimension_indexes,
+		int cpu, int64_t *value,
+		bool *overflow, bool *underflow)
+{
+	return counter->ops->counter_read(counter->counter, dimension_indexes, cpu,
+			value, overflow, underflow);
+}
+
+int ustctl_counter_aggregate(struct ustctl_daemon_counter *counter,
+		const size_t *dimension_indexes,
+		int64_t *value,
+		bool *overflow, bool *underflow)
+{
+	return counter->ops->counter_aggregate(counter->counter, dimension_indexes,
+			value, overflow, underflow);
+}
+
+int ustctl_counter_clear(struct ustctl_daemon_counter *counter,
+		const size_t *dimension_indexes)
+{
+	return counter->ops->counter_clear(counter->counter, dimension_indexes);
 }
 
 static __attribute__((constructor))

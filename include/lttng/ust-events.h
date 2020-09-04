@@ -607,6 +607,26 @@ struct lttng_channel {
 	int tstate:1;			/* Transient enable state */
 };
 
+struct lttng_counter_ops {
+	struct lib_counter *(*counter_create)(size_t nr_dimensions,
+			const size_t *max_nr_elem,
+			int64_t global_sum_step,
+			int global_counter_fd,
+			int nr_counter_cpu_fds,
+			const int *counter_cpu_fds,
+			bool is_daemon);
+	void (*counter_destroy)(struct lib_counter *counter);
+	int (*counter_add)(struct lib_counter *counter,
+			const size_t *dimension_indexes, int64_t v);
+	int (*counter_read)(struct lib_counter *counter,
+			const size_t *dimension_indexes, int cpu,
+			int64_t *value, bool *overflow, bool *underflow);
+	int (*counter_aggregate)(struct lib_counter *counter,
+			const size_t *dimension_indexes, int64_t *value,
+			bool *overflow, bool *underflow);
+	int (*counter_clear)(struct lib_counter *counter, const size_t *dimension_indexes);
+};
+
 #define LTTNG_UST_STACK_CTX_PADDING	32
 struct lttng_stack_ctx {
 	struct lttng_event *event;
@@ -669,6 +689,13 @@ struct lttng_transport {
 	const struct lttng_ust_lib_ring_buffer_config *client_config;
 };
 
+struct lttng_counter_transport {
+	char *name;
+	struct cds_list_head node;
+	struct lttng_counter_ops ops;
+	const struct lib_counter_config *client_config;
+};
+
 struct lttng_session *lttng_session_create(void);
 int lttng_session_enable(struct lttng_session *session);
 int lttng_session_disable(struct lttng_session *session);
@@ -707,6 +734,9 @@ int lttng_session_context_init(struct lttng_ctx **ctx);
 
 void lttng_transport_register(struct lttng_transport *transport);
 void lttng_transport_unregister(struct lttng_transport *transport);
+
+void lttng_counter_transport_register(struct lttng_counter_transport *transport);
+void lttng_counter_transport_unregister(struct lttng_counter_transport *transport);
 
 void synchronize_trace(void);
 
@@ -794,6 +824,7 @@ extern const struct lttng_ust_client_lib_ring_buffer_client_cb *lttng_client_cal
 extern const struct lttng_ust_client_lib_ring_buffer_client_cb *lttng_client_callbacks_overwrite;
 
 struct lttng_transport *lttng_transport_find(const char *name);
+struct lttng_counter_transport *lttng_counter_transport_find(const char *name);
 
 int lttng_probes_get_event_list(struct lttng_ust_tracepoint_list *list);
 void lttng_probes_prune_event_list(struct lttng_ust_tracepoint_list *list);
