@@ -109,6 +109,9 @@ struct ustcomm_ust_msg {
 			uint32_t reloc_offset;
 			uint64_t seqnum;
 		} LTTNG_PACKED capture;
+		struct lttng_ust_counter counter;
+		struct lttng_ust_counter_global counter_global;
+		struct lttng_ust_counter_cpu counter_cpu;
 		char padding[USTCOMM_MSG_PADDING2];
 	} u;
 } LTTNG_PACKED;
@@ -228,6 +231,11 @@ int ustcomm_recv_stream_from_sessiond(int sock,
 		int *shm_fd, int *wakeup_fd);
 ssize_t ustcomm_recv_trigger_notif_fd_from_sessiond(int sock,
 		int *trigger_notif_fd);
+
+ssize_t ustcomm_recv_counter_from_sessiond(int sock,
+		void **counter_data, uint64_t len);
+int ustcomm_recv_counter_shm_from_sessiond(int sock,
+		int *shm_fd);
 
 /*
  * Returns 0 on success, negative error value on error.

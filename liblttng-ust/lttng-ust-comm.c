@@ -348,6 +348,11 @@ static const char *cmd_name_mapping[] = {
 	/* Event FD commands */
 	[ LTTNG_UST_FILTER ] = "Create Filter",
 	[ LTTNG_UST_EXCLUSION ] = "Add exclusions to event",
+
+	/* Session and trigger FD commands */
+	[ LTTNG_UST_COUNTER ] = "Create Counter",
+	[ LTTNG_UST_COUNTER_GLOBAL ] = "Create Counter Global",
+	[ LTTNG_UST_COUNTER_CPU ] = "Create Counter CPU",
 };
 
 static const char *str_timeout;
@@ -363,6 +368,10 @@ extern void lttng_ring_buffer_client_overwrite_rt_exit(void);
 extern void lttng_ring_buffer_client_discard_exit(void);
 extern void lttng_ring_buffer_client_discard_rt_exit(void);
 extern void lttng_ring_buffer_metadata_client_exit(void);
+extern void lttng_counter_client_percpu_32_overflow_init(void);
+extern void lttng_counter_client_percpu_32_overflow_exit(void);
+extern void lttng_counter_client_percpu_64_overflow_init(void);
+extern void lttng_counter_client_percpu_64_overflow_exit(void);
 
 static char *get_map_shm(struct sock_info *sock_info);
 
@@ -1127,6 +1136,79 @@ int handle_message(struct sock_info *sock_info,
 			ret = -ENOSYS;
 		}
 		break;
+	case LTTNG_UST_COUNTER:
+	{
+		void *counter_data;
+
+		len = ustcomm_recv_counter_from_sessiond(sock,
+				&counter_data, lum->u.counter.len);
+		switch (len) {
+		case 0:	/* orderly shutdown */
+			ret = 0;
+			goto error;
+		default:
+			if (len == lum->u.counter.len) {
+				DBG("counter data received");
+				break;
+			} else if (len < 0) {
+				DBG("Receive failed from lttng-sessiond with errno %d", (int) -len);
+				if (len == -ECONNRESET) {
+					ERR("%s remote end closed connection", sock_info->name);
+					ret = len;
+					goto error;
+				}
+				ret = len;
+				goto error;
+			} else {
+				DBG("incorrect counter data message size: %zd", len);
+				ret = -EINVAL;
+				goto error;
+			}
+		}
+		args.counter.counter_data = counter_data;
+		if (ops->cmd)
+			ret = ops->cmd(lum->handle, lum->cmd,
+					(unsigned long) &lum->u,
+					&args, sock_info);
+		else
+			ret = -ENOSYS;
+		break;
+	}
+	case LTTNG_UST_COUNTER_GLOBAL:
+	{
+		/* Receive shm_fd */
+		ret = ustcomm_recv_counter_shm_from_sessiond(sock,
+			&args.counter_shm.shm_fd);
+		if (ret) {
+			goto error;
+		}
+
+		if (ops->cmd)
+			ret = ops->cmd(lum->handle, lum->cmd,
+					(unsigned long) &lum->u,
+					&args, sock_info);
+		else
+			ret = -ENOSYS;
+		break;
+	}
+	case LTTNG_UST_COUNTER_CPU:
+	{
+		/* Receive shm_fd */
+		ret = ustcomm_recv_counter_shm_from_sessiond(sock,
+			&args.counter_shm.shm_fd);
+		if (ret) {
+			goto error;
+		}
+
+		if (ops->cmd)
+			ret = ops->cmd(lum->handle, lum->cmd,
+					(unsigned long) &lum->u,
+					&args, sock_info);
+		else
+			ret = -ENOSYS;
+		break;
+	}
+
 	default:
 		if (ops->cmd)
 			ret = ops->cmd(lum->handle, lum->cmd,
@@ -1952,6 +2034,8 @@ void __attribute__((constructor)) lttng_ust_init(void)
 	lttng_ring_buffer_client_overwrite_rt_init();
 	lttng_ring_buffer_client_discard_init();
 	lttng_ring_buffer_client_discard_rt_init();
+	lttng_counter_client_percpu_32_overflow_init();
+	lttng_counter_client_percpu_64_overflow_init();
 	lttng_perf_counter_init();
 	/*
 	 * Invoke ust malloc wrapper init before starting other threads.
@@ -2097,6 +2181,8 @@ void lttng_ust_cleanup(int exiting)
 	lttng_ring_buffer_client_overwrite_rt_exit();
 	lttng_ring_buffer_client_overwrite_exit();
 	lttng_ring_buffer_metadata_client_exit();
+	lttng_counter_client_percpu_32_overflow_exit();
+	lttng_counter_client_percpu_64_overflow_exit();
 	lttng_ust_statedump_destroy();
 	exit_tracepoint();
 	if (!exiting) {

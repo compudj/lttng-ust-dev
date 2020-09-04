@@ -68,6 +68,7 @@
 #include "ust-events-internal.h"
 #include "wait.h"
 #include "../libringbuffer/shm.h"
+#include "../libcounter/counter.h"
 #include "jhash.h"
 #include <lttng/ust-abi.h>
 
@@ -168,6 +169,47 @@ struct lttng_session *lttng_session_create(void)
 		CDS_INIT_HLIST_HEAD(&session->enums_ht.table[i]);
 	cds_list_add(&session->node, &sessions);
 	return session;
+}
+
+struct lttng_counter *lttng_ust_counter_create(
+		const char *counter_transport_name,
+		size_t number_dimensions, const struct lttng_counter_dimension *dimensions)
+{
+	struct lttng_counter_transport *counter_transport = NULL;
+	struct lttng_counter *counter = NULL;
+
+	counter_transport = lttng_counter_transport_find(counter_transport_name);
+	if (!counter_transport)
+		goto notransport;
+	counter = zmalloc(sizeof(struct lttng_counter));
+	if (!counter)
+		goto nomem;
+
+	/* Create trigger error counter. */
+	counter->ops = &counter_transport->ops;
+	counter->transport = counter_transport;
+
+	counter->counter = counter->ops->counter_create(
+			number_dimensions, dimensions, 0,
+			-1, 0, NULL, false);
+	if (!counter->counter) {
+		goto create_error;
+	}
+
+	return counter;
+
+create_error:
+	free(counter);
+nomem:
+notransport:
+	return NULL;
+}
+
+static
+void lttng_ust_counter_destroy(struct lttng_counter *counter)
+{
+	counter->ops->counter_destroy(counter->counter);
+	free(counter);
 }
 
 struct lttng_trigger_group *lttng_trigger_group_create(void)
@@ -349,6 +391,9 @@ void lttng_trigger_group_destroy(
 	cds_list_for_each_entry_safe(trigger, tmptrigger,
 			&trigger_group->triggers_head, node)
 		_lttng_trigger_destroy(trigger);
+
+	if (trigger_group->error_counter)
+		lttng_ust_counter_destroy(trigger_group->error_counter);
 
 	/* Close the notification fd to the listener of triggers. */
 

@@ -64,6 +64,7 @@ struct lttng_session;
 struct lttng_ust_lib_ring_buffer_ctx;
 struct lttng_ust_context_app;
 struct lttng_event_field;
+struct lttng_trigger_group;
 
 /*
  * Data structures used by tracepoint event declarations, and by the
@@ -615,6 +616,36 @@ struct lttng_channel {
 	int tstate:1;			/* Transient enable state */
 };
 
+#define LTTNG_COUNTER_DIMENSION_MAX	8
+
+struct lttng_counter_dimension {
+	uint64_t size;
+	uint64_t underflow_index;
+	uint64_t overflow_index;
+	uint8_t has_underflow;
+	uint8_t has_overflow;
+};
+
+struct lttng_counter_ops {
+	struct lib_counter *(*counter_create)(size_t nr_dimensions,
+			const struct lttng_counter_dimension *dimensions,
+			int64_t global_sum_step,
+			int global_counter_fd,
+			int nr_counter_cpu_fds,
+			const int *counter_cpu_fds,
+			bool is_daemon);
+	void (*counter_destroy)(struct lib_counter *counter);
+	int (*counter_add)(struct lib_counter *counter,
+			const size_t *dimension_indexes, int64_t v);
+	int (*counter_read)(struct lib_counter *counter,
+			const size_t *dimension_indexes, int cpu,
+			int64_t *value, bool *overflow, bool *underflow);
+	int (*counter_aggregate)(struct lib_counter *counter,
+			const size_t *dimension_indexes, int64_t *value,
+			bool *overflow, bool *underflow);
+	int (*counter_clear)(struct lib_counter *counter, const size_t *dimension_indexes);
+};
+
 #define LTTNG_UST_STACK_CTX_PADDING	32
 struct lttng_stack_ctx {
 	struct lttng_event *event;
@@ -676,6 +707,14 @@ struct lttng_session {
 	struct lttng_ctx *ctx;			/* contexts for filters. */
 };
 
+struct lttng_counter {
+	int objd;
+	struct lttng_trigger_group *trigger_group;	/* owner */
+	struct lttng_counter_transport *transport;
+	struct lib_counter *counter;
+	struct lttng_counter_ops *ops;
+};
+
 struct lttng_trigger_group {
 	int objd;
 	void *owner;
@@ -685,6 +724,9 @@ struct lttng_trigger_group {
 	struct cds_list_head triggers_head;	/* list of triggers */
 	struct lttng_ust_trigger_ht triggers_ht; /* hashtable of triggers */
 	struct lttng_ctx *ctx;			/* contexts for filters. */
+
+	struct lttng_counter *error_counter;
+	size_t error_counter_len;
 };
 
 struct lttng_transport {
@@ -692,6 +734,13 @@ struct lttng_transport {
 	struct cds_list_head node;
 	struct lttng_channel_ops ops;
 	const struct lttng_ust_lib_ring_buffer_config *client_config;
+};
+
+struct lttng_counter_transport {
+	char *name;
+	struct cds_list_head node;
+	struct lttng_counter_ops ops;
+	const struct lib_counter_config *client_config;
 };
 
 struct lttng_session *lttng_session_create(void);
@@ -720,6 +769,13 @@ int lttng_attach_context(struct lttng_ust_context *context_param,
 		struct lttng_ctx **ctx, struct lttng_session *session);
 void lttng_transport_register(struct lttng_transport *transport);
 void lttng_transport_unregister(struct lttng_transport *transport);
+
+void lttng_counter_transport_register(struct lttng_counter_transport *transport);
+void lttng_counter_transport_unregister(struct lttng_counter_transport *transport);
+
+struct lttng_counter *lttng_ust_counter_create(
+		const char *counter_transport_name,
+		size_t number_dimensions, const struct lttng_counter_dimension *dimensions);
 
 void synchronize_trace(void);
 
@@ -807,6 +863,7 @@ extern const struct lttng_ust_client_lib_ring_buffer_client_cb *lttng_client_cal
 extern const struct lttng_ust_client_lib_ring_buffer_client_cb *lttng_client_callbacks_overwrite;
 
 struct lttng_transport *lttng_transport_find(const char *name);
+struct lttng_counter_transport *lttng_counter_transport_find(const char *name);
 
 int lttng_probes_get_event_list(struct lttng_ust_tracepoint_list *list);
 void lttng_probes_prune_event_list(struct lttng_ust_tracepoint_list *list);

@@ -104,6 +104,8 @@ liblttng_ust_support_la_SOURCES = \
 	lttng-ring-buffer-client-overwrite-rt.c \
 	lttng-ring-buffer-metadata-client.h \
 	lttng-ring-buffer-metadata-client.c \
+	lttng-counter-client-percpu-32-overflow.c \
+	lttng-counter-client-percpu-64-overflow.c \
 	lttng-clock.c lttng-getcpu.c
 
 liblttng_ust_la_SOURCES =
@@ -111,7 +113,8 @@ liblttng_ust_la_SOURCES =
 liblttng_ust_la_LDFLAGS = -no-undefined -version-info $(LTTNG_UST_LIBRARY_VERSION)
 
 liblttng_ust_support_la_LIBADD = \
-	$(top_builddir)/libringbuffer/libringbuffer.la
+	$(top_builddir)/libringbuffer/libringbuffer.la \
+	$(top_builddir)/libcounter/libcounter.la
 
 liblttng_ust_la_LIBADD = \
 	-lpthread \
