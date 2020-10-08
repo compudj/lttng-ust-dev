@@ -22,11 +22,10 @@
 #include <config.h>
 #include "shm.h"
 #include <unistd.h>
-#include <fcntl.h>
 #include <sys/mman.h>
 #include <sys/types.h>
 #include <sys/stat.h>	/* For mode constants */
-#include <fcntl.h>	/* For O_* constants */
+#include <fcntl.h>
 #include <assert.h>
 #include <stdio.h>
 #include <signal.h>
@@ -42,6 +41,17 @@
 #include <helper.h>
 #include <ust-fd.h>
 #include "mmap.h"
+
+#if defined(__linux__) && !defined(F_ADD_SEALS)
+# define F_ADD_SEALS	1033	/* Add seals to file.  */
+# define F_GET_SEALS	1034	/* Get seals for file.  */
+
+/* Types of seals.  */
+# define F_SEAL_SEAL	0x0001	/* Prevent further seals from being set. */
+# define F_SEAL_SHRINK	0x0002	/* Prevent file from shrinking.  */
+# define F_SEAL_GROW	0x0004	/* Prevent file from growing.  */
+# define F_SEAL_WRITE	0x0008	/* Prevent writes.  */
+#endif
 
 /*
  * Ensure we have the required amount of space available by writing 0
@@ -142,6 +152,18 @@ struct shm_object *_shm_object_table_alloc_shm(struct shm_object_table *table,
 		PERROR("ftruncate");
 		goto error_ftruncate;
 	}
+//#ifdef F_ADD_SEALS
+	/*
+	 * Seal file inode so it does not shrink/grow. Also seal
+	 * "sealing" it so traced applications cannot prevent writes by
+	 * other applications. Only available on tmpfs for kernels >= 3.17.
+	 */
+	DBG("shmfd: %d", shmfd);
+	ret = fcntl(shmfd, F_ADD_SEALS, F_SEAL_SEAL | F_SEAL_SHRINK | F_SEAL_GROW);
+	//TODO: EINVAL if filesystem targeted is not tmpfs. (ok)
+	if (ret)
+		PERROR("fcntl seals");
+//#endif
 	/*
 	 * Also ensure the file metadata is synced with the storage by using
 	 * fsync(2).
