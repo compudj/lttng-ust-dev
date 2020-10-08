@@ -96,7 +96,8 @@ extern struct lttng_ust_lib_ring_buffer *channel_get_ring_buffer(
 				struct lttng_ust_shm_handle *handle,
 				int *shm_fd, int *wait_fd,
 				int *wakeup_fd,
-				uint64_t *memory_map_size);
+				uint64_t *memory_map_size,
+				void **memory_map_addr);
 extern
 int ring_buffer_channel_close_wait_fd(const struct lttng_ust_lib_ring_buffer_config *config,
 			struct channel *chan,

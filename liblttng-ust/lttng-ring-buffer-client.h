@@ -832,10 +832,11 @@ int lttng_flush_buffer(struct channel *chan, struct lttng_ust_shm_handle *handle
 	for_each_channel_cpu(cpu, chan) {
 		int shm_fd, wait_fd, wakeup_fd;
 		uint64_t memory_map_size;
+		void *memory_map_addr;
 
 		buf = channel_get_ring_buffer(&client_config, chan,
 				cpu, handle, &shm_fd, &wait_fd,
-				&wakeup_fd, &memory_map_size);
+				&wakeup_fd, &memory_map_size, &memory_map_addr);
 		lib_ring_buffer_switch(&client_config, buf,
 				SWITCH_ACTIVE, handle);
 	}
