@@ -27,7 +27,7 @@
 #define _LGPL_SOURCE
 #include <stddef.h>
 #include <stdint.h>
-#include <urcu-pointer.h>
+#include <lttng/urcu/pointer.h>
 #include <lttng/ust-endian.h>
 #include "lttng-filter.h"
 #include "string-utils.h"
@@ -439,7 +439,7 @@ static int dynamic_get_index(struct lttng_session *session,
 	{
 		struct lttng_ctx *ctx;
 
-		ctx = rcu_dereference(session->ctx);
+		ctx = lttng_ust_rcu_dereference(session->ctx);
 		ret = context_get_index(ctx,
 				&stack_top->u.ptr,
 				gid->ctx_index);
@@ -2019,7 +2019,7 @@ uint64_t lttng_filter_interpret_bytecode(void *filter_data,
 
 			dbg_printf("get context ref offset %u type dynamic\n",
 				ref->offset);
-			ctx = rcu_dereference(session->ctx);
+			ctx = lttng_ust_rcu_dereference(session->ctx);
 			ctx_field = &ctx->fields[ref->offset];
 			ctx_field->get_value(ctx_field, &v);
 			estack_push(stack, top, ax, bx, ax_t, bx_t);
@@ -2069,7 +2069,7 @@ uint64_t lttng_filter_interpret_bytecode(void *filter_data,
 
 			dbg_printf("get context ref offset %u type string\n",
 				ref->offset);
-			ctx = rcu_dereference(session->ctx);
+			ctx = lttng_ust_rcu_dereference(session->ctx);
 			ctx_field = &ctx->fields[ref->offset];
 			ctx_field->get_value(ctx_field, &v);
 			estack_push(stack, top, ax, bx, ax_t, bx_t);
@@ -2098,7 +2098,7 @@ uint64_t lttng_filter_interpret_bytecode(void *filter_data,
 
 			dbg_printf("get context ref offset %u type s64\n",
 				ref->offset);
-			ctx = rcu_dereference(session->ctx);
+			ctx = lttng_ust_rcu_dereference(session->ctx);
 			ctx_field = &ctx->fields[ref->offset];
 			ctx_field->get_value(ctx_field, &v);
 			estack_push(stack, top, ax, bx, ax_t, bx_t);
@@ -2119,7 +2119,7 @@ uint64_t lttng_filter_interpret_bytecode(void *filter_data,
 
 			dbg_printf("get context ref offset %u type double\n",
 				ref->offset);
-			ctx = rcu_dereference(session->ctx);
+			ctx = lttng_ust_rcu_dereference(session->ctx);
 			ctx_field = &ctx->fields[ref->offset];
 			ctx_field->get_value(ctx_field, &v);
 			estack_push(stack, top, ax, bx, ax_t, bx_t);

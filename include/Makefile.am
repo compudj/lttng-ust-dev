@@ -25,7 +25,11 @@ nobase_include_HEADERS = \
 	lttng/lttng-ust-tracelog.h \
 	lttng/ust-clock.h \
 	lttng/ust-getcpu.h \
-	lttng/ust-elf.h
+	lttng/ust-elf.h \
+	lttng/urcu/pointer.h \
+	lttng/urcu/urcu-ust.h \
+	lttng/urcu/static/pointer.h \
+	lttng/urcu/static/urcu-ust.h
 
 # note: usterr-signal-safe.h, core.h and share.h need namespace cleanup.
 

@@ -10,7 +10,9 @@ liblttng_ust_tracepoint_la_SOURCES = \
 	tracepoint-internal.h \
 	lttng-tracer-core.h \
 	jhash.h \
-	error.h
+	error.h \
+	lttng-ust-urcu.c \
+	lttng-ust-urcu-pointer.c
 
 liblttng_ust_tracepoint_la_LIBADD = \
 	$(URCU_BP_LIBS) \
@@ -75,7 +77,15 @@ liblttng_ust_runtime_la_SOURCES = \
 	string-utils.c \
 	string-utils.h \
 	ns.h \
-	creds.h
+	creds.h \
+	rculfhash.c \
+	rculfhash.h \
+	rculfhash-internal.h \
+	rculfhash-mm-chunk.c \
+	rculfhash-mm-mmap.c \
+	rculfhash-mm-order.c \
+	compat_futex.c \
+	futex.h
 
 if HAVE_PERF_EVENT
 liblttng_ust_runtime_la_SOURCES += \
