@@ -34,10 +34,12 @@
 #include <inttypes.h>
 #include <time.h>
 #include <stdbool.h>
+#include <unistd.h>
+#include <dlfcn.h>
 #include <lttng/ust-endian.h>
 #include "clock.h"
 
-#include <urcu-bp.h>
+#include <urcu/arch.h>
 #include <urcu/compiler.h>
 #include <urcu/uatomic.h>
 #include <urcu/arch.h>
@@ -128,11 +130,6 @@ int lttng_loglevel_match(int loglevel,
 		else
 			return 0;
 	}
-}
-
-void synchronize_trace(void)
-{
-	synchronize_rcu();
 }
 
 struct lttng_session *lttng_session_create(void)
@@ -232,7 +229,7 @@ void lttng_session_destroy(struct lttng_session *session)
 	cds_list_for_each_entry(event, &session->events_head, node) {
 		_lttng_event_unregister(event);
 	}
-	synchronize_trace();	/* Wait for in-flight events to complete */
+	lttng_ust_synchronize_trace();	/* Wait for in-flight events to complete */
 	__tracepoint_probe_prune_release_queue();
 	cds_list_for_each_entry_safe(enabler, tmpenabler,
 			&session->enablers_head, node)
@@ -838,7 +835,7 @@ void lttng_probe_provider_unregister_events(struct lttng_probe_desc *provider_de
 	}
 
 	/* Wait for grace period. */
-	synchronize_trace();
+	lttng_ust_synchronize_trace();
 	/* Prune the unregistration queue. */
 	__tracepoint_probe_prune_release_queue();
 

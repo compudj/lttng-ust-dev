@@ -49,6 +49,9 @@
 #include "tracepoint-internal.h"
 #include <usterr-signal-safe.h>
 #include <helper.h>
+
+#include "../libringbuffer/frontend_types.h"
+#include "../libringbuffer/shm.h"
 #include "lttng-tracer.h"
 #include "string-utils.h"
 #include "../libringbuffer/shm.h"
@@ -382,7 +385,7 @@ long lttng_cmd(int objd, unsigned int cmd, unsigned long arg,
 	case LTTNG_UST_TRACEPOINT_FIELD_LIST:
 		return lttng_abi_tracepoint_field_list(owner);
 	case LTTNG_UST_WAIT_QUIESCENT:
-		synchronize_trace();
+		lttng_ust_synchronize_trace();
 		return 0;
 	default:
 		return -EINVAL;
