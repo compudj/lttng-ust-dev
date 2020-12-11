@@ -21,22 +21,15 @@ static const struct lib_counter_config client_config = {
 };
 
 static struct lib_counter *counter_create(size_t nr_dimensions,
-					  const struct lttng_counter_dimension *dimensions,
+					  const size_t *max_nr_elem,
 					  int64_t global_sum_step,
 					  int global_counter_fd,
 					  int nr_counter_cpu_fds,
 					  const int *counter_cpu_fds,
 					  bool is_daemon)
 {
-	size_t max_nr_elem[LTTNG_COUNTER_DIMENSION_MAX], i;
-
 	if (nr_dimensions > LTTNG_COUNTER_DIMENSION_MAX)
 		return NULL;
-	for (i = 0; i < nr_dimensions; i++) {
-		if (dimensions[i].has_underflow || dimensions[i].has_overflow)
-			return NULL;
-		max_nr_elem[i] = dimensions[i].size;
-	}
 	return lttng_counter_create(&client_config, nr_dimensions, max_nr_elem,
 				    global_sum_step, global_counter_fd, nr_counter_cpu_fds,
 				    counter_cpu_fds, is_daemon);
