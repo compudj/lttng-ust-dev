@@ -86,6 +86,34 @@ static
 void lttng_enabler_destroy(struct lttng_enabler *enabler);
 
 /*
+ * @buf must hold at least LTTNG_UST_SYM_NAME_LEN bytes.
+ */
+static
+int lttng_split_provider_event_name(const char *full_name,
+		char *buf, const char **event_name,
+		const char **provider_name)
+{
+	char *saveptr;
+
+	if (strlen(full_name) >= LTTNG_UST_SYM_NAME_LEN)
+		return -1;
+	strcpy(buf, full_name);
+	*provider_name = strtok_r(buf, ":", &saveptr);	/* Stops at ':' or '\0'. */
+	if (!provider_name)
+		return -1;
+	*event_name = strtok_r(NULL, ":", &saveptr);	/* Stops at ':' or '\0'. */
+	if (!event_name)
+		return -1;
+	/*
+	 * Ensure we don't have leftover characters. Stops at '\0'. It validates
+	 * that neither the provider nor event name contain ':'.
+	 */
+	if (strtok_r(NULL, "", &saveptr))
+		return -1;
+	return 0;
+}
+
+/*
  * Called with ust lock held.
  */
 int lttng_session_active(void)
@@ -145,9 +173,10 @@ struct lttng_session *lttng_session_create(void)
 	CDS_INIT_LIST_HEAD(&session->events_head);
 	CDS_INIT_LIST_HEAD(&session->enums_head);
 	CDS_INIT_LIST_HEAD(&session->enablers_head);
+	CDS_INIT_LIST_HEAD(&session->counters);
 	for (i = 0; i < LTTNG_UST_EVENT_HT_SIZE; i++)
-		CDS_INIT_HLIST_HEAD(&session->events_ht.table[i]);
-	for (i = 0; i < LTTNG_UST_ENUM_HT_SIZE; i++)
+		CDS_INIT_HLIST_HEAD(&session->events_name_ht.table[i]);
+	for (i = 0; i < LTTNG_UST_EVENT_HT_SIZE; i++)
 		CDS_INIT_HLIST_HEAD(&session->enums_ht.table[i]);
 	cds_list_add(&session->node, &sessions);
 	return session;
@@ -155,7 +184,10 @@ struct lttng_session *lttng_session_create(void)
 
 struct lttng_counter *lttng_ust_counter_create(
 		const char *counter_transport_name,
-		size_t number_dimensions, const struct lttng_counter_dimension *dimensions)
+		size_t number_dimensions,
+		const size_t *max_nr_elem,
+		int64_t global_sum_step,
+		bool coalesce_hits)
 {
 	struct lttng_counter_transport *counter_transport = NULL;
 	struct lttng_counter *counter = NULL;
@@ -171,11 +203,12 @@ struct lttng_counter *lttng_ust_counter_create(
 	counter->transport = counter_transport;
 
 	counter->counter = counter->ops->counter_create(
-			number_dimensions, dimensions, 0,
+			number_dimensions, max_nr_elem, global_sum_step,
 			-1, 0, NULL, false);
 	if (!counter->counter) {
 		goto create_error;
 	}
+	counter->parent.coalesce_hits = coalesce_hits;
 
 	return counter;
 
@@ -191,6 +224,33 @@ void lttng_ust_counter_destroy(struct lttng_counter *counter)
 {
 	counter->ops->counter_destroy(counter->counter);
 	free(counter);
+}
+
+struct lttng_counter *lttng_session_create_counter(
+	struct lttng_session *session,
+	const char *counter_transport_name,
+	size_t number_dimensions, const size_t *dimensions_sizes,
+	int64_t global_sum_step, bool coalesce_hits)
+{
+	struct lttng_counter *counter;
+	struct lttng_event_container *container;
+
+	counter = lttng_ust_counter_create(counter_transport_name,
+			number_dimensions, dimensions_sizes, global_sum_step,
+			coalesce_hits);
+	if (!counter) {
+		goto counter_error;
+	}
+	container = lttng_counter_get_event_container(counter);
+	container->type = LTTNG_EVENT_CONTAINER_COUNTER;
+
+	container->session = session;
+	cds_list_add(&counter->node, &session->counters);
+
+	return counter;
+
+counter_error:
+	return NULL;
 }
 
 struct lttng_event_notifier_group *lttng_event_notifier_group_create(void)
@@ -639,7 +699,7 @@ int lttng_session_enable(struct lttng_session *session)
 		ret = ustcomm_register_channel(notify_socket,
 			session,
 			session->objd,
-			chan->objd,
+			chan->parent.objd,
 			nr_fields,
 			fields,
 			&chan_id,
@@ -684,36 +744,60 @@ end:
 	return ret;
 }
 
-int lttng_channel_enable(struct lttng_channel *channel)
+int lttng_event_container_enable(struct lttng_event_container *container)
 {
 	int ret = 0;
 
-	if (channel->enabled) {
+	if (container->enabled) {
 		ret = -EBUSY;
 		goto end;
 	}
 	/* Set transient enabler state to "enabled" */
-	channel->tstate = 1;
-	lttng_session_sync_event_enablers(channel->session);
-	/* Set atomically the state to "enabled" */
-	CMM_ACCESS_ONCE(channel->enabled) = 1;
+	container->tstate = 1;
+	lttng_session_sync_event_enablers(container->session);
+	/* Atomically set the state to "enabled" */
+	switch (container->type) {
+	case LTTNG_EVENT_CONTAINER_CHANNEL:
+	{
+		struct lttng_channel *channel = caa_container_of(container,
+			struct lttng_channel, parent);
+
+		CMM_ACCESS_ONCE(channel->enabled) = 1;	/* Backward compatibility */
+		break;
+	}
+	default:
+		break;
+	}
+	CMM_ACCESS_ONCE(container->enabled) = 1;
 end:
 	return ret;
 }
 
-int lttng_channel_disable(struct lttng_channel *channel)
+int lttng_event_container_disable(struct lttng_event_container *container)
 {
 	int ret = 0;
 
-	if (!channel->enabled) {
+	if (!container->enabled) {
 		ret = -EBUSY;
 		goto end;
 	}
-	/* Set atomically the state to "disabled" */
-	CMM_ACCESS_ONCE(channel->enabled) = 0;
+	/* Atomically set the state to "disabled" */
+	CMM_ACCESS_ONCE(container->enabled) = 0;
+	switch (container->type) {
+	case LTTNG_EVENT_CONTAINER_CHANNEL:
+	{
+		struct lttng_channel *channel = caa_container_of(container,
+			struct lttng_channel, parent);
+
+		CMM_ACCESS_ONCE(channel->enabled) = 0;	/* Backward compatibility */
+		break;
+	}
+	default:
+		break;
+	}
 	/* Set transient enabler state to "enabled" */
-	channel->tstate = 0;
-	lttng_session_sync_event_enablers(channel->session);
+	container->tstate = 0;
+	lttng_session_sync_event_enablers(container->session);
 end:
 	return ret;
 }
@@ -722,35 +806,124 @@ static inline
 struct cds_hlist_head *borrow_hash_table_bucket(
 		struct cds_hlist_head *hash_table,
 		unsigned int hash_table_size,
-		const struct lttng_event_desc *desc)
+		const char *name)
 {
-	const char *event_name;
 	size_t name_len;
 	uint32_t hash;
 
-	event_name = desc->name;
-	name_len = strlen(event_name);
+	name_len = strlen(name);
 
-	hash = jhash(event_name, name_len, 0);
+	hash = jhash(name, name_len, 0);
 	return &hash_table[hash & (hash_table_size - 1)];
+}
+
+static
+int format_event_key(char *key_string, const struct lttng_counter_key *key,
+		     const char *full_name)
+{
+	const struct lttng_counter_key_dimension *dim;
+	size_t i, left = LTTNG_KEY_TOKEN_STRING_LEN_MAX;
+	char buf[LTTNG_UST_SYM_NAME_LEN];
+	const char *provider_name, *event_name;
+
+	if (lttng_split_provider_event_name(full_name, buf, &provider_name, &event_name))
+		return -EINVAL;
+	key_string[0] = '\0';
+	if (!key || !key->nr_dimensions)
+		return 0;
+	/* Currently event keys can only be specified on a single dimension. */
+	if (key->nr_dimensions != 1)
+		return -EINVAL;
+	dim = &key->key_dimensions[0];
+	for (i = 0; i < dim->nr_key_tokens; i++) {
+		const struct lttng_key_token *token = &dim->key_tokens[i];
+		size_t token_len;
+		const char *str;
+
+		switch (token->type) {
+		case LTTNG_KEY_TOKEN_STRING:
+			str = token->arg.string;
+			break;
+		case LTTNG_KEY_TOKEN_EVENT_NAME:
+			str = event_name;
+			break;
+		case LTTNG_KEY_TOKEN_PROVIDER_NAME:
+			str = provider_name;
+			break;
+		default:
+			return -EINVAL;
+		}
+		token_len = strlen(str);
+		if (token_len >= left)
+			return -EINVAL;
+		strcat(key_string, str);
+		left -= token_len;
+	}
+	return 0;
+}
+
+static
+bool match_event_token(struct lttng_event_container *container,
+		struct lttng_event *event, uint64_t token)
+{
+	if (container->coalesce_hits)
+		return true;
+	if (event->user_token == token)
+		return true;
+	return false;
 }
 
 /*
  * Supports event creation while tracing session is active.
  */
 static
-int lttng_event_create(const struct lttng_event_desc *desc,
-		struct lttng_channel *chan)
+int lttng_event_create(struct lttng_event_enabler *event_enabler,
+		const struct lttng_event_desc *event_desc,
+		const struct lttng_counter_key *key)
 {
+	struct lttng_event_container *container = event_enabler->container;
 	struct lttng_event *event;
-	struct lttng_session *session = chan->session;
-	struct cds_hlist_head *head;
+	struct lttng_session *session = container->session;
+	const char *event_name;
+	struct cds_hlist_head *name_head;
+	char key_string[LTTNG_KEY_TOKEN_STRING_LEN_MAX];
 	int ret = 0;
 	int notify_socket, loglevel;
 	const char *uri;
 
-	head = borrow_hash_table_bucket(chan->session->events_ht.table,
-		LTTNG_UST_EVENT_HT_SIZE, desc);
+	event_name = event_desc->name;
+	if (format_event_key(key_string, key, event_name)) {
+		ret = -EINVAL;
+		goto type_error;
+	}
+
+	name_head = borrow_hash_table_bucket(session->events_name_ht.table,
+		LTTNG_UST_EVENT_HT_SIZE, event_name);
+	cds_hlist_for_each_entry_2(event, name_head, name_hlist) {
+		bool same_event = false, same_container = false, same_key = false,
+				same_token = false;
+
+		WARN_ON_ONCE(!event->desc);
+		if (event_desc) {
+			if (event->desc == event_desc)
+				same_event = true;
+		} else {
+			if (!strcmp(event_name, event->desc->name))
+				same_event = true;
+		}
+		if (container == event->container) {
+			same_container = true;
+			if (match_event_token(container, event,
+					event_enabler->base.user_token))
+				same_token = true;
+		}
+		if (key_string[0] == '\0' || !strcmp(key_string, event->key))
+			same_key = true;
+		if (same_event && same_container && same_key && same_token) {
+			ret = -EEXIST;
+			goto exist;
+		}
+	}
 
 	notify_socket = lttng_get_notify_socket(session->owner);
 	if (notify_socket < 0) {
@@ -758,7 +931,7 @@ int lttng_event_create(const struct lttng_event_desc *desc,
 		goto socket_error;
 	}
 
-	ret = lttng_create_all_event_enums(desc->nr_fields, desc->fields,
+	ret = lttng_create_all_event_enums(event_desc->nr_fields, event_desc->fields,
 			session);
 	if (ret < 0) {
 		DBG("Error (%d) adding enum to session", ret);
@@ -773,21 +946,26 @@ int lttng_event_create(const struct lttng_event_desc *desc,
 		ret = -ENOMEM;
 		goto cache_error;
 	}
-	event->chan = chan;
+	/* for backward compatibility */
+	event->chan = lttng_event_container_get_channel(container);
 
 	/* Event will be enabled by enabler sync. */
 	event->enabled = 0;
 	event->registered = 0;
 	CDS_INIT_LIST_HEAD(&event->filter_bytecode_runtime_head);
 	CDS_INIT_LIST_HEAD(&event->enablers_ref_head);
-	event->desc = desc;
+	event->desc = event_desc;
+	event->container = container;
+	strcpy(event->key, key_string);
+	if (!container->coalesce_hits)
+		event->user_token = event_enabler->base.user_token;
 
-	if (desc->loglevel)
+	if (event_desc->loglevel)
 		loglevel = *(*event->desc->loglevel);
 	else
 		loglevel = TRACE_DEFAULT;
-	if (desc->u.ext.model_emf_uri)
-		uri = *(desc->u.ext.model_emf_uri);
+	if (event_desc->u.ext.model_emf_uri)
+		uri = *(event_desc->u.ext.model_emf_uri);
 	else
 		uri = NULL;
 
@@ -795,21 +973,23 @@ int lttng_event_create(const struct lttng_event_desc *desc,
 	ret = ustcomm_register_event(notify_socket,
 		session,
 		session->objd,
-		chan->objd,
-		desc->name,
+		container->objd,
+		event_desc->name,
 		loglevel,
-		desc->signature,
-		desc->nr_fields,
-		desc->fields,
+		event_desc->signature,
+		event_desc->nr_fields,
+		event_desc->fields,
 		uri,
-		&event->id);
+		event_enabler->base.user_token,
+		&event->id,
+		&event->counter_index);
 	if (ret < 0) {
 		DBG("Error (%d) registering event to sessiond", ret);
 		goto sessiond_register_error;
 	}
 
-	cds_list_add(&event->node, &chan->session->events_head);
-	cds_hlist_add_head(&event->hlist, head);
+	cds_list_add(&event->node, &session->events_head);
+	cds_hlist_add_head(&event->name_hlist, name_head);
 	return 0;
 
 sessiond_register_error:
@@ -817,6 +997,8 @@ sessiond_register_error:
 cache_error:
 create_enum_error:
 socket_error:
+exist:
+type_error:
 	return ret;
 }
 
@@ -835,7 +1017,7 @@ int lttng_event_notifier_create(const struct lttng_event_desc *desc,
 	 */
 	head = borrow_hash_table_bucket(
 		event_notifier_group->event_notifiers_ht.table,
-		LTTNG_UST_EVENT_NOTIFIER_HT_SIZE, desc);
+		LTTNG_UST_EVENT_NOTIFIER_HT_SIZE, desc->name);
 
 	event_notifier = zmalloc(sizeof(struct lttng_event_notifier));
 	if (!event_notifier) {
@@ -972,15 +1154,16 @@ int lttng_desc_match_enabler(const struct lttng_event_desc *desc,
 }
 
 static
-int lttng_event_enabler_match_event(struct lttng_event_enabler *event_enabler,
+bool lttng_event_enabler_match_event(struct lttng_event_enabler *event_enabler,
 		struct lttng_event *event)
 {
 	if (lttng_desc_match_enabler(event->desc,
-			lttng_event_enabler_as_enabler(event_enabler))
-			&& event->chan == event_enabler->chan)
-		return 1;
+			lttng_event_enabler_as_enabler(event_enabler)) > 0
+			&& event->container == event_enabler->container
+			&& match_event_token(event->container, event, event_enabler->base.user_token))
+		return true;
 	else
-		return 0;
+		return false;
 }
 
 static
@@ -988,11 +1171,11 @@ int lttng_event_notifier_enabler_match_event_notifier(
 		struct lttng_event_notifier_enabler *event_notifier_enabler,
 		struct lttng_event_notifier *event_notifier)
 {
-	int desc_matches = lttng_desc_match_enabler(event_notifier->desc,
-		lttng_event_notifier_enabler_as_enabler(event_notifier_enabler));
+	bool desc_matches = lttng_desc_match_enabler(event_notifier->desc,
+		lttng_event_notifier_enabler_as_enabler(event_notifier_enabler)) > 0;
 
 	if (desc_matches && event_notifier->group == event_notifier_enabler->group &&
-			event_notifier->user_token == event_notifier_enabler->user_token)
+			event_notifier->user_token == event_notifier_enabler->base.user_token)
 		return 1;
 	else
 		return 0;
@@ -1019,10 +1202,8 @@ struct lttng_enabler_ref *lttng_enabler_ref(
 static
 void lttng_create_event_if_missing(struct lttng_event_enabler *event_enabler)
 {
-	struct lttng_session *session = event_enabler->chan->session;
 	struct lttng_probe_desc *probe_desc;
 	const struct lttng_event_desc *desc;
-	struct lttng_event *event;
 	int i;
 	struct cds_list_head *probe_list;
 
@@ -1035,35 +1216,19 @@ void lttng_create_event_if_missing(struct lttng_event_enabler *event_enabler)
 	cds_list_for_each_entry(probe_desc, probe_list, head) {
 		for (i = 0; i < probe_desc->nr_events; i++) {
 			int ret;
-			bool found = false;
-			struct cds_hlist_head *head;
-			struct cds_hlist_node *node;
 
 			desc = probe_desc->event_desc[i];
-			if (!lttng_desc_match_enabler(desc,
-					lttng_event_enabler_as_enabler(event_enabler)))
+			if (lttng_desc_match_enabler(desc,
+					lttng_event_enabler_as_enabler(event_enabler)) <= 0)
 				continue;
 
-			head = borrow_hash_table_bucket(
-				session->events_ht.table,
-				LTTNG_UST_EVENT_HT_SIZE, desc);
-
-			cds_hlist_for_each_entry(event, node, head, hlist) {
-				if (event->desc == desc
-						&& event->chan == event_enabler->chan) {
-					found = true;
-					break;
-				}
-			}
-			if (found)
+			/* Try to create an event for this event probe. */
+			ret = lttng_event_create(event_enabler,
+					probe_desc->event_desc[i],
+					&event_enabler->key);
+			/* Skip if event is already found. */
+			if (ret == -EEXIST)
 				continue;
-
-			/*
-			 * We need to create an event for this
-			 * event probe.
-			 */
-			ret = lttng_event_create(probe_desc->event_desc[i],
-					event_enabler->chan);
 			if (ret) {
 				DBG("Unable to create event %s, error %d\n",
 					probe_desc->event_desc[i]->name, ret);
@@ -1109,10 +1274,10 @@ void probe_provider_event_for_each(struct lttng_probe_desc *provider_desc,
 			 * iterate to find the event matching this descriptor.
 			 */
 			head = borrow_hash_table_bucket(
-				session->events_ht.table,
-				LTTNG_UST_EVENT_HT_SIZE, event_desc);
+				session->events_name_ht.table,
+				LTTNG_UST_EVENT_HT_SIZE, event_desc->name);
 
-			cds_hlist_for_each_entry_safe(event, node, tmp_node, head, hlist) {
+			cds_hlist_for_each_entry_safe(event, node, tmp_node, head, name_hlist) {
 				if (event_desc == event->desc) {
 					event_func(session, event);
 					break;
@@ -1132,7 +1297,7 @@ void probe_provider_event_for_each(struct lttng_probe_desc *provider_desc,
 			 */
 			head = borrow_hash_table_bucket(
 				event_notifier_group->event_notifiers_ht.table,
-				LTTNG_UST_EVENT_NOTIFIER_HT_SIZE, event_desc);
+				LTTNG_UST_EVENT_NOTIFIER_HT_SIZE, event_desc->name);
 
 			cds_hlist_for_each_entry_safe(event_notifier, node, tmp_node, head, hlist) {
 				if (event_desc == event_notifier->desc) {
@@ -1220,7 +1385,7 @@ void lttng_probe_provider_unregister_events(
 static
 int lttng_event_enabler_ref_events(struct lttng_event_enabler *event_enabler)
 {
-	struct lttng_session *session = event_enabler->chan->session;
+	struct lttng_session *session = event_enabler->container->session;
 	struct lttng_event *event;
 
 	if (!lttng_event_enabler_as_enabler(event_enabler)->enabled)
@@ -1330,7 +1495,7 @@ void _lttng_event_destroy(struct lttng_event *event)
 	/* Remove from event list. */
 	cds_list_del(&event->node);
 	/* Remove from event hash table. */
-	cds_hlist_del(&event->hlist);
+	cds_hlist_del(&event->name_hlist);
 
 	lttng_destroy_context(event->ctx);
 	lttng_free_event_filter_runtime(event);
@@ -1357,13 +1522,67 @@ void lttng_ust_events_exit(void)
 		lttng_session_destroy(session);
 }
 
+static
+int copy_counter_key(struct lttng_counter_key *key,
+		     const struct lttng_ust_counter_key *key_param)
+{
+	size_t i, j, nr_dimensions;
+
+	nr_dimensions = key_param->nr_dimensions;
+	if (nr_dimensions > LTTNG_COUNTER_DIMENSION_MAX)
+		return -EINVAL;
+	key->nr_dimensions = nr_dimensions;
+	for (i = 0; i < nr_dimensions; i++) {
+		const struct lttng_ust_counter_key_dimension *udim =
+			&key_param->key_dimensions[i];
+		struct lttng_counter_key_dimension *dim =
+			&key->key_dimensions[i];
+		size_t nr_key_tokens;
+
+		nr_key_tokens = udim->nr_key_tokens;
+		if (!nr_key_tokens || nr_key_tokens > LTTNG_NR_KEY_TOKEN)
+			return -EINVAL;
+		dim->nr_key_tokens = nr_key_tokens;
+		for (j = 0; j < nr_key_tokens; j++) {
+			const struct lttng_ust_key_token *utoken =
+				&udim->key_tokens[j];
+			struct lttng_key_token *token =
+				&dim->key_tokens[j];
+
+			switch (utoken->type) {
+			case LTTNG_UST_KEY_TOKEN_STRING:
+			{
+				size_t len;
+
+				token->type = LTTNG_KEY_TOKEN_STRING;
+				len = strnlen(utoken->arg.string, LTTNG_KEY_TOKEN_STRING_LEN_MAX);
+				if (!len || len >= LTTNG_KEY_TOKEN_STRING_LEN_MAX)
+					return -EINVAL;
+				strcpy(token->arg.string, utoken->arg.string);
+				break;
+			}
+			case LTTNG_UST_KEY_TOKEN_EVENT_NAME:
+				token->type = LTTNG_KEY_TOKEN_EVENT_NAME;
+				break;
+			case LTTNG_UST_KEY_TOKEN_PROVIDER_NAME:
+				token->type = LTTNG_KEY_TOKEN_PROVIDER_NAME;
+				break;
+			default:
+				return -EINVAL;
+			}
+		}
+	}
+	return 0;
+}
+
 /*
  * Enabler management.
  */
 struct lttng_event_enabler *lttng_event_enabler_create(
 		enum lttng_enabler_format_type format_type,
 		struct lttng_ust_event *event_param,
-		struct lttng_channel *chan)
+		const struct lttng_ust_counter_key *key,
+		struct lttng_event_container *container)
 {
 	struct lttng_event_enabler *event_enabler;
 
@@ -1371,15 +1590,20 @@ struct lttng_event_enabler *lttng_event_enabler_create(
 	if (!event_enabler)
 		return NULL;
 	event_enabler->base.format_type = format_type;
+	event_enabler->base.user_token = event_param->token;
 	CDS_INIT_LIST_HEAD(&event_enabler->base.filter_bytecode_head);
 	CDS_INIT_LIST_HEAD(&event_enabler->base.excluder_head);
 	memcpy(&event_enabler->base.event_param, event_param,
 		sizeof(event_enabler->base.event_param));
-	event_enabler->chan = chan;
+	event_enabler->container = container;
+	if (key) {
+		if (copy_counter_key(&event_enabler->key, key))
+			return NULL;
+	}
 	/* ctx left NULL */
 	event_enabler->base.enabled = 0;
-	cds_list_add(&event_enabler->node, &event_enabler->chan->session->enablers_head);
-	lttng_session_lazy_sync_event_enablers(event_enabler->chan->session);
+	cds_list_add(&event_enabler->node, &event_enabler->container->session->enablers_head);
+	lttng_session_lazy_sync_event_enablers(event_enabler->container->session);
 
 	return event_enabler;
 }
@@ -1399,10 +1623,10 @@ struct lttng_event_notifier_enabler *lttng_event_notifier_enabler_create(
 	CDS_INIT_LIST_HEAD(&event_notifier_enabler->capture_bytecode_head);
 	CDS_INIT_LIST_HEAD(&event_notifier_enabler->base.excluder_head);
 
-	event_notifier_enabler->user_token = event_notifier_param->event.token;
 	event_notifier_enabler->error_counter_index = event_notifier_param->error_counter_index;
 	event_notifier_enabler->num_captures = 0;
 
+	event_notifier_enabler->base.user_token = event_notifier_param->event.token;
 	memcpy(&event_notifier_enabler->base.event_param.name,
 		event_notifier_param->event.name,
 		sizeof(event_notifier_enabler->base.event_param.name));
@@ -1427,7 +1651,7 @@ struct lttng_event_notifier_enabler *lttng_event_notifier_enabler_create(
 int lttng_event_enabler_enable(struct lttng_event_enabler *event_enabler)
 {
 	lttng_event_enabler_as_enabler(event_enabler)->enabled = 1;
-	lttng_session_lazy_sync_event_enablers(event_enabler->chan->session);
+	lttng_session_lazy_sync_event_enablers(event_enabler->container->session);
 
 	return 0;
 }
@@ -1435,7 +1659,7 @@ int lttng_event_enabler_enable(struct lttng_event_enabler *event_enabler)
 int lttng_event_enabler_disable(struct lttng_event_enabler *event_enabler)
 {
 	lttng_event_enabler_as_enabler(event_enabler)->enabled = 0;
-	lttng_session_lazy_sync_event_enablers(event_enabler->chan->session);
+	lttng_session_lazy_sync_event_enablers(event_enabler->container->session);
 
 	return 0;
 }
@@ -1456,7 +1680,7 @@ int lttng_event_enabler_attach_filter_bytecode(struct lttng_event_enabler *event
 	_lttng_enabler_attach_filter_bytecode(
 		lttng_event_enabler_as_enabler(event_enabler), bytecode);
 
-	lttng_session_lazy_sync_event_enablers(event_enabler->chan->session);
+	lttng_session_lazy_sync_event_enablers(event_enabler->container->session);
 	return 0;
 }
 
@@ -1476,7 +1700,7 @@ int lttng_event_enabler_attach_exclusion(struct lttng_event_enabler *event_enabl
 	_lttng_enabler_attach_exclusion(
 		lttng_event_enabler_as_enabler(event_enabler), excluder);
 
-	lttng_session_lazy_sync_event_enablers(event_enabler->chan->session);
+	lttng_session_lazy_sync_event_enablers(event_enabler->container->session);
 	return 0;
 }
 
@@ -1664,7 +1888,7 @@ void lttng_session_sync_event_enablers(struct lttng_session *session)
 		 * intesection of session and channel transient enable
 		 * states.
 		 */
-		enabled = enabled && session->tstate && event->chan->tstate;
+		enabled = enabled && session->tstate && event->container->tstate;
 
 		CMM_STORE_SHARED(event->enabled, enabled);
 		/*
@@ -1729,8 +1953,8 @@ void lttng_create_event_notifier_if_missing(
 
 			desc = probe_desc->event_desc[i];
 
-			if (!lttng_desc_match_enabler(desc,
-					lttng_event_notifier_enabler_as_enabler(event_notifier_enabler)))
+			if (lttng_desc_match_enabler(desc,
+					lttng_event_notifier_enabler_as_enabler(event_notifier_enabler)) <= 0)
 				continue;
 
 			/*
@@ -1740,7 +1964,7 @@ void lttng_create_event_notifier_if_missing(
 			 */
 			head = borrow_hash_table_bucket(
 				event_notifier_group->event_notifiers_ht.table,
-				LTTNG_UST_EVENT_NOTIFIER_HT_SIZE, desc);
+				LTTNG_UST_EVENT_NOTIFIER_HT_SIZE, desc->name);
 
 			cds_hlist_for_each_entry(event_notifier, node, head, hlist) {
 				/*
@@ -1749,7 +1973,7 @@ void lttng_create_event_notifier_if_missing(
 				 * description and id.
 				 */
 				if (event_notifier->desc == desc &&
-						event_notifier->user_token == event_notifier_enabler->user_token) {
+						event_notifier->user_token == event_notifier_enabler->base.user_token) {
 					found = true;
 					break;
 				}
@@ -1774,7 +1998,7 @@ void lttng_create_event_notifier_if_missing(
 			 * We need to create a event_notifier for this event probe.
 			 */
 			ret = lttng_event_notifier_create(desc,
-				event_notifier_enabler->user_token,
+				event_notifier_enabler->base.user_token,
 				event_notifier_enabler->error_counter_index,
 				event_notifier_group);
 			if (ret) {

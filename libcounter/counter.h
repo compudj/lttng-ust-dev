@@ -10,6 +10,7 @@
 #define _LTTNG_COUNTER_H
 
 #include <stdint.h>
+#include <stdbool.h>
 #include <lttng/ust-config.h>
 #include "counter-types.h"
 #include "helper.h"
@@ -36,6 +37,12 @@ LTTNG_HIDDEN
 int lttng_counter_get_global_shm(struct lib_counter *counter, int *fd, size_t *len);
 LTTNG_HIDDEN
 int lttng_counter_get_cpu_shm(struct lib_counter *counter, int cpu, int *fd, size_t *len);
+
+/*
+ * Has counter received all expected shm ?
+ */
+LTTNG_HIDDEN
+bool lttng_counter_ready(struct lib_counter *counter);
 
 LTTNG_HIDDEN
 int lttng_counter_read(const struct lib_counter_config *config,

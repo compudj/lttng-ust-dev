@@ -38,7 +38,7 @@ extern "C" {
  * library, but the opposite is rejected: a newer tracepoint provider is
  * rejected by an older lttng-ust library.
  */
-#define LTTNG_UST_PROVIDER_MAJOR	2
+#define LTTNG_UST_PROVIDER_MAJOR	3
 #define LTTNG_UST_PROVIDER_MINOR	0
 
 struct lttng_channel;
@@ -336,7 +336,7 @@ struct lttng_ctx {
 #define LTTNG_UST_EVENT_DESC_PADDING	40
 struct lttng_event_desc {
 	const char *name;
-	void (*probe_callback)(void);
+	void (*probe_callback)(void);		/* store-event and count-event probe */
 	const struct lttng_event_ctx *ctx;	/* context */
 	const struct lttng_event_field *fields;	/* event payload */
 	unsigned int nr_fields;
@@ -369,22 +369,6 @@ struct lttng_probe_desc {
 enum lttng_enabler_format_type {
 	LTTNG_ENABLER_FORMAT_STAR_GLOB,
 	LTTNG_ENABLER_FORMAT_EVENT,
-};
-
-/*
- * Enabler field, within whatever object is enabling an event. Target of
- * backward reference.
- */
-struct lttng_enabler {
-	enum lttng_enabler_format_type format_type;
-
-	/* head list of struct lttng_ust_filter_bytecode_node */
-	struct cds_list_head filter_bytecode_head;
-	/* head list of struct lttng_ust_excluder_node */
-	struct cds_list_head excluder_head;
-
-	struct lttng_ust_event event_param;
-	unsigned int enabled:1;
 };
 
 struct tp_list_entry {
@@ -460,6 +444,37 @@ struct lttng_enabler_ref {
 	struct lttng_enabler *ref;		/* backward ref */
 };
 
+enum lttng_event_container_type {
+	LTTNG_EVENT_CONTAINER_CHANNEL,
+	LTTNG_EVENT_CONTAINER_COUNTER,
+};
+
+enum lttng_key_token_type {
+	LTTNG_KEY_TOKEN_STRING = 0,
+	LTTNG_KEY_TOKEN_EVENT_NAME = 1,
+	LTTNG_KEY_TOKEN_PROVIDER_NAME = 2,
+};
+
+#define LTTNG_KEY_TOKEN_STRING_LEN_MAX LTTNG_UST_KEY_TOKEN_STRING_LEN_MAX
+struct lttng_key_token {
+	enum lttng_key_token_type type;
+	union {
+		char string[LTTNG_KEY_TOKEN_STRING_LEN_MAX];
+	} arg;
+};
+
+#define LTTNG_NR_KEY_TOKEN LTTNG_UST_NR_KEY_TOKEN
+struct lttng_counter_key_dimension {
+	size_t nr_key_tokens;
+	struct lttng_key_token key_tokens[LTTNG_UST_NR_KEY_TOKEN];
+};
+
+#define LTTNG_COUNTER_DIMENSION_MAX LTTNG_UST_COUNTER_DIMENSION_MAX
+struct lttng_counter_key {
+	size_t nr_dimensions;
+	struct lttng_counter_key_dimension key_dimensions[LTTNG_COUNTER_DIMENSION_MAX];
+};
+
 /*
  * lttng_event structure is referred to by the tracing fast path. It
  * must be kept small.
@@ -470,7 +485,7 @@ struct lttng_enabler_ref {
  */
 struct lttng_event {
 	unsigned int id;
-	struct lttng_channel *chan;
+	struct lttng_channel *chan;	/* for backward compatibility */
 	int enabled;
 	const struct lttng_event_desc *desc;
 	struct lttng_ctx *ctx;
@@ -482,8 +497,19 @@ struct lttng_event {
 	int has_enablers_without_bytecode;
 	/* Backward references: list of lttng_enabler_ref (ref to enablers) */
 	struct cds_list_head enablers_ref_head;
-	struct cds_hlist_node hlist;	/* session ht of events */
-	int registered;			/* has reg'd tracepoint probe */
+	struct cds_hlist_node name_hlist;	/* session ht of events, per event name */
+	int registered;				/* has reg'd tracepoint probe */
+
+	/* LTTng-UST 2.14 starts here */
+	uint64_t counter_index;			/* counter index */
+	struct lttng_event_container *container;
+	struct cds_hlist_node key_hlist;	/* session ht of events, per key */
+	char key[LTTNG_KEY_TOKEN_STRING_LEN_MAX];
+	/*
+	 * For non-coalesce-hit event containers, each events is
+	 * associated with a single event enabler token.
+	 */
+	uint64_t user_token;
 };
 
 struct lttng_event_notifier {
@@ -551,6 +577,20 @@ struct lttng_channel_ops {
 };
 
 /*
+ * This structure is ABI with the tracepoint probes, and must preserve
+ * backward compatibility. Fields can only be added at the end, and
+ * never removed nor reordered.
+ */
+struct lttng_event_container {
+	enum lttng_event_container_type type;
+	int objd;
+	struct lttng_session *session;		/* Session containing the container */
+	int enabled;
+	unsigned int tstate:1;			/* Transient enable state */
+	bool coalesce_hits;
+};
+
+/*
  * IMPORTANT: this structure is part of the ABI between the probe and
  * UST. Fields need to be only added at the end, never reordered, never
  * removed.
@@ -563,10 +603,10 @@ struct lttng_channel {
 	 * and perform subbuffer flush.
 	 */
 	struct channel *chan;		/* Channel buffers */
-	int enabled;
+	int enabled;			/* For backward compatibility */
 	struct lttng_ctx *ctx;
 	/* Event ID management */
-	struct lttng_session *session;
+	struct lttng_session *session;	/* For backward compatibility */
 	int objd;			/* Object associated to channel */
 	struct cds_list_head node;	/* Channel list in session */
 	const struct lttng_channel_ops *ops;
@@ -577,22 +617,14 @@ struct lttng_channel {
 	unsigned int id;
 	enum lttng_ust_chan_type type;
 	unsigned char uuid[LTTNG_UST_UUID_LEN]; /* Trace session unique ID */
-	int tstate:1;			/* Transient enable state */
-};
+	int _deprecated:1;
 
-#define LTTNG_COUNTER_DIMENSION_MAX	8
-
-struct lttng_counter_dimension {
-	uint64_t size;
-	uint64_t underflow_index;
-	uint64_t overflow_index;
-	uint8_t has_underflow;
-	uint8_t has_overflow;
+	struct lttng_event_container parent;
 };
 
 struct lttng_counter_ops {
 	struct lib_counter *(*counter_create)(size_t nr_dimensions,
-			const struct lttng_counter_dimension *dimensions,
+			const size_t *dimensions,
 			int64_t global_sum_step,
 			int global_counter_fd,
 			int nr_counter_cpu_fds,
@@ -654,7 +686,8 @@ struct lttng_session {
 	/* New UST 2.1 */
 	/* List of enablers */
 	struct cds_list_head enablers_head;
-	struct lttng_ust_event_ht events_ht;	/* ht of events */
+	/* hash table of events, indexed by name */
+	struct lttng_ust_event_ht events_name_ht;
 	void *owner;				/* object owner */
 	int tstate:1;				/* Transient enable state */
 
@@ -665,14 +698,24 @@ struct lttng_session {
 	struct lttng_ust_enum_ht enums_ht;	/* ht of enumerations */
 	struct cds_list_head enums_head;
 	struct lttng_ctx *ctx;			/* contexts for filters. */
+
+	/* New UST 2.14 */
+	struct cds_list_head counters;		/* Counters list */
+	/* hash table of events, indexed by key */
+	struct lttng_ust_event_ht events_key_ht;
 };
 
 struct lttng_counter {
-	int objd;
-	struct lttng_event_notifier_group *event_notifier_group;    /* owner */
+	struct lttng_event_container parent;
+	union {
+		struct lttng_event_notifier_group *event_notifier_group;
+		struct lttng_session *session;
+	} owner;
 	struct lttng_counter_transport *transport;
 	struct lib_counter *counter;
 	struct lttng_counter_ops *ops;
+	struct cds_list_head node;		/* Counter list (in session) */
+	size_t free_index;			/* Next index to allocate */
 };
 
 struct lttng_event_notifier_group {
@@ -709,24 +752,17 @@ int lttng_session_disable(struct lttng_session *session);
 int lttng_session_statedump(struct lttng_session *session);
 void lttng_session_destroy(struct lttng_session *session);
 
-struct lttng_channel *lttng_channel_create(struct lttng_session *session,
-				       const char *transport_name,
-				       void *buf_addr,
-				       size_t subbuf_size, size_t num_subbuf,
-				       unsigned int switch_timer_interval,
-				       unsigned int read_timer_interval,
-				       int **shm_fd, int **wait_fd,
-				       uint64_t **memory_map_size,
-				       struct lttng_channel *chan_priv_init);
-
-int lttng_channel_enable(struct lttng_channel *channel);
-int lttng_channel_disable(struct lttng_channel *channel);
+int lttng_event_container_enable(struct lttng_event_container *container);
+int lttng_event_container_disable(struct lttng_event_container *container);
 
 int lttng_attach_context(struct lttng_ust_context *context_param,
 		union ust_args *uargs,
 		struct lttng_ctx **ctx, struct lttng_session *session);
 void lttng_transport_register(struct lttng_transport *transport);
 void lttng_transport_unregister(struct lttng_transport *transport);
+
+void lttng_counter_transport_register(struct lttng_counter_transport *transport);
+void lttng_counter_transport_unregister(struct lttng_counter_transport *transport);
 
 int lttng_probe_register(struct lttng_probe_desc *desc);
 void lttng_probe_unregister(struct lttng_probe_desc *desc);
@@ -834,6 +870,34 @@ struct lttng_enum *lttng_ust_enum_get_from_desc(struct lttng_session *session,
 
 void lttng_ust_dl_update(void *ip);
 void lttng_ust_fixup_fd_tracker_tls(void);
+
+static inline
+struct lttng_event_container *lttng_channel_get_event_container(struct lttng_channel *channel)
+{
+	return &channel->parent;
+}
+
+static inline
+struct lttng_event_container *lttng_counter_get_event_container(struct lttng_counter *counter)
+{
+	return &counter->parent;
+}
+
+static inline
+struct lttng_channel *lttng_event_container_get_channel(struct lttng_event_container *container)
+{
+	if (container->type != LTTNG_EVENT_CONTAINER_CHANNEL)
+		return NULL;
+	return caa_container_of(container, struct lttng_channel, parent);
+}
+
+static inline
+struct lttng_counter *lttng_event_container_get_counter(struct lttng_event_container *container)
+{
+	if (container->type != LTTNG_EVENT_CONTAINER_COUNTER)
+		return NULL;
+	return caa_container_of(container, struct lttng_counter, parent);
+}
 
 #ifdef __cplusplus
 }

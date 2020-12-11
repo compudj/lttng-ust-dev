@@ -15,10 +15,29 @@
 #include <helper.h>
 #include <lttng/ust-events.h>
 
+/*
+ * Enabler field, within whatever object is enabling an event. Target of
+ * backward reference.
+ */
+struct lttng_enabler {
+	enum lttng_enabler_format_type format_type;
+
+	/* head list of struct lttng_ust_filter_bytecode_node */
+	struct cds_list_head filter_bytecode_head;
+	/* head list of struct lttng_ust_excluder_node */
+	struct cds_list_head excluder_head;
+
+	struct lttng_ust_event event_param;
+	unsigned int enabled:1;
+
+	uint64_t user_token;		/* User-provided token */
+};
+
 struct lttng_event_enabler {
 	struct lttng_enabler base;
 	struct cds_list_head node;	/* per-session list of enablers */
-	struct lttng_channel *chan;
+	struct lttng_event_container *container;
+	struct lttng_counter_key key;
 	/*
 	 * Unused, but kept around to make it explicit that the tracer can do
 	 * it.
@@ -32,7 +51,6 @@ struct lttng_event_notifier_enabler {
 	struct cds_list_head node;	/* per-app list of event_notifier enablers */
 	struct cds_list_head capture_bytecode_head;
 	struct lttng_event_notifier_group *group; /* weak ref */
-	uint64_t user_token;		/* User-provided token */
 	uint64_t num_captures;
 };
 
@@ -87,7 +105,8 @@ LTTNG_HIDDEN
 struct lttng_event_enabler *lttng_event_enabler_create(
 		enum lttng_enabler_format_type format_type,
 		struct lttng_ust_event *event_param,
-		struct lttng_channel *chan);
+		const struct lttng_ust_counter_key *key,
+		struct lttng_event_container *container);
 
 /*
  * Destroy a `struct lttng_event_enabler` object.
@@ -240,6 +259,16 @@ int lttng_fix_pending_event_notifiers(void);
 LTTNG_HIDDEN
 struct lttng_counter *lttng_ust_counter_create(
 		const char *counter_transport_name,
-		size_t number_dimensions, const struct lttng_counter_dimension *dimensions);
+		size_t number_dimensions,
+		const size_t *max_nr_elem,
+		int64_t global_sum_step,
+		bool coalesce_hits);
+
+LTTNG_HIDDEN
+struct lttng_counter *lttng_session_create_counter(
+	struct lttng_session *session,
+	const char *counter_transport_name,
+	size_t number_dimensions, const size_t *dimensions_sizes,
+	int64_t global_sum_step, bool coalesce_hits);
 
 #endif /* _LTTNG_UST_EVENTS_INTERNAL_H */

@@ -539,13 +539,15 @@ int ustctl_recv_register_event(int sock,
 					 */
 	size_t *nr_fields,
 	struct ustctl_field **fields,
-	char **model_emf_uri);
+	char **model_emf_uri,
+	uint64_t *user_token);
 
 /*
  * Returns 0 on success, negative error value on error.
  */
 int ustctl_reply_register_event(int sock,
-	uint32_t id,			/* event id (input) */
+	uint32_t event_id,		/* event id (input) */
+	uint64_t counter_index,		/* counter index (input) */
 	int ret_code);			/* return code. 0 ok, negative error */
 
 /*
@@ -622,7 +624,8 @@ struct ustctl_daemon_counter *
 		const int *counter_cpu_fds,
 		enum ustctl_counter_bitness bitness,
 		enum ustctl_counter_arithmetic arithmetic,
-		uint32_t alloc_flags);
+		uint32_t alloc_flags,
+		bool coalesce_hits);
 
 int ustctl_create_counter_data(struct ustctl_daemon_counter *counter,
 		struct lttng_ust_object_data **counter_data);
@@ -646,6 +649,11 @@ int ustctl_send_counter_global_data_to_ust(int sock,
 int ustctl_send_counter_cpu_data_to_ust(int sock,
 		struct lttng_ust_object_data *counter_data,
 		struct lttng_ust_object_data *counter_cpu_data);
+
+int ustctl_counter_create_event(int sock,
+		struct lttng_ust_counter_event *counter_event,
+		struct lttng_ust_object_data *counter_data,
+		struct lttng_ust_object_data **counter_event_data);
 
 int ustctl_counter_read(struct ustctl_daemon_counter *counter,
 		const size_t *dimension_indexes,

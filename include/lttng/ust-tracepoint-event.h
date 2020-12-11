@@ -421,24 +421,7 @@ void __event_template_proto___##_provider##___##_name(_TP_ARGS_DATA_PROTO(_args)
 
 #undef _TRACEPOINT_EVENT_CLASS
 #define _TRACEPOINT_EVENT_CLASS(_provider, _name, _args, _fields)		\
-static void __event_probe__##_provider##___##_name(_TP_ARGS_DATA_PROTO(_args));
-
-#include TRACEPOINT_INCLUDE
-
-/*
- * Stage 2.1 of tracepoint event generation.
- *
- * Create probe event notifier callback prototypes.
- */
-
-/* Reset all macros within TRACEPOINT_EVENT */
-#include <lttng/ust-tracepoint-event-reset.h>
-
-#undef TP_ARGS
-#define TP_ARGS(...) __VA_ARGS__
-
-#undef _TRACEPOINT_EVENT_CLASS
-#define _TRACEPOINT_EVENT_CLASS(_provider, _name, _args, _fields)		\
+static void __event_probe__##_provider##___##_name(_TP_ARGS_DATA_PROTO(_args));	\
 static void __event_notifier_probe__##_provider##___##_name(_TP_ARGS_DATA_PROTO(_args));
 
 #include TRACEPOINT_INCLUDE
@@ -839,10 +822,10 @@ static									      \
 void __event_probe__##_provider##___##_name(_TP_ARGS_DATA_PROTO(_args))	      \
 {									      \
 	struct lttng_event *__event = (struct lttng_event *) __tp_data;	      \
-	struct lttng_channel *__chan = __event->chan;			      \
+	struct lttng_event_container *__container = __event->container;	      \
+	struct lttng_session *__session = __container->session;		      \
 	struct lttng_ust_lib_ring_buffer_ctx __ctx;			      \
 	struct lttng_stack_ctx __lttng_ctx;				      \
-	size_t __event_len, __event_align;				      \
 	size_t __dynamic_len_idx = 0;					      \
 	const size_t __num_fields = _TP_ARRAY_SIZE(__event_fields___##_provider##___##_name) - 1; \
 	union {								      \
@@ -853,18 +836,18 @@ void __event_probe__##_provider##___##_name(_TP_ARGS_DATA_PROTO(_args))	      \
 									      \
 	if (0)								      \
 		(void) __dynamic_len_idx;	/* don't warn if unused */    \
-	if (!_TP_SESSION_CHECK(session, __chan->session))		      \
+	if (!_TP_SESSION_CHECK(session, __container->session))		      \
 		return;							      \
-	if (caa_unlikely(!CMM_ACCESS_ONCE(__chan->session->active)))	      \
+	if (caa_unlikely(!CMM_ACCESS_ONCE(__session->active)))		      \
 		return;							      \
-	if (caa_unlikely(!CMM_ACCESS_ONCE(__chan->enabled)))		      \
+	if (caa_unlikely(!CMM_ACCESS_ONCE(__container->enabled)))	      \
 		return;							      \
 	if (caa_unlikely(!CMM_ACCESS_ONCE(__event->enabled)))		      \
 		return;							      \
 	if (caa_unlikely(!TP_RCU_LINK_TEST()))				      \
 		return;							      \
 	if (caa_unlikely(!cds_list_empty(&__event->filter_bytecode_runtime_head))) { \
-		struct lttng_bytecode_runtime *__filter_bc_runtime;		      \
+		struct lttng_bytecode_runtime *__filter_bc_runtime;	      \
 		int __filter_record = __event->has_enablers_without_bytecode; \
 									      \
 		__event_prepare_interpreter_stack__##_provider##___##_name(__stackvar.__filter_stack_data, \
@@ -879,21 +862,38 @@ void __event_probe__##_provider##___##_name(_TP_ARGS_DATA_PROTO(_args))	      \
 		if (caa_likely(!__filter_record))			      \
 			return;						      \
 	}								      \
-	__event_len = __event_get_size__##_provider##___##_name(__stackvar.__dynamic_len, \
-		 _TP_ARGS_DATA_VAR(_args));				      \
-	__event_align = __event_get_align__##_provider##___##_name(_TP_ARGS_VAR(_args)); \
-	memset(&__lttng_ctx, 0, sizeof(__lttng_ctx));			      \
-	__lttng_ctx.event = __event;					      \
-	__lttng_ctx.chan_ctx = tp_rcu_dereference(__chan->ctx);		      \
-	__lttng_ctx.event_ctx = tp_rcu_dereference(__event->ctx);	      \
-	lib_ring_buffer_ctx_init(&__ctx, __chan->chan, __event, __event_len,  \
-				 __event_align, -1, __chan->handle, &__lttng_ctx); \
-	__ctx.ip = _TP_IP_PARAM(TP_IP_PARAM);				      \
-	__ret = __chan->ops->event_reserve(&__ctx, __event->id);	      \
-	if (__ret < 0)							      \
-		return;							      \
-	_fields								      \
-	__chan->ops->event_commit(&__ctx);				      \
+	switch (__container->type) {					      \
+	case LTTNG_EVENT_CONTAINER_CHANNEL:				      \
+	{								      \
+		struct lttng_channel *__chan = lttng_event_container_get_channel(__container); \
+		size_t __event_len, __event_align;			      \
+									      \
+		__event_len = __event_get_size__##_provider##___##_name(__stackvar.__dynamic_len, \
+			 _TP_ARGS_DATA_VAR(_args));			      \
+		__event_align = __event_get_align__##_provider##___##_name(_TP_ARGS_VAR(_args)); \
+		memset(&__lttng_ctx, 0, sizeof(__lttng_ctx));		      \
+		__lttng_ctx.event = __event;				      \
+		__lttng_ctx.chan_ctx = tp_rcu_dereference(__chan->ctx);	      \
+		__lttng_ctx.event_ctx = tp_rcu_dereference(__event->ctx);      \
+		lib_ring_buffer_ctx_init(&__ctx, __chan->chan, __event, __event_len, \
+					 __event_align, -1, __chan->handle, &__lttng_ctx); \
+		__ctx.ip = _TP_IP_PARAM(TP_IP_PARAM);			      \
+		__ret = __chan->ops->event_reserve(&__ctx, __event->id);      \
+		if (__ret < 0)						      \
+			return;						      \
+		_fields							      \
+		__chan->ops->event_commit(&__ctx);			      \
+		break;							      \
+	}								      \
+	case LTTNG_EVENT_CONTAINER_COUNTER:				      \
+	{								      \
+		struct lttng_counter *__counter = lttng_event_container_get_counter(__container); \
+		size_t __index = __event->id;				      \
+									      \
+		(void) __counter->ops->counter_add(__counter->counter, &__index, 1); \
+		break;							      \
+	}								      \
+	}								      \
 }
 
 #include TRACEPOINT_INCLUDE

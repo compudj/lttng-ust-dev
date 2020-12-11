@@ -108,6 +108,15 @@ struct ustcomm_ust_msg {
 			/* Length of struct lttng_ust_event_notifier */
 			uint32_t len;
 		} event_notifier;
+		/*
+		 * For LTTNG_UST_COUNTER_EVENT, a struct
+		 * lttng_ust_counter_event implicitly follows struct
+		 * ustcomm_ust_msg.
+		 */
+		struct {
+			/* Length of struct lttng_ust_counter_event */
+			uint32_t len;
+		} counter_event;
 		char padding[USTCOMM_MSG_PADDING2];
 	} u;
 } LTTNG_PACKED;
@@ -141,7 +150,7 @@ struct ustcomm_notify_hdr {
 	uint32_t notify_cmd;
 } LTTNG_PACKED;
 
-#define USTCOMM_NOTIFY_EVENT_MSG_PADDING	32
+#define USTCOMM_NOTIFY_EVENT_MSG_PADDING	24
 struct ustcomm_notify_event_msg {
 	uint32_t session_objd;
 	uint32_t channel_objd;
@@ -150,14 +159,16 @@ struct ustcomm_notify_event_msg {
 	uint32_t signature_len;
 	uint32_t fields_len;
 	uint32_t model_emf_uri_len;
+	uint64_t user_token;
 	char padding[USTCOMM_NOTIFY_EVENT_MSG_PADDING];
-	/* followed by signature, fields, and model_emf_uri */
+	/* followed by signature, fields, model_emf_uri, and key */
 } LTTNG_PACKED;
 
-#define USTCOMM_NOTIFY_EVENT_REPLY_PADDING	32
+#define USTCOMM_NOTIFY_EVENT_REPLY_PADDING	24
 struct ustcomm_notify_event_reply {
 	int32_t ret_code;	/* 0: ok, negative: error code */
-	uint32_t event_id;
+	uint32_t event_id;	/* for ring buffer channel events. */
+	uint64_t counter_index;	/* for counter events. */
 	char padding[USTCOMM_NOTIFY_EVENT_REPLY_PADDING];
 } LTTNG_PACKED;
 
@@ -170,11 +181,11 @@ struct ustcomm_notify_enum_msg {
 	/* followed by enum entries */
 } LTTNG_PACKED;
 
-#define USTCOMM_NOTIFY_EVENT_REPLY_PADDING	32
+#define USTCOMM_NOTIFY_ENUM_REPLY_PADDING	32
 struct ustcomm_notify_enum_reply {
 	int32_t ret_code;	/* 0: ok, negative: error code */
 	uint64_t enum_id;
-	char padding[USTCOMM_NOTIFY_EVENT_REPLY_PADDING];
+	char padding[USTCOMM_NOTIFY_ENUM_REPLY_PADDING];
 } LTTNG_PACKED;
 
 #define USTCOMM_NOTIFY_CHANNEL_MSG_PADDING	32
@@ -263,7 +274,9 @@ int ustcomm_register_event(int sock,
 	size_t nr_fields,		/* fields */
 	const struct lttng_event_field *fields,
 	const char *model_emf_uri,
-	uint32_t *id);			/* event id (output) */
+	uint64_t user_token,
+	uint32_t *event_id,		/* event id (output) */
+	uint64_t *counter_index);	/* counter index (output) */
 
 /*
  * Returns 0 on success, negative error value on error.

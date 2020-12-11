@@ -197,7 +197,7 @@ int lttng_ust_objd_unref(int id, int is_owner)
 	}
 	if (is_owner) {
 		if (!obj->u.s.owner_ref) {
-			ERR("Error decrementing owner reference");
+			ERR("Error decrementing owner reference\n");
 			return -EINVAL;
 		}
 		obj->u.s.owner_ref--;
@@ -271,6 +271,7 @@ static const struct lttng_ust_objd_ops lttng_ops;
 static const struct lttng_ust_objd_ops lttng_event_notifier_group_ops;
 static const struct lttng_ust_objd_ops lttng_session_ops;
 static const struct lttng_ust_objd_ops lttng_channel_ops;
+static const struct lttng_ust_objd_ops lttng_counter_ops;
 static const struct lttng_ust_objd_ops lttng_event_enabler_ops;
 static const struct lttng_ust_objd_ops lttng_event_notifier_enabler_ops;
 static const struct lttng_ust_objd_ops lttng_tracepoint_list_ops;
@@ -537,10 +538,9 @@ int lttng_abi_map_channel(int session_objd,
 
 	/* Initialize our lttng chan */
 	lttng_chan->chan = chan;
-	lttng_chan->tstate = 1;
-	lttng_chan->enabled = 1;
+	lttng_chan->enabled = 1;	/* Backward compatibility */
 	lttng_chan->ctx = NULL;
-	lttng_chan->session = session;
+	lttng_chan->session = session;	/* Backward compatibility */
 	lttng_chan->ops = &transport->ops;
 	memcpy(&lttng_chan->chan->backend.config,
 		transport->client_config,
@@ -550,12 +550,24 @@ int lttng_abi_map_channel(int session_objd,
 	lttng_chan->handle = channel_handle;
 	lttng_chan->type = type;
 
+	/* Set container properties */
+	lttng_chan->parent.type = LTTNG_EVENT_CONTAINER_CHANNEL;
+	lttng_chan->parent.session = session;
+	lttng_chan->parent.enabled = 1;
+	lttng_chan->parent.tstate = 1;
+	/*
+	 * The ring buffer always coalesces hits from various event
+	 * enablers matching a given event to a single event record within the
+	 * ring buffer.
+	 */
+	lttng_chan->parent.coalesce_hits = true;
+
 	/*
 	 * We tolerate no failure path after channel creation. It will stay
 	 * invariant for the rest of the session.
 	 */
 	objd_set_private(chan_objd, lttng_chan);
-	lttng_chan->objd = chan_objd;
+	lttng_chan->parent.objd = chan_objd;
 	/* The channel created holds a reference on the session */
 	objd_ref(session_objd);
 	return chan_objd;
@@ -572,6 +584,94 @@ active:
 invalid:
 	return ret;
 }
+
+static
+long lttng_abi_session_create_counter(
+		int session_objd,
+		struct lttng_ust_counter *ust_counter,
+		union ust_args *uargs,
+		void *owner)
+{
+	struct lttng_session *session = objd_private(session_objd);
+	int counter_objd, ret, i;
+	char *counter_transport_name;
+	struct lttng_counter *counter = NULL;
+	struct lttng_event_container *container;
+	size_t dimension_sizes[LTTNG_UST_COUNTER_DIMENSION_MAX] = { 0 };
+	size_t number_dimensions;
+	const struct lttng_ust_counter_conf *counter_conf;
+
+	if (ust_counter->len != sizeof(*counter_conf)) {
+		ERR("LTTng: Map: Error counter configuration of wrong size.\n");
+		return -EINVAL;
+	}
+	counter_conf = uargs->counter.counter_data;
+
+	if (counter_conf->arithmetic != LTTNG_UST_COUNTER_ARITHMETIC_MODULAR) {
+		ERR("LTTng: Map: Error counter of the wrong type.\n");
+		return -EINVAL;
+	}
+
+	if (counter_conf->global_sum_step) {
+		/* Unsupported. */
+		return -EINVAL;
+	}
+
+	switch (counter_conf->bitness) {
+	case LTTNG_UST_COUNTER_BITNESS_64:
+		counter_transport_name = "counter-per-cpu-64-modular";
+		break;
+	case LTTNG_UST_COUNTER_BITNESS_32:
+		counter_transport_name = "counter-per-cpu-32-modular";
+		break;
+	default:
+		return -EINVAL;
+	}
+
+	number_dimensions = (size_t) counter_conf->number_dimensions;
+
+	for (i = 0; i < counter_conf->number_dimensions; i++) {
+		if (counter_conf->dimensions[i].has_underflow)
+			return -EINVAL;
+		if (counter_conf->dimensions[i].has_overflow)
+			return -EINVAL;
+		dimension_sizes[i] = counter_conf->dimensions[i].size;
+	}
+
+	counter_objd = objd_alloc(NULL, &lttng_counter_ops, owner, "counter");
+	if (counter_objd < 0) {
+		ret = counter_objd;
+		goto objd_error;
+	}
+
+	counter = lttng_session_create_counter(session,
+			counter_transport_name,
+			number_dimensions, dimension_sizes,
+			0, counter_conf->coalesce_hits);
+	if (!counter) {
+		ret = -EINVAL;
+		goto counter_error;
+	}
+	container = lttng_counter_get_event_container(counter);
+	objd_set_private(counter_objd, counter);
+	container->objd = counter_objd;
+	container->enabled = 1;
+	container->tstate = 1;
+	/* The channel created holds a reference on the session */
+	objd_ref(session_objd);
+	return counter_objd;
+
+counter_error:
+	{
+		int err;
+
+		err = lttng_ust_objd_unref(counter_objd, 1);
+		assert(!err);
+	}
+objd_error:
+	return ret;
+}
+
 
 /**
  *	lttng_session_cmd - lttng session object command
@@ -612,6 +712,9 @@ long lttng_session_cmd(int objd, unsigned int cmd, unsigned long arg,
 	case LTTNG_UST_SESSION_STATEDUMP:
 		return lttng_session_statedump(session);
 	case LTTNG_UST_COUNTER:
+		return lttng_abi_session_create_counter(objd,
+			(struct lttng_ust_counter *) arg,
+			uargs, owner);
 	case LTTNG_UST_COUNTER_GLOBAL:
 	case LTTNG_UST_COUNTER_CPU:
 		/* Not implemented yet. */
@@ -767,7 +870,7 @@ int lttng_release_event_notifier_group_error_counter(int objd)
 	struct lttng_counter *counter = objd_private(objd);
 
 	if (counter) {
-		return lttng_ust_objd_unref(counter->event_notifier_group->objd, 0);
+		return lttng_ust_objd_unref(counter->owner.event_notifier_group->objd, 0);
 	} else {
 		return -EINVAL;
 	}
@@ -786,8 +889,8 @@ int lttng_ust_event_notifier_group_create_error_counter(int event_notifier_group
 	struct lttng_event_notifier_group *event_notifier_group =
 		objd_private(event_notifier_group_objd);
 	struct lttng_counter *counter;
+	struct lttng_event_container *container;
 	int counter_objd, ret;
-	struct lttng_counter_dimension dimensions[1];
 	size_t counter_len;
 
 	if (event_notifier_group->error_counter)
@@ -797,6 +900,12 @@ int lttng_ust_event_notifier_group_create_error_counter(int event_notifier_group
 		return -EINVAL;
 
 	if (error_counter_conf->number_dimensions != 1)
+		return -EINVAL;
+
+	if (error_counter_conf->dimensions[0].has_underflow)
+		return -EINVAL;
+
+	if (error_counter_conf->dimensions[0].has_overflow)
 		return -EINVAL;
 
 	switch (error_counter_conf->bitness) {
@@ -818,17 +927,12 @@ int lttng_ust_event_notifier_group_create_error_counter(int event_notifier_group
 	}
 
 	counter_len = error_counter_conf->dimensions[0].size;
-	dimensions[0].size = counter_len;
-	dimensions[0].underflow_index = 0;
-	dimensions[0].overflow_index = 0;
-	dimensions[0].has_underflow = 0;
-	dimensions[0].has_overflow = 0;
-
-	counter = lttng_ust_counter_create(counter_transport_name, 1, dimensions);
+	counter = lttng_ust_counter_create(counter_transport_name, 1, &counter_len, 0, false);
 	if (!counter) {
 		ret = -EINVAL;
 		goto create_error;
 	}
+	container = lttng_counter_get_event_container(counter);
 
 	event_notifier_group->error_counter_len = counter_len;
 	/*
@@ -841,8 +945,8 @@ int lttng_ust_event_notifier_group_create_error_counter(int event_notifier_group
 	cmm_smp_mb();
 	CMM_STORE_SHARED(event_notifier_group->error_counter, counter);
 
-	counter->objd = counter_objd;
-	counter->event_notifier_group = event_notifier_group;	/* owner */
+	container->objd = counter_objd;
+	counter->owner.event_notifier_group = event_notifier_group;	/* owner */
 
 	objd_set_private(counter_objd, counter);
 	/* The error counter holds a reference on the event_notifier group. */
@@ -1112,12 +1216,13 @@ error_add_stream:
 }
 
 static
-int lttng_abi_create_event_enabler(int channel_objd,
+int lttng_abi_create_event_enabler(int objd,	/* channel or counter objd */
+			   struct lttng_event_container *container,
 			   struct lttng_ust_event *event_param,
+			   struct lttng_ust_counter_key *key_param,
 			   void *owner,
 			   enum lttng_enabler_format_type format_type)
 {
-	struct lttng_channel *channel = objd_private(channel_objd);
 	struct lttng_event_enabler *enabler;
 	int event_objd, ret;
 
@@ -1132,14 +1237,15 @@ int lttng_abi_create_event_enabler(int channel_objd,
 	 * We tolerate no failure path after event creation. It will stay
 	 * invariant for the rest of the session.
 	 */
-	enabler = lttng_event_enabler_create(format_type, event_param, channel);
+	enabler = lttng_event_enabler_create(format_type, event_param,
+			key_param, container);
 	if (!enabler) {
 		ret = -ENOMEM;
 		goto event_error;
 	}
 	objd_set_private(event_objd, enabler);
-	/* The event holds a reference on the channel */
-	objd_ref(channel_objd);
+	/* The event holds a reference on the channel or counter */
+	objd_ref(objd);
 	return event_objd;
 
 event_error:
@@ -1182,6 +1288,7 @@ long lttng_channel_cmd(int objd, unsigned int cmd, unsigned long arg,
 	union ust_args *uargs, void *owner)
 {
 	struct lttng_channel *channel = objd_private(objd);
+	struct lttng_event_container *container = lttng_channel_get_event_container(channel);
 
 	if (cmd != LTTNG_UST_STREAM) {
 		/*
@@ -1210,10 +1317,10 @@ long lttng_channel_cmd(int objd, unsigned int cmd, unsigned long arg,
 			 * If the event name is a star globbing pattern,
 			 * we create the special star globbing enabler.
 			 */
-			return lttng_abi_create_event_enabler(objd, event_param,
+			return lttng_abi_create_event_enabler(objd, container, event_param, NULL,
 					owner, LTTNG_ENABLER_FORMAT_STAR_GLOB);
 		} else {
-			return lttng_abi_create_event_enabler(objd, event_param,
+			return lttng_abi_create_event_enabler(objd, container, event_param, NULL,
 					owner, LTTNG_ENABLER_FORMAT_EVENT);
 		}
 	}
@@ -1222,9 +1329,9 @@ long lttng_channel_cmd(int objd, unsigned int cmd, unsigned long arg,
 				(struct lttng_ust_context *) arg, uargs,
 				&channel->ctx, channel->session);
 	case LTTNG_UST_ENABLE:
-		return lttng_channel_enable(channel);
+		return lttng_event_container_enable(&channel->parent);
 	case LTTNG_UST_DISABLE:
-		return lttng_channel_disable(channel);
+		return lttng_event_container_disable(&channel->parent);
 	case LTTNG_UST_FLUSH_BUFFER:
 		return channel->ops->flush_buffer(channel->chan, channel->handle);
 	default:
@@ -1245,6 +1352,121 @@ int lttng_channel_release(int objd)
 static const struct lttng_ust_objd_ops lttng_channel_ops = {
 	.release = lttng_channel_release,
 	.cmd = lttng_channel_cmd,
+};
+
+/**
+ *	lttng_counter_cmd - lttng control through object descriptors
+ *
+ *	@objd: the object descriptor
+ *	@cmd: the command
+ *	@arg: command arg
+ *	@uargs: UST arguments (internal)
+ *	@owner: objd owner
+ *
+ *	This object descriptor implements lttng commands:
+ *      LTTNG_UST_COUNTER_GLOBAL:
+ *              Returns a global counter object descriptor or failure.
+ *      LTTNG_UST_COUNTER_CPU:
+ *              Returns a per-cpu counter object descriptor or failure.
+ *	LTTNG_UST_COUNTER_EVENT
+ *		Returns an event object descriptor or failure.
+ *	LTTNG_UST_ENABLE
+ *		Enable recording for events in this channel (weak enable)
+ *	LTTNG_UST_DISABLE
+ *		Disable recording for events in this channel (strong disable)
+ *
+ * Counter and event object descriptors also hold a reference on the session.
+ */
+static
+long lttng_counter_cmd(int objd, unsigned int cmd, unsigned long arg,
+	union ust_args *uargs, void *owner)
+{
+	struct lttng_counter *counter = objd_private(objd);
+	struct lttng_event_container *container = lttng_counter_get_event_container(counter);
+
+	if (cmd != LTTNG_UST_COUNTER_GLOBAL && cmd != LTTNG_UST_COUNTER_CPU) {
+		/*
+		 * Check if counter received all global/per-cpu objects.
+		 */
+		if (!lttng_counter_ready(counter->counter))
+			return -EPERM;
+	}
+
+	switch (cmd) {
+	case LTTNG_UST_COUNTER_GLOBAL:
+	{
+		long ret;
+		int shm_fd;
+
+		shm_fd = uargs->counter_shm.shm_fd;
+		ret = lttng_counter_set_global_shm(counter->counter, shm_fd);
+		if (!ret) {
+			/* Take ownership of shm_fd. */
+			uargs->counter_shm.shm_fd = -1;
+		}
+		return ret;
+	}
+	case LTTNG_UST_COUNTER_CPU:
+	{
+		struct lttng_ust_counter_cpu *counter_cpu =
+			(struct lttng_ust_counter_cpu *) arg;
+		long ret;
+		int shm_fd;
+
+		shm_fd = uargs->counter_shm.shm_fd;
+		ret = lttng_counter_set_cpu_shm(counter->counter,
+				counter_cpu->cpu_nr, shm_fd);
+		if (!ret) {
+			/* Take ownership of shm_fd. */
+			uargs->counter_shm.shm_fd = -1;
+		}
+		return ret;
+	}
+	case LTTNG_UST_COUNTER_EVENT:
+	{
+		struct lttng_ust_counter_event *counter_event_param =
+			(struct lttng_ust_counter_event *) arg;
+		struct lttng_ust_event *event_param = &counter_event_param->event;
+		struct lttng_ust_counter_key *key_param = &counter_event_param->key;
+
+		if (strutils_is_star_glob_pattern(event_param->name)) {
+			/*
+			 * If the event name is a star globbing pattern,
+			 * we create the special star globbing enabler.
+			 */
+			return lttng_abi_create_event_enabler(objd, container, event_param, key_param,
+					owner, LTTNG_ENABLER_FORMAT_STAR_GLOB);
+		} else {
+			return lttng_abi_create_event_enabler(objd, container, event_param, key_param,
+					owner, LTTNG_ENABLER_FORMAT_EVENT);
+		}
+	}
+	case LTTNG_UST_ENABLE:
+		return lttng_event_container_enable(container);
+	case LTTNG_UST_DISABLE:
+		return lttng_event_container_disable(container);
+	default:
+		return -EINVAL;
+	}
+}
+
+
+static
+int lttng_counter_release(int objd)
+{
+	struct lttng_counter *counter = objd_private(objd);
+
+	if (counter) {
+		struct lttng_event_container *container = lttng_counter_get_event_container(counter);
+
+		return lttng_ust_objd_unref(container->session->objd, 0);
+	}
+	return 0;
+}
+
+static const struct lttng_ust_objd_ops lttng_counter_ops = {
+	.release = lttng_counter_release,
+	.cmd = lttng_counter_cmd,
 };
 
 /**
@@ -1309,7 +1531,7 @@ int lttng_event_enabler_release(int objd)
 	struct lttng_event_enabler *event_enabler = objd_private(objd);
 
 	if (event_enabler)
-		return lttng_ust_objd_unref(event_enabler->chan->objd, 0);
+		return lttng_ust_objd_unref(event_enabler->container->objd, 0);
 
 	return 0;
 }

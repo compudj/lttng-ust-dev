@@ -85,40 +85,6 @@ struct lttng_ust_stream {
 	 */
 } LTTNG_PACKED;
 
-
-enum lttng_ust_counter_arithmetic {
-	LTTNG_UST_COUNTER_ARITHMETIC_MODULAR = 0,
-	LTTNG_UST_COUNTER_ARITHMETIC_SATURATION = 1,
-};
-
-enum lttng_ust_counter_bitness {
-	LTTNG_UST_COUNTER_BITNESS_32 = 0,
-	LTTNG_UST_COUNTER_BITNESS_64 = 1,
-};
-
-struct lttng_ust_counter_dimension {
-	uint64_t size;
-	uint64_t underflow_index;
-	uint64_t overflow_index;
-	uint8_t has_underflow;
-	uint8_t has_overflow;
-} LTTNG_PACKED;
-
-#define LTTNG_UST_COUNTER_DIMENSION_MAX 8
-struct lttng_ust_counter_conf {
-	uint32_t arithmetic;	/* enum lttng_ust_counter_arithmetic */
-	uint32_t bitness;	/* enum lttng_ust_counter_bitness */
-	uint32_t number_dimensions;
-	int64_t global_sum_step;
-	struct lttng_ust_counter_dimension dimensions[LTTNG_UST_COUNTER_DIMENSION_MAX];
-} LTTNG_PACKED;
-
-struct lttng_ust_counter_value {
-	uint32_t number_dimensions;
-	uint64_t dimension_indexes[LTTNG_UST_COUNTER_DIMENSION_MAX];
-	int64_t value;
-} LTTNG_PACKED;
-
 #define LTTNG_UST_EVENT_PADDING1	8
 #define LTTNG_UST_EVENT_PADDING2	(LTTNG_UST_SYM_NAME_LEN + 32)
 struct lttng_ust_event {
@@ -140,14 +106,85 @@ struct lttng_ust_event {
 struct lttng_ust_event_notifier {
 	struct lttng_ust_event event;
 	uint64_t error_counter_index;
+
 	char padding[LTTNG_UST_EVENT_NOTIFIER_PADDING];
 } LTTNG_PACKED;
 
-#define LTTNG_EVENT_NOTIFIER_NOTIFICATION_PADDING 32
+#define LTTNG_UST_EVENT_NOTIFIER_NOTIFICATION_PADDING 32
 struct lttng_ust_event_notifier_notification {
 	uint64_t token;
 	uint16_t capture_buf_size;
-	char padding[LTTNG_EVENT_NOTIFIER_NOTIFICATION_PADDING];
+	char padding[LTTNG_UST_EVENT_NOTIFIER_NOTIFICATION_PADDING];
+} LTTNG_PACKED;
+
+enum lttng_ust_key_token_type {
+	LTTNG_UST_KEY_TOKEN_STRING = 0,		/* arg: strtab_offset. */
+	LTTNG_UST_KEY_TOKEN_EVENT_NAME = 1,	/* no arg. */
+	LTTNG_UST_KEY_TOKEN_PROVIDER_NAME = 2,	/* no arg. */
+};
+
+#define LTTNG_UST_KEY_ARG_PADDING1		256
+#define LTTNG_UST_KEY_TOKEN_STRING_LEN_MAX	256
+struct lttng_ust_key_token {
+	uint32_t type;	/* enum lttng_ust_key_token_type */
+	union {
+		char string[LTTNG_UST_KEY_TOKEN_STRING_LEN_MAX];
+		char padding[LTTNG_UST_KEY_ARG_PADDING1];
+	} arg;
+} LTTNG_PACKED;
+
+#define LTTNG_UST_NR_KEY_TOKEN 4
+struct lttng_ust_counter_key_dimension {
+	uint32_t nr_key_tokens;
+	struct lttng_ust_key_token key_tokens[LTTNG_UST_NR_KEY_TOKEN];
+} LTTNG_PACKED;
+
+#define LTTNG_UST_COUNTER_DIMENSION_MAX 4
+struct lttng_ust_counter_key {
+	uint32_t nr_dimensions;
+	struct lttng_ust_counter_key_dimension key_dimensions[LTTNG_UST_COUNTER_DIMENSION_MAX];
+} LTTNG_PACKED;
+
+#define LTTNG_UST_COUNTER_EVENT_PADDING1	16
+struct lttng_ust_counter_event {
+	struct lttng_ust_event event;
+	struct lttng_ust_counter_key key;
+	char padding[LTTNG_UST_COUNTER_EVENT_PADDING1];
+} LTTNG_PACKED;
+
+enum lttng_ust_counter_arithmetic {
+	LTTNG_UST_COUNTER_ARITHMETIC_MODULAR = 0,
+	LTTNG_UST_COUNTER_ARITHMETIC_SATURATION = 1,
+};
+
+enum lttng_ust_counter_bitness {
+	LTTNG_UST_COUNTER_BITNESS_32 = 0,
+	LTTNG_UST_COUNTER_BITNESS_64 = 1,
+};
+
+struct lttng_ust_counter_dimension {
+	uint64_t size;
+	uint64_t underflow_index;
+	uint64_t overflow_index;
+	uint8_t has_underflow;
+	uint8_t has_overflow;
+} LTTNG_PACKED;
+
+#define LTTNG_UST_COUNTER_CONF_PADDING1	67
+struct lttng_ust_counter_conf {
+	uint32_t arithmetic;	/* enum lttng_ust_counter_arithmetic */
+	uint32_t bitness;	/* enum lttng_ust_counter_bitness */
+	uint32_t number_dimensions;
+	int64_t global_sum_step;
+	struct lttng_ust_counter_dimension dimensions[LTTNG_UST_COUNTER_DIMENSION_MAX];
+	uint8_t coalesce_hits;
+	char padding[LTTNG_UST_COUNTER_CONF_PADDING1];
+} LTTNG_PACKED;
+
+struct lttng_ust_counter_value {
+	uint32_t number_dimensions;
+	uint64_t dimension_indexes[LTTNG_UST_COUNTER_DIMENSION_MAX];
+	int64_t value;
 } LTTNG_PACKED;
 
 #define LTTNG_UST_COUNTER_PADDING1	(LTTNG_UST_SYM_NAME_LEN + 32)
@@ -274,6 +311,7 @@ enum lttng_ust_object_type {
 	LTTNG_UST_OBJECT_TYPE_COUNTER = 6,
 	LTTNG_UST_OBJECT_TYPE_COUNTER_GLOBAL = 7,
 	LTTNG_UST_OBJECT_TYPE_COUNTER_CPU = 8,
+	LTTNG_UST_OBJECT_TYPE_COUNTER_EVENT = 9,
 };
 
 #define LTTNG_UST_OBJECT_DATA_PADDING1	32
@@ -416,6 +454,8 @@ struct lttng_ust_event_exclusion {
 	_UST_CMDW(0xD0, struct lttng_ust_counter_global)
 #define LTTNG_UST_COUNTER_CPU			\
 	_UST_CMDW(0xD1, struct lttng_ust_counter_cpu)
+#define LTTNG_UST_COUNTER_EVENT			\
+	_UST_CMDW(0xD2, struct lttng_ust_counter_event)
 
 #define LTTNG_UST_ROOT_HANDLE	0
 
