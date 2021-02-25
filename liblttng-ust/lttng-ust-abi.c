@@ -649,6 +649,8 @@ long lttng_abi_session_create_counter(
 	container = lttng_counter_get_event_container(counter);
 	objd_set_private(counter_objd, counter);
 	container->objd = counter_objd;
+	container->enabled = 1;
+	container->tstate = 1;
 	/* The channel created holds a reference on the session */
 	objd_ref(session_objd);
 	return counter_objd;
