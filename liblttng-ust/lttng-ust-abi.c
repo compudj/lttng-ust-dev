@@ -1394,15 +1394,9 @@ long lttng_counter_cmd(int objd, unsigned int cmd, unsigned long arg,
 
 		shm_fd = uargs->counter_shm.shm_fd;
 		ret = lttng_counter_set_global_shm(counter->counter, shm_fd);
-		if (ret) {
-			int close_ret;
-
-			lttng_ust_lock_fd_tracker();
-			close_ret = close(shm_fd);
-			lttng_ust_unlock_fd_tracker();
-			if (close_ret) {
-				PERROR("close");
-			}
+		if (!ret) {
+			/* Take ownership of shm_fd. */
+			uargs->counter_shm.shm_fd = -1;
 		}
 		return ret;
 	}
@@ -1414,18 +1408,11 @@ long lttng_counter_cmd(int objd, unsigned int cmd, unsigned long arg,
 		int shm_fd;
 
 		shm_fd = uargs->counter_shm.shm_fd;
-
 		ret = lttng_counter_set_cpu_shm(counter->counter,
 				counter_cpu->cpu_nr, shm_fd);
-		if (ret) {
-			int close_ret;
-
-			lttng_ust_lock_fd_tracker();
-			close_ret = close(shm_fd);
-			lttng_ust_unlock_fd_tracker();
-			if (close_ret) {
-				PERROR("close");
-			}
+		if (!ret) {
+			/* Take ownership of shm_fd. */
+			uargs->counter_shm.shm_fd = -1;
 		}
 		return ret;
 	}
