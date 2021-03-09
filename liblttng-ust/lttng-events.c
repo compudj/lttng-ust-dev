@@ -186,7 +186,8 @@ struct lttng_counter *lttng_ust_counter_create(
 		const char *counter_transport_name,
 		size_t number_dimensions,
 		const size_t *max_nr_elem,
-		int64_t global_sum_step)
+		int64_t global_sum_step,
+		bool coalesce_hits)
 {
 	struct lttng_counter_transport *counter_transport = NULL;
 	struct lttng_counter *counter = NULL;
@@ -207,6 +208,7 @@ struct lttng_counter *lttng_ust_counter_create(
 	if (!counter->counter) {
 		goto create_error;
 	}
+	counter->parent.coalesce_hits = coalesce_hits;
 
 	return counter;
 
@@ -228,13 +230,14 @@ struct lttng_counter *lttng_session_create_counter(
 	struct lttng_session *session,
 	const char *counter_transport_name,
 	size_t number_dimensions, const size_t *dimensions_sizes,
-	int64_t global_sum_step)
+	int64_t global_sum_step, bool coalesce_hits)
 {
 	struct lttng_counter *counter;
 	struct lttng_event_container *container;
 
 	counter = lttng_ust_counter_create(counter_transport_name,
-			number_dimensions, dimensions_sizes, global_sum_step);
+			number_dimensions, dimensions_sizes, global_sum_step,
+			coalesce_hits);
 	if (!counter) {
 		goto counter_error;
 	}
@@ -859,6 +862,24 @@ int format_event_key(char *key_string, const struct lttng_counter_key *key,
 	return 0;
 }
 
+static
+bool match_event_enablers_token(struct lttng_event_container *container,
+		struct lttng_event *event, uint64_t token)
+{
+	struct lttng_enabler_ref *enabler_ref;
+
+	if (container->coalesce_hits)
+		return true;
+
+	cds_list_for_each_entry(enabler_ref, &event->enablers_ref_head, node) {
+		struct lttng_enabler *enabler = enabler_ref->ref;
+
+		if (enabler->user_token == token)
+			return true;
+	}
+	return false;
+}
+
 /*
  * Supports event creation while tracing session is active.
  */
@@ -886,7 +907,8 @@ int lttng_event_create(struct lttng_event_enabler *event_enabler,
 	name_head = borrow_hash_table_bucket(session->events_name_ht.table,
 		LTTNG_UST_EVENT_HT_SIZE, event_name);
 	cds_hlist_for_each_entry_2(event, name_head, name_hlist) {
-		bool same_event = false, same_container = false, same_key = false;
+		bool same_event = false, same_container = false, same_key = false,
+				same_token = false;
 
 		WARN_ON_ONCE(!event->desc);
 		if (event_desc) {
@@ -896,11 +918,15 @@ int lttng_event_create(struct lttng_event_enabler *event_enabler,
 			if (!strcmp(event_name, event->desc->name))
 				same_event = true;
 		}
-		if (container == event->container)
+		if (container == event->container) {
 			same_container = true;
+			if (match_event_enablers_token(container, event,
+					event_enabler->base.user_token))
+				same_token = true;
+		}
 		if (key_string[0] == '\0' || !strcmp(key_string, event->key))
 			same_key = true;
-		if (same_event && same_container && same_key) {
+		if (same_event && same_container && same_key && same_token) {
 			ret = -EEXIST;
 			goto exist;
 		}

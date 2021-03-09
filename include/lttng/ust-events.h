@@ -582,6 +582,7 @@ struct lttng_event_container {
 	struct lttng_session *session;		/* Session containing the container */
 	int enabled;
 	unsigned int tstate:1;			/* Transient enable state */
+	bool coalesce_hits;
 };
 
 /*

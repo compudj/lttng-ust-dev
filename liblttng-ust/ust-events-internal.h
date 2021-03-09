@@ -261,13 +261,14 @@ struct lttng_counter *lttng_ust_counter_create(
 		const char *counter_transport_name,
 		size_t number_dimensions,
 		const size_t *max_nr_elem,
-		int64_t global_sum_step);
+		int64_t global_sum_step,
+		bool coalesce_hits);
 
 LTTNG_HIDDEN
 struct lttng_counter *lttng_session_create_counter(
 	struct lttng_session *session,
 	const char *counter_transport_name,
 	size_t number_dimensions, const size_t *dimensions_sizes,
-	int64_t global_sum_step);
+	int64_t global_sum_step, bool coalesce_hits);
 
 #endif /* _LTTNG_UST_EVENTS_INTERNAL_H */

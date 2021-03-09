@@ -555,6 +555,12 @@ int lttng_abi_map_channel(int session_objd,
 	lttng_chan->parent.session = session;
 	lttng_chan->parent.enabled = 1;
 	lttng_chan->parent.tstate = 1;
+	/*
+	 * The ring buffer always coalesces hits from various event
+	 * enablers matching a given event to a single event record within the
+	 * ring buffer.
+	 */
+	lttng_chan->parent.coalesce_hits = true;
 
 	/*
 	 * We tolerate no failure path after channel creation. It will stay
@@ -641,7 +647,7 @@ long lttng_abi_session_create_counter(
 	counter = lttng_session_create_counter(session,
 			counter_transport_name,
 			number_dimensions, dimension_sizes,
-			0);
+			0, counter_conf->coalesce_hits);
 	if (!counter) {
 		ret = -EINVAL;
 		goto counter_error;
@@ -921,7 +927,7 @@ int lttng_ust_event_notifier_group_create_error_counter(int event_notifier_group
 	}
 
 	counter_len = error_counter_conf->dimensions[0].size;
-	counter = lttng_ust_counter_create(counter_transport_name, 1, &counter_len, 0);
+	counter = lttng_ust_counter_create(counter_transport_name, 1, &counter_len, 0, false);
 	if (!counter) {
 		ret = -EINVAL;
 		goto create_error;
