@@ -963,6 +963,7 @@ int lttng_event_create(struct lttng_event_enabler *event_enabler,
 	CDS_INIT_LIST_HEAD(&event->enablers_ref_head);
 	event->desc = event_desc;
 	event->container = container;
+	strcpy(event->key, key_string);
 
 	if (event_desc->loglevel)
 		loglevel = *(*event->desc->loglevel);
