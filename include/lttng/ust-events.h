@@ -505,6 +505,11 @@ struct lttng_event {
 	struct lttng_event_container *container;
 	struct cds_hlist_node key_hlist;	/* session ht of events, per key */
 	char key[LTTNG_KEY_TOKEN_STRING_LEN_MAX];
+	/*
+	 * For non-coalesce-hit event containers, each events is
+	 * associated with a single event enabler token.
+	 */
+	uint64_t user_token;
 };
 
 struct lttng_event_notifier {

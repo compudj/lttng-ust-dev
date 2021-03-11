@@ -863,20 +863,13 @@ int format_event_key(char *key_string, const struct lttng_counter_key *key,
 }
 
 static
-bool match_event_enablers_token(struct lttng_event_container *container,
+bool match_event_token(struct lttng_event_container *container,
 		struct lttng_event *event, uint64_t token)
 {
-	struct lttng_enabler_ref *enabler_ref;
-
 	if (container->coalesce_hits)
 		return true;
-
-	cds_list_for_each_entry(enabler_ref, &event->enablers_ref_head, node) {
-		struct lttng_enabler *enabler = enabler_ref->ref;
-
-		if (enabler->user_token == token)
-			return true;
-	}
+	if (event->user_token == token)
+		return true;
 	return false;
 }
 
@@ -920,7 +913,7 @@ int lttng_event_create(struct lttng_event_enabler *event_enabler,
 		}
 		if (container == event->container) {
 			same_container = true;
-			if (match_event_enablers_token(container, event,
+			if (match_event_token(container, event,
 					event_enabler->base.user_token))
 				same_token = true;
 		}
@@ -964,6 +957,8 @@ int lttng_event_create(struct lttng_event_enabler *event_enabler,
 	event->desc = event_desc;
 	event->container = container;
 	strcpy(event->key, key_string);
+	if (!container->coalesce_hits)
+		event->user_token = event_enabler->base.user_token;
 
 	if (event_desc->loglevel)
 		loglevel = *(*event->desc->loglevel);
@@ -1159,15 +1154,16 @@ int lttng_desc_match_enabler(const struct lttng_event_desc *desc,
 }
 
 static
-int lttng_event_enabler_match_event(struct lttng_event_enabler *event_enabler,
+bool lttng_event_enabler_match_event(struct lttng_event_enabler *event_enabler,
 		struct lttng_event *event)
 {
 	if (lttng_desc_match_enabler(event->desc,
 			lttng_event_enabler_as_enabler(event_enabler)) > 0
-			&& event->container == event_enabler->container)
-		return 1;
+			&& event->container == event_enabler->container
+			&& match_event_token(event->container, event, event_enabler->base.user_token))
+		return true;
 	else
-		return 0;
+		return false;
 }
 
 static
