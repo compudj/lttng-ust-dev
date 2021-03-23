@@ -33,10 +33,11 @@ extern "C" {
  * library, but the opposite is rejected: a newer tracepoint provider is
  * rejected by an older lttng-ust library.
  */
-#define LTTNG_UST_PROVIDER_MAJOR	2
+#define LTTNG_UST_PROVIDER_MAJOR	3
 #define LTTNG_UST_PROVIDER_MINOR	0
 
 struct lttng_ust_channel_buffer;
+struct lttng_ust_channel_counter;
 struct lttng_ust_session;
 struct lttng_ust_lib_ring_buffer_ctx;
 struct lttng_ust_event_field;
@@ -386,6 +387,32 @@ struct lttng_ust_event_recorder {
  * UST. Fields need to be only added at the end, never reordered, never
  * removed.
  *
+ * struct lttng_ust_event_counter is the action for counting events
+ * into a counter array. It inherits from struct lttng_ust_event_common
+ * by composition to ensure both parent and child structure are
+ * extensible.
+ *
+ * The field @struct_size should be used to determine the size of the
+ * structure. It should be queried before using additional fields added
+ * at the end of the structure.
+ */
+struct lttng_ust_event_counter {
+	uint32_t struct_size;				/* Size of this structure. */
+
+	struct lttng_ust_event_common *parent;		/* Inheritance by aggregation. */
+	struct lttng_ust_event_counter_private *priv;	/* Private event counter interface */
+
+	size_t index;
+	struct lttng_ust_channel_counter *chan;
+
+	/* End of base ABI. Fields below should be used after checking struct_size. */
+};
+
+/*
+ * IMPORTANT: this structure is part of the ABI between the probe and
+ * UST. Fields need to be only added at the end, never reordered, never
+ * removed.
+ *
  * The field @struct_size should be used to determine the size of the
  * structure. It should be queried before using additional fields added
  * at the end of the structure.
@@ -459,6 +486,7 @@ struct lttng_ust_channel_buffer_ops {
 
 enum lttng_ust_channel_type {
 	LTTNG_UST_CHANNEL_TYPE_BUFFER = 0,
+	LTTNG_UST_CHANNEL_TYPE_COUNTER = 1,
 };
 
 struct lttng_ust_channel_common_private;
@@ -506,6 +534,29 @@ struct lttng_ust_channel_buffer {
 	struct lttng_ust_channel_buffer_ops *ops;
 	struct lttng_ust_lib_ring_buffer_channel *chan;	/* Channel buffers */
 	struct lttng_ust_shm_handle *handle;		/* shared-memory handle */
+
+	/* End of base ABI. Fields below should be used after checking struct_size. */
+};
+
+struct lttng_ust_channel_counter_private;
+
+/*
+ * IMPORTANT: this structure is part of the ABI between the probe and
+ * UST. Fields need to be only added at the end, never reordered, never
+ * removed.
+ *
+ * The field @struct_size should be used to determine the size of the
+ * structure. It should be queried before using additional fields added
+ * at the end of the structure.
+ */
+struct lttng_ust_channel_counter {
+	uint32_t struct_size;				/* Size of this structure. */
+
+	struct lttng_ust_channel_common *parent;	/* Inheritance by aggregation. */
+	struct lttng_ust_channel_counter_private *priv;	/* Private channel counter interface */
+
+	struct lttng_ust_channel_counter_ops *ops;
+	struct lttng_ust_counter *counter;		/* Counter array */
 
 	/* End of base ABI. Fields below should be used after checking struct_size. */
 };
