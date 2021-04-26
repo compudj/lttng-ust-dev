@@ -50,7 +50,7 @@ extern void __tracepoint_probe_prune_release_queue(void);
  */
 static inline void tracepoint_synchronize_unregister(void)
 {
-	urcu_bp_synchronize_rcu();
+	synchronize_rcu_bp();
 }
 
 extern void init_tracepoint(void);
