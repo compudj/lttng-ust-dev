@@ -247,8 +247,9 @@ AS_IF([test "x${ac_cv_header_dlfcn_h}" = "xyes"], [
 
 AM_CONDITIONAL([HAVE_DLINFO], [test "x${ac_cv_have_decl_RTLD_DI_LINKMAP}" = "xyes"])
 
-# Require URCU >= 0.12 for DEFINE_URCU_TLS_INIT
-PKG_CHECK_MODULES([URCU], [liburcu >= 0.12])
+# Require URCU >= 0.11 because this tree has backward compatibility
+# macros for DEFINE_URCU_TLS_INIT
+PKG_CHECK_MODULES([URCU], [liburcu >= 0.11])
 
 # numa.h integration
 AS_IF([test "x$NO_NUMA" = "x1"],[
