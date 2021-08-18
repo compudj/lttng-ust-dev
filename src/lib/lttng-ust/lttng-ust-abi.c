@@ -1258,7 +1258,7 @@ int lttng_abi_create_event_recorder_enabler(int channel_objd,
 		ret = -ENOMEM;
 		goto event_error;
 	}
-	objd_set_private(event_objd, enabler);
+	objd_set_private(event_objd, &enabler->parent);
 	/* The event holds a reference on the channel */
 	objd_ref(channel_objd);
 	return event_objd;
@@ -1302,7 +1302,7 @@ int lttng_abi_create_event_counter_enabler(int channel_objd,
 		ret = -ENOMEM;
 		goto event_error;
 	}
-	objd_set_private(event_objd, enabler);
+	objd_set_private(event_objd, &enabler->parent);
 	/* The event holds a reference on the channel */
 	objd_ref(channel_objd);
 	return event_objd;
@@ -1555,7 +1555,7 @@ long lttng_event_enabler_cmd(int objd, unsigned int cmd, unsigned long arg,
 	union lttng_ust_abi_args *uargs __attribute__((unused)),
 	void *owner __attribute__((unused)))
 {
-	struct lttng_event_recorder_enabler *enabler = objd_private(objd);
+	struct lttng_event_enabler_session_common *enabler = objd_private(objd);
 
 	switch (cmd) {
 	case LTTNG_UST_ABI_CONTEXT:

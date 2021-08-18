@@ -1843,18 +1843,18 @@ struct lttng_event_notifier_enabler *lttng_event_notifier_enabler_create(
 	return event_notifier_enabler;
 }
 
-int lttng_event_enabler_enable(struct lttng_event_recorder_enabler *event_enabler)
+int lttng_event_enabler_enable(struct lttng_event_enabler_session_common *event_enabler)
 {
-	lttng_event_enabler_as_enabler(event_enabler)->enabled = 1;
-	lttng_session_lazy_sync_event_enablers(event_enabler->chan->parent->session);
+	event_enabler->parent.enabled = 1;
+	lttng_session_lazy_sync_event_enablers(event_enabler->chan->session);
 
 	return 0;
 }
 
-int lttng_event_enabler_disable(struct lttng_event_recorder_enabler *event_enabler)
+int lttng_event_enabler_disable(struct lttng_event_enabler_session_common *event_enabler)
 {
-	lttng_event_enabler_as_enabler(event_enabler)->enabled = 0;
-	lttng_session_lazy_sync_event_enablers(event_enabler->chan->parent->session);
+	event_enabler->parent.enabled = 0;
+	lttng_session_lazy_sync_event_enablers(event_enabler->chan->session);
 
 	return 0;
 }
@@ -1869,13 +1869,12 @@ void _lttng_enabler_attach_filter_bytecode(struct lttng_event_enabler_common *en
 	*bytecode = NULL;
 }
 
-int lttng_event_enabler_attach_filter_bytecode(struct lttng_event_recorder_enabler *event_enabler,
+int lttng_event_enabler_attach_filter_bytecode(struct lttng_event_enabler_session_common *event_enabler,
 		struct lttng_ust_bytecode_node **bytecode)
 {
-	_lttng_enabler_attach_filter_bytecode(
-		lttng_event_enabler_as_enabler(event_enabler), bytecode);
+	_lttng_enabler_attach_filter_bytecode(&event_enabler->parent, bytecode);
 
-	lttng_session_lazy_sync_event_enablers(event_enabler->chan->parent->session);
+	lttng_session_lazy_sync_event_enablers(event_enabler->chan->session);
 	return 0;
 }
 
@@ -1889,13 +1888,12 @@ void _lttng_enabler_attach_exclusion(struct lttng_event_enabler_common *enabler,
 	*excluder = NULL;
 }
 
-int lttng_event_enabler_attach_exclusion(struct lttng_event_recorder_enabler *event_enabler,
+int lttng_event_enabler_attach_exclusion(struct lttng_event_enabler_session_common *event_enabler,
 		struct lttng_ust_excluder_node **excluder)
 {
-	_lttng_enabler_attach_exclusion(
-		lttng_event_enabler_as_enabler(event_enabler), excluder);
+	_lttng_enabler_attach_exclusion(&event_enabler->parent, excluder);
 
-	lttng_session_lazy_sync_event_enablers(event_enabler->chan->parent->session);
+	lttng_session_lazy_sync_event_enablers(event_enabler->chan->session);
 	return 0;
 }
 
@@ -2030,7 +2028,7 @@ int lttng_attach_context(struct lttng_ust_abi_context *context_param,
 }
 
 int lttng_event_enabler_attach_context(
-		struct lttng_event_recorder_enabler *enabler __attribute__((unused)),
+		struct lttng_event_enabler_session_common *enabler __attribute__((unused)),
 		struct lttng_ust_abi_context *context_param __attribute__((unused)))
 {
 	return -ENOSYS;

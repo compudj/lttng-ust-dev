@@ -44,14 +44,14 @@ void lttng_event_enabler_destroy(struct lttng_event_enabler_common *event_enable
  * Enable a `struct lttng_event_enabler` object and all events related to this
  * enabler.
  */
-int lttng_event_enabler_enable(struct lttng_event_recorder_enabler *enabler)
+int lttng_event_enabler_enable(struct lttng_event_enabler_session_common *enabler)
 	__attribute__((visibility("hidden")));
 
 /*
  * Disable a `struct lttng_event_enabler` object and all events related to this
  * enabler.
  */
-int lttng_event_enabler_disable(struct lttng_event_recorder_enabler *enabler)
+int lttng_event_enabler_disable(struct lttng_event_enabler_session_common *enabler)
 	__attribute__((visibility("hidden")));
 
 /*
@@ -59,7 +59,7 @@ int lttng_event_enabler_disable(struct lttng_event_recorder_enabler *enabler)
  * events related to this enabler.
  */
 int lttng_event_enabler_attach_filter_bytecode(
-		struct lttng_event_recorder_enabler *enabler,
+		struct lttng_event_enabler_session_common *enabler,
 		struct lttng_ust_bytecode_node **bytecode)
 	__attribute__((visibility("hidden")));
 
@@ -68,7 +68,7 @@ int lttng_event_enabler_attach_filter_bytecode(
  *
  * Not implemented.
  */
-int lttng_event_enabler_attach_context(struct lttng_event_recorder_enabler *enabler,
+int lttng_event_enabler_attach_context(struct lttng_event_enabler_session_common *enabler,
 		struct lttng_ust_abi_context *ctx)
 	__attribute__((visibility("hidden")));
 
@@ -76,7 +76,7 @@ int lttng_event_enabler_attach_context(struct lttng_event_recorder_enabler *enab
  * Attach exclusion list to `struct lttng_event_enabler` and all
  * events related to this enabler.
  */
-int lttng_event_enabler_attach_exclusion(struct lttng_event_recorder_enabler *enabler,
+int lttng_event_enabler_attach_exclusion(struct lttng_event_enabler_session_common *enabler,
 		struct lttng_ust_excluder_node **excluder)
 	__attribute__((visibility("hidden")));
 
