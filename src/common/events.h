@@ -636,13 +636,6 @@ const struct lttng_ust_type_struct *lttng_ust_get_type_struct(const struct lttng
 	})
 
 static inline
-struct lttng_event_enabler_common *lttng_event_enabler_as_enabler(
-		struct lttng_event_recorder_enabler *event_enabler)
-{
-	return &event_enabler->parent.parent;
-}
-
-static inline
 struct lttng_event_enabler_common *lttng_event_notifier_enabler_as_enabler(
 		struct lttng_event_notifier_enabler *event_notifier_enabler)
 {
