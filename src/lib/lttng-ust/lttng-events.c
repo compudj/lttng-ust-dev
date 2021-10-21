@@ -297,7 +297,8 @@ void _lttng_event_unregister(struct lttng_ust_event_common *event)
 
 void lttng_session_destroy(struct lttng_ust_session *session)
 {
-	struct lttng_ust_channel_buffer_private *chan, *tmpchan;
+	struct lttng_ust_channel_buffer_private *chan_buffer, *tmpchan_buffer;
+	struct lttng_ust_channel_counter_private *chan_counter, *tmpchan_counter;
 	struct lttng_ust_event_session_common_private *event_priv, *tmpevent_priv;
 	struct lttng_enum *_enum, *tmp_enum;
 	struct lttng_event_enabler_session_common *event_enabler, *event_tmpenabler;
@@ -317,8 +318,12 @@ void lttng_session_destroy(struct lttng_ust_session *session)
 	cds_list_for_each_entry_safe(_enum, tmp_enum,
 			&session->priv->enums_head, node)
 		_lttng_enum_destroy(_enum);
-	cds_list_for_each_entry_safe(chan, tmpchan, &session->priv->chan_head, node)
-		_lttng_channel_unmap(chan->pub);
+	cds_list_for_each_entry_safe(chan_buffer, tmpchan_buffer, &session->priv->chan_head, node)
+		_lttng_channel_unmap(chan_buffer->pub);
+	cds_list_for_each_entry_safe(chan_counter, tmpchan_counter, &session->priv->counters_head, node) {
+		cds_list_del(&chan_counter->node);
+		lttng_ust_counter_destroy(chan_counter->pub);
+	}
 	cds_list_del(&session->priv->node);
 	lttng_destroy_context(session->priv->ctx);
 	free(session->priv);
