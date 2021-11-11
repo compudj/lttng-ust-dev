@@ -909,9 +909,9 @@ void lttng_ust_event_free(struct lttng_ust_event_common *event)
 		struct lttng_ust_event_recorder_private *event_recorder_priv =
 			caa_container_of(event_priv, struct lttng_ust_event_recorder_private, parent.parent);
 
-		free(event_recorder_priv);
 		free(event_recorder_priv->pub->parent);
 		free(event_recorder_priv->pub);
+		free(event_recorder_priv);
 		break;
 	}
 	case LTTNG_UST_EVENT_TYPE_NOTIFIER:
@@ -919,9 +919,9 @@ void lttng_ust_event_free(struct lttng_ust_event_common *event)
 		struct lttng_ust_event_notifier_private *event_notifier_priv =
 			caa_container_of(event_priv, struct lttng_ust_event_notifier_private, parent);
 
-		free(event_notifier_priv);
 		free(event_notifier_priv->pub->parent);
 		free(event_notifier_priv->pub);
+		free(event_notifier_priv);
 		break;
 	}
 	case LTTNG_UST_EVENT_TYPE_COUNTER:
@@ -929,9 +929,9 @@ void lttng_ust_event_free(struct lttng_ust_event_common *event)
 		struct lttng_ust_event_counter_private *event_counter_priv =
 			caa_container_of(event_priv, struct lttng_ust_event_counter_private, parent.parent);
 
-		free(event_counter_priv);
 		free(event_counter_priv->pub->parent);
 		free(event_counter_priv->pub);
+		free(event_counter_priv);
 		break;
 	}
 	default:
