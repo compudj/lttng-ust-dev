@@ -1706,8 +1706,10 @@ struct lttng_event_counter_enabler *lttng_event_counter_enabler_create(
 		sizeof(event_enabler->parent.parent.event_param));
 	event_enabler->chan = chan;
 	if (key) {
-		if (copy_counter_key(&event_enabler->key, key))
+		if (copy_counter_key(&event_enabler->key, key)) {
+			free(event_enabler);
 			return NULL;
+		}
 	}
 	/* ctx left NULL */
 	event_enabler->parent.parent.enabled = 0;
