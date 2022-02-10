@@ -1021,6 +1021,7 @@ void lttng_ust__event_probe__##_provider##___##_name(LTTNG_UST__TP_ARGS_DATA_PRO
 		struct lttng_ust_event_counter *__event_counter = (struct lttng_ust_event_counter *) __event->child; \
 									      \
 		(void) __event_counter->chan->ops->event_counter_add(__event_counter, 1); \
+		break;							      \
 	}								      \
 	}								      \
 }
