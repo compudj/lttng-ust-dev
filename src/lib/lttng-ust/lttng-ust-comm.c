@@ -404,6 +404,10 @@ void lttng_ust_alloc_tls(void)
 	lttng_ust_ring_buffer_client_discard_rt_alloc_tls();
 	lttng_ust_ring_buffer_client_overwrite_alloc_tls();
 	lttng_ust_ring_buffer_client_overwrite_rt_alloc_tls();
+	lttng_ust_ring_buffer_client_discard_global_alloc_tls();
+	lttng_ust_ring_buffer_client_discard_global_rt_alloc_tls();
+	lttng_ust_ring_buffer_client_overwrite_global_alloc_tls();
+	lttng_ust_ring_buffer_client_overwrite_global_rt_alloc_tls();
 }
 
 /*
