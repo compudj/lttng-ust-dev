@@ -614,7 +614,7 @@ static const struct lttng_ust_ring_buffer_config client_config = {
 	.cb.packet_size_field = client_packet_size_field,
 
 	.tsc_bits = LTTNG_COMPACT_TSC_BITS,
-	.alloc = RING_BUFFER_ALLOC_PER_CPU,
+	.alloc = RING_BUFFER_ALLOC_TEMPLATE,
 	.sync = RING_BUFFER_SYNC_GLOBAL,
 	.mode = RING_BUFFER_MODE_TEMPLATE,
 	.backend = RING_BUFFER_PAGE,
