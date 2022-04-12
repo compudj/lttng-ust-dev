@@ -3016,65 +3016,72 @@ free_counter:
 int lttng_ust_ctl_create_counter_data(struct lttng_ust_ctl_daemon_counter *counter,
 		struct lttng_ust_abi_object_data **_counter_data)
 {
+	struct lttng_ust_abi_counter_conf *counter_conf = NULL;
+	struct lttng_ust_abi_counter_dimension *dimension;
+	uint32_t conf_len = sizeof(struct lttng_ust_abi_counter_conf) +
+				sizeof(struct lttng_ust_abi_counter_dimension);
 	struct lttng_ust_abi_object_data *counter_data;
-	struct lttng_ust_abi_counter_conf counter_conf = {0};
-	size_t i;
 	int ret;
 
+	if (counter->attr->nr_dimensions != 1) {
+		ret = -EINVAL;
+		goto error;
+	}
+	counter_conf = zmalloc(conf_len);
+	if (!counter_conf) {
+		ret = -ENOMEM;
+		goto error;
+	}
+	counter_conf->len = sizeof(struct lttng_ust_abi_counter_conf);
+	counter_conf->flags |= counter->attr->coalesce_hits ? LTTNG_UST_ABI_COUNTER_CONF_FLAG_COALESCE_HITS : 0;
 	switch (counter->attr->arithmetic) {
 	case LTTNG_UST_CTL_COUNTER_ARITHMETIC_MODULAR:
-		counter_conf.arithmetic = LTTNG_UST_ABI_COUNTER_ARITHMETIC_MODULAR;
+		counter_conf->arithmetic = LTTNG_UST_ABI_COUNTER_ARITHMETIC_MODULAR;
 		break;
 	case LTTNG_UST_CTL_COUNTER_ARITHMETIC_SATURATION:
-		counter_conf.arithmetic = LTTNG_UST_ABI_COUNTER_ARITHMETIC_SATURATION;
+		counter_conf->arithmetic = LTTNG_UST_ABI_COUNTER_ARITHMETIC_SATURATION;
 		break;
 	default:
-		return -EINVAL;
+		ret = -EINVAL;
+		goto error;
 	}
 	switch (counter->attr->bitness) {
 	case LTTNG_UST_CTL_COUNTER_BITNESS_32:
-		counter_conf.bitness = LTTNG_UST_ABI_COUNTER_BITNESS_32;
+		counter_conf->bitness = LTTNG_UST_ABI_COUNTER_BITNESS_32;
 		break;
 	case LTTNG_UST_CTL_COUNTER_BITNESS_64:
-		counter_conf.bitness = LTTNG_UST_ABI_COUNTER_BITNESS_64;
+		counter_conf->bitness = LTTNG_UST_ABI_COUNTER_BITNESS_64;
 		break;
 	default:
 		return -EINVAL;
 	}
-	counter_conf.number_dimensions = counter->attr->nr_dimensions;
-	counter_conf.global_sum_step = counter->attr->global_sum_step;
-	counter_conf.coalesce_hits = counter->attr->coalesce_hits;
-	for (i = 0; i < counter->attr->nr_dimensions; i++) {
-		counter_conf.dimensions[i].size = counter->attr->dimensions[i].size;
-		counter_conf.dimensions[i].underflow_index = counter->attr->dimensions[i].underflow_index;
-		counter_conf.dimensions[i].overflow_index = counter->attr->dimensions[i].overflow_index;
-		counter_conf.dimensions[i].has_underflow = counter->attr->dimensions[i].has_underflow;
-		counter_conf.dimensions[i].has_overflow = counter->attr->dimensions[i].has_overflow;
-	}
+	counter_conf->global_sum_step = counter->attr->global_sum_step;
+
+	counter_conf->number_dimensions = 1;
+	counter_conf->elem_len = sizeof(struct lttng_ust_abi_counter_dimension);
+
+	dimension = (struct lttng_ust_abi_counter_dimension *)((char *)counter_conf + sizeof(struct lttng_ust_abi_counter_conf));
+	dimension->flags |= counter->attr->dimensions[0].has_underflow ? LTTNG_UST_ABI_COUNTER_DIMENSION_FLAG_UNDERFLOW : 0;
+	dimension->flags |= counter->attr->dimensions[0].has_overflow ? LTTNG_UST_ABI_COUNTER_DIMENSION_FLAG_OVERFLOW : 0;
+	dimension->size = counter->attr->dimensions[0].size;
+	dimension->underflow_index = counter->attr->dimensions[0].underflow_index;
+	dimension->overflow_index = counter->attr->dimensions[0].overflow_index;
 
 	counter_data = zmalloc(sizeof(*counter_data));
 	if (!counter_data) {
 		ret = -ENOMEM;
-		goto error_alloc;
+		goto error;
 	}
 	counter_data->type = LTTNG_UST_ABI_OBJECT_TYPE_COUNTER;
 	counter_data->handle = -1;
-
-	counter_data->size = sizeof(counter_conf);
-	counter_data->u.counter.data = zmalloc(sizeof(counter_conf));
-	if (!counter_data->u.counter.data) {
-		ret = -ENOMEM;
-		goto error_alloc_data;
-	}
-
-	memcpy(counter_data->u.counter.data, &counter_conf, sizeof(counter_conf));
+	counter_data->size = conf_len;
+	counter_data->u.counter.data = counter_conf;
 	*_counter_data = counter_data;
 
 	return 0;
 
-error_alloc_data:
-	free(counter_data);
-error_alloc:
+error:
+	free(counter_conf);
 	return ret;
 }
 

@@ -88,23 +88,30 @@ enum lttng_ust_abi_counter_bitness {
 	LTTNG_UST_ABI_COUNTER_BITNESS_64 = 1,
 };
 
+enum lttng_ust_abi_counter_dimension_flags {
+	LTTNG_UST_ABI_COUNTER_DIMENSION_FLAG_UNDERFLOW = (1 << 0),
+	LTTNG_UST_ABI_COUNTER_DIMENSION_FLAG_OVERFLOW = (1 << 1),
+};
+
 struct lttng_ust_abi_counter_dimension {
-	uint64_t size;
+	uint32_t flags;				/* enum lttng_ust_abi_counter_dimension_flags */
+	uint64_t size;				/* dimension size */
 	uint64_t underflow_index;
 	uint64_t overflow_index;
-	uint8_t has_underflow;
-	uint8_t has_overflow;
 } __attribute__((packed));
 
-#define LTTNG_UST_ABI_COUNTER_CONF_PADDING1 67
+enum lttng_ust_abi_counter_conf_flags {
+	LTTNG_UST_ABI_COUNTER_CONF_FLAG_COALESCE_HITS = (1 << 0),
+};
+
 struct lttng_ust_abi_counter_conf {
-	uint32_t arithmetic;	/* enum lttng_ust_abi_counter_arithmetic */
-	uint32_t bitness;	/* enum lttng_ust_abi_counter_bitness */
-	uint32_t number_dimensions;
+	uint32_t len;				/* Length of fields before var. len. data. */
+	uint32_t flags;				/* enum lttng_ust_abi_counter_conf_flags */
+	uint32_t arithmetic;			/* enum lttng_ust_abi_counter_arithmetic */
+	uint32_t bitness;			/* enum lttng_ust_abi_counter_bitness */
 	int64_t global_sum_step;
-	struct lttng_ust_abi_counter_dimension dimensions[LTTNG_UST_ABI_COUNTER_DIMENSION_MAX];
-	uint8_t coalesce_hits;
-	char padding[LTTNG_UST_ABI_COUNTER_CONF_PADDING1];
+	uint32_t number_dimensions;
+	uint32_t elem_len;			/* array stride (size of lttng_ust_abi_counter_dimension) */
 } __attribute__((packed));
 
 struct lttng_ust_abi_counter_value {
@@ -144,12 +151,10 @@ struct lttng_ust_abi_event_notifier_notification {
 	char padding[LTTNG_UST_ABI_EVENT_NOTIFIER_NOTIFICATION_PADDING];
 } __attribute__((packed));
 
-#define LTTNG_UST_ABI_COUNTER_PADDING1		(LTTNG_UST_ABI_SYM_NAME_LEN + 32)
 #define LTTNG_UST_ABI_COUNTER_DATA_MAX_LEN	4096U
 struct lttng_ust_abi_counter {
 	uint64_t len;
-	char padding[LTTNG_UST_ABI_COUNTER_PADDING1];
-	char data[];	/* variable sized data */
+	char data[];		/* variable sized data */
 } __attribute__((packed));
 
 #define LTTNG_UST_ABI_COUNTER_GLOBAL_PADDING1	(LTTNG_UST_ABI_SYM_NAME_LEN + 32)
