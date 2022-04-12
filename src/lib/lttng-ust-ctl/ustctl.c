@@ -3213,7 +3213,8 @@ int lttng_ust_ctl_send_counter_global_data_to_ust(int sock,
 	memset(&lum, 0, sizeof(lum));
 	lum.handle = counter_data->handle;	/* parent handle */
 	lum.cmd = LTTNG_UST_ABI_COUNTER_GLOBAL;
-	lum.u.counter_global.len = size;
+	lum.u.counter_global.len = sizeof(struct lttng_ust_abi_counter_global);
+	lum.u.counter_global.shm_len = size;
 	ret = ustcomm_send_app_cmd(sock, &lum, &lur);
 	if (ret)
 		return ret;
@@ -3259,7 +3260,8 @@ int lttng_ust_ctl_send_counter_cpu_data_to_ust(int sock,
 	memset(&lum, 0, sizeof(lum));
 	lum.handle = counter_data->handle;	/* parent handle */
 	lum.cmd = LTTNG_UST_ABI_COUNTER_CPU;
-	lum.u.counter_cpu.len = size;
+	lum.u.counter_cpu.len = sizeof(struct lttng_ust_abi_counter_cpu);
+	lum.u.counter_cpu.shm_len = size;
 	lum.u.counter_cpu.cpu_nr = counter_cpu_data->u.counter_cpu.cpu_nr;
 	ret = ustcomm_send_app_cmd(sock, &lum, &lur);
 	if (ret)

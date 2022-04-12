@@ -157,17 +157,15 @@ struct lttng_ust_abi_counter {
 	char data[];		/* variable sized data */
 } __attribute__((packed));
 
-#define LTTNG_UST_ABI_COUNTER_GLOBAL_PADDING1	(LTTNG_UST_ABI_SYM_NAME_LEN + 32)
 struct lttng_ust_abi_counter_global {
-	uint64_t len;		/* shm len */
-	char padding[LTTNG_UST_ABI_COUNTER_GLOBAL_PADDING1];
+	uint32_t len;		/* Length of this structure */
+	uint64_t shm_len;	/* shm len */
 } __attribute__((packed));
 
-#define LTTNG_UST_ABI_COUNTER_CPU_PADDING1	(LTTNG_UST_ABI_SYM_NAME_LEN + 32)
 struct lttng_ust_abi_counter_cpu {
-	uint64_t len;		/* shm len */
+	uint32_t len;		/* Length of this structure */
+	uint64_t shm_len;	/* shm len */
 	uint32_t cpu_nr;
-	char padding[LTTNG_UST_ABI_COUNTER_CPU_PADDING1];
 } __attribute__((packed));
 
 enum lttng_ust_abi_key_token_type {

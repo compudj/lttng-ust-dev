@@ -780,10 +780,6 @@ long lttng_session_cmd(int objd, unsigned int cmd, unsigned long arg,
 		return lttng_session_create_counter(objd,
 			(struct lttng_ust_abi_counter *) arg,
 			uargs, owner);
-	case LTTNG_UST_ABI_COUNTER_GLOBAL:
-	case LTTNG_UST_ABI_COUNTER_CPU:
-		/* Not implemented yet. */
-		return -EINVAL;
 	default:
 		return -EINVAL;
 	}
@@ -911,11 +907,19 @@ long lttng_event_notifier_group_error_counter_cmd(int objd, unsigned int cmd, un
 		break;
 	case LTTNG_UST_ABI_COUNTER_CPU:
 	{
-		struct lttng_ust_abi_counter_cpu *counter_cpu =
-			(struct lttng_ust_abi_counter_cpu *)arg;
+		struct lttng_ust_abi_counter_cpu *abi_counter_cpu =
+			(struct lttng_ust_abi_counter_cpu *) arg;
+		struct lttng_ust_abi_counter_cpu counter_cpu;
 
+		if (abi_counter_cpu->len < lttng_ust_offsetofend(struct lttng_ust_abi_counter_cpu, cpu_nr)) {
+			return -EINVAL;
+		}
+		ret = copy_abi_struct(&counter_cpu, sizeof(counter_cpu),
+				abi_counter_cpu, abi_counter_cpu->len);
+		if (ret)
+			return ret;
 		ret = lttng_counter_set_cpu_shm(counter->priv->counter,
-			counter_cpu->cpu_nr, uargs->counter_shm.shm_fd);
+			counter_cpu.cpu_nr, uargs->counter_shm.shm_fd);
 		if (!ret) {
 			/* Take ownership of the shm_fd. */
 			uargs->counter_shm.shm_fd = -1;
@@ -1544,9 +1548,19 @@ long lttng_counter_cmd(int objd, unsigned int cmd, unsigned long arg,
 	switch (cmd) {
 	case LTTNG_UST_ABI_COUNTER_GLOBAL:
 	{
+		struct lttng_ust_abi_counter_global *abi_counter_global =
+			(struct lttng_ust_abi_counter_global *) arg;
+		struct lttng_ust_abi_counter_global counter_global;
 		long ret;
 		int shm_fd;
 
+		if (abi_counter_global->len < lttng_ust_offsetofend(struct lttng_ust_abi_counter_global, shm_len)) {
+			return -EINVAL;
+		}
+		ret = copy_abi_struct(&counter_global, sizeof(counter_global),
+				abi_counter_global, abi_counter_global->len);
+		if (ret)
+			return ret;
 		shm_fd = uargs->counter_shm.shm_fd;
 		ret = lttng_counter_set_global_shm(counter->priv->counter, shm_fd);
 		if (!ret) {
@@ -1557,14 +1571,22 @@ long lttng_counter_cmd(int objd, unsigned int cmd, unsigned long arg,
 	}
 	case LTTNG_UST_ABI_COUNTER_CPU:
 	{
-		struct lttng_ust_abi_counter_cpu *counter_cpu =
+		struct lttng_ust_abi_counter_cpu *abi_counter_cpu =
 			(struct lttng_ust_abi_counter_cpu *) arg;
+		struct lttng_ust_abi_counter_cpu counter_cpu;
 		long ret;
 		int shm_fd;
 
+		if (abi_counter_cpu->len < lttng_ust_offsetofend(struct lttng_ust_abi_counter_cpu, cpu_nr)) {
+			return -EINVAL;
+		}
+		ret = copy_abi_struct(&counter_cpu, sizeof(counter_cpu),
+				abi_counter_cpu, abi_counter_cpu->len);
+		if (ret)
+			return ret;
 		shm_fd = uargs->counter_shm.shm_fd;
 		ret = lttng_counter_set_cpu_shm(counter->priv->counter,
-				counter_cpu->cpu_nr, shm_fd);
+				counter_cpu.cpu_nr, shm_fd);
 		if (!ret) {
 			/* Take ownership of shm_fd. */
 			uargs->counter_shm.shm_fd = -1;
