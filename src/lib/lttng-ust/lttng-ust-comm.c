@@ -31,6 +31,7 @@
 #include <lttng/ust-utils.h>
 #include <lttng/ust-events.h>
 #include <lttng/ust-abi.h>
+#include <lttng/ust-abi-old.h>
 #include <lttng/ust-fork.h>
 #include <lttng/ust-error.h>
 #include <lttng/ust-ctl.h>
@@ -932,6 +933,16 @@ void prepare_cmd_reply(struct ustcomm_ust_reply *lur, uint32_t handle, uint32_t 
 }
 
 static
+bool validate_zero_padding(char *p, size_t len)
+{
+	for (; p < p + len; p++) {
+		if (*p != 0)
+			return false;
+	}
+	return true;
+}
+
+static
 int handle_message(struct sock_info *sock_info,
 		int sock, struct ustcomm_ust_msg *lum)
 {
@@ -974,6 +985,9 @@ int handle_message(struct sock_info *sock_info,
 		break;
 
 	case LTTNG_UST_ABI_CAPTURE:
+	case LTTNG_UST_ABI_OLD_COUNTER:
+	case LTTNG_UST_ABI_OLD_COUNTER_GLOBAL:
+	case LTTNG_UST_ABI_OLD_COUNTER_CPU:
 	case LTTNG_UST_ABI_COUNTER:
 	case LTTNG_UST_ABI_COUNTER_GLOBAL:
 	case LTTNG_UST_ABI_COUNTER_CPU:
@@ -1202,6 +1216,143 @@ int handle_message(struct sock_info *sock_info,
 			ret = -ENOSYS;
 		}
 		break;
+	case LTTNG_UST_ABI_OLD_COUNTER:
+	{
+		struct lttng_ust_abi_old_counter_conf *old_counter_conf;
+		struct lttng_ust_abi_counter_conf *counter_conf;
+		struct lttng_ust_abi_counter_dimension *counter_dimension;
+		void *counter_data;
+
+		if (!validate_zero_padding(lum->u.counter_old.padding, LTTNG_UST_ABI_OLD_COUNTER_PADDING1)) {
+			ret = -EINVAL;
+			goto error;
+		}
+		len = ustcomm_recv_var_len_cmd_from_sessiond(sock,
+				&counter_data, lum->u.counter_old.len);
+		switch (handle_error(sock_info, len, lum->u.counter_old.len, "old counter", &ret)) {
+		case MSG_OK:
+			break;
+		case MSG_ERROR:		/* Fallthrough */
+		case MSG_SHUTDOWN:
+			goto error;
+		}
+		if (lum->u.counter_old.len != sizeof(struct lttng_ust_abi_old_counter_conf)) {
+			ret = -EINVAL;
+			free(counter_data);
+			goto error;
+		}
+		old_counter_conf = (struct lttng_ust_abi_old_counter_conf *)counter_data;
+		if (old_counter_conf->number_dimensions != 1) {
+			ret = -EINVAL;
+			free(counter_data);
+			goto error;
+		}
+		args.counter.len = sizeof(struct lttng_ust_abi_counter_conf) + sizeof(struct lttng_ust_abi_counter_dimension);
+		counter_conf = zmalloc(args.counter.len);
+		if (!counter_conf) {
+			ret = -ENOMEM;
+			free(counter_data);
+			goto error;
+		}
+		if (!validate_zero_padding(old_counter_conf->padding, LTTNG_UST_ABI_OLD_COUNTER_CONF_PADDING1)) {
+			ret = -EINVAL;
+			free(counter_data);
+			goto error;
+		}
+		counter_conf->len = sizeof(struct lttng_ust_abi_counter_conf);
+		counter_conf->flags |= old_counter_conf->coalesce_hits ? LTTNG_UST_ABI_COUNTER_CONF_FLAG_COALESCE_HITS : 0;
+		counter_conf->arithmetic = old_counter_conf->arithmetic;
+		counter_conf->bitness = old_counter_conf->bitness;
+		counter_conf->global_sum_step = old_counter_conf->global_sum_step;
+		counter_conf->number_dimensions = 1;
+		counter_conf->elem_len = sizeof(struct lttng_ust_abi_counter_dimension);
+		counter_dimension = (struct lttng_ust_abi_counter_dimension *)((char *)counter_conf + sizeof(struct lttng_ust_abi_counter_conf));
+		counter_dimension->size = old_counter_conf->dimensions[0].size;
+		counter_dimension->flags |= old_counter_conf->dimensions[0].has_underflow ? LTTNG_UST_ABI_COUNTER_DIMENSION_FLAG_UNDERFLOW : 0;
+		counter_dimension->flags |= old_counter_conf->dimensions[0].has_overflow ? LTTNG_UST_ABI_COUNTER_DIMENSION_FLAG_OVERFLOW : 0;
+		counter_dimension->underflow_index = old_counter_conf->dimensions[0].underflow_index;
+		counter_dimension->overflow_index = old_counter_conf->dimensions[0].overflow_index;
+		if (ops->cmd)
+			ret = ops->cmd(lum->handle, lum->cmd,
+					(unsigned long) counter_conf,
+					&args, sock_info);
+		else
+			ret = -ENOSYS;
+		free(counter_conf);
+		free(counter_data);
+		break;
+	}
+	case LTTNG_UST_ABI_OLD_COUNTER_GLOBAL:
+	{
+		struct lttng_ust_abi_counter_global counter_global = {};
+
+		if (!validate_zero_padding(lum->u.counter_global_old.padding, LTTNG_UST_ABI_OLD_COUNTER_GLOBAL_PADDING1)) {
+			ret = -EINVAL;
+			goto error;
+		}
+		/* Receive shm_fd */
+		ret = ustcomm_recv_counter_shm_from_sessiond(sock,
+			&args.counter_shm.shm_fd);
+		if (ret) {
+			goto error;
+		}
+		counter_global.len = sizeof(struct lttng_ust_abi_counter_global);
+		counter_global.shm_len = lum->u.counter_global_old.len;
+		args.counter_shm.len = sizeof(struct lttng_ust_abi_counter_global);
+		if (ops->cmd)
+			ret = ops->cmd(lum->handle, lum->cmd,
+					(unsigned long) &counter_global,
+					&args, sock_info);
+		else
+			ret = -ENOSYS;
+		if (args.counter_shm.shm_fd >= 0) {
+			int close_ret;
+
+			lttng_ust_lock_fd_tracker();
+			close_ret = close(args.counter_shm.shm_fd);
+			lttng_ust_unlock_fd_tracker();
+			args.counter_shm.shm_fd = -1;
+			if (close_ret)
+				PERROR("close");
+		}
+		break;
+	}
+	case LTTNG_UST_ABI_OLD_COUNTER_CPU:
+	{
+		struct lttng_ust_abi_counter_cpu counter_cpu = {};
+
+		if (!validate_zero_padding(lum->u.counter_cpu_old.padding, LTTNG_UST_ABI_OLD_COUNTER_CPU_PADDING1)) {
+			ret = -EINVAL;
+			goto error;
+		}
+		/* Receive shm_fd */
+		ret = ustcomm_recv_counter_shm_from_sessiond(sock,
+			&args.counter_shm.shm_fd);
+		if (ret) {
+			goto error;
+		}
+		counter_cpu.len = sizeof(struct lttng_ust_abi_counter_global);
+		counter_cpu.shm_len = lum->u.counter_global_old.len;
+		counter_cpu.cpu_nr = lum->u.counter_cpu_old.cpu_nr;
+		args.counter_shm.len = sizeof(struct lttng_ust_abi_counter_cpu);
+		if (ops->cmd)
+			ret = ops->cmd(lum->handle, lum->cmd,
+					(unsigned long) &counter_cpu,
+					&args, sock_info);
+		else
+			ret = -ENOSYS;
+		if (args.counter_shm.shm_fd >= 0) {
+			int close_ret;
+
+			lttng_ust_lock_fd_tracker();
+			close_ret = close(args.counter_shm.shm_fd);
+			lttng_ust_unlock_fd_tracker();
+			args.counter_shm.shm_fd = -1;
+			if (close_ret)
+				PERROR("close");
+		}
+		break;
+	}
 	case LTTNG_UST_ABI_COUNTER:
 	{
 		len = ustcomm_recv_var_len_cmd_from_sessiond(sock,
