@@ -13,6 +13,7 @@
 #include <urcu/list.h>
 #include <urcu/hlist.h>
 
+#include <lttng/ust-config.h>
 #include <lttng/ust-events.h>
 
 #include "common/macros.h"
@@ -580,6 +581,10 @@ struct lttng_enabler *lttng_event_notifier_enabler_as_enabler(
 }
 
 
+/* Custom upgrade 2.12 to 2.13 */
+#ifndef LTTNG_UST_CUSTOM_UPGRADE_CONFLICTING_SYMBOLS
+#define lttng_ust_dl_update		lttng_ust_dl_update1
+#endif
 
 /* This is ABI between liblttng-ust and liblttng-ust-dl */
 void lttng_ust_dl_update(void *ip);

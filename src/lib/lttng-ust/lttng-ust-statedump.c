@@ -546,7 +546,8 @@ end:
 	ust_unlock();
 }
 
-void lttng_ust_dl_update(void *ip)
+static
+void lttng_ust_dl_update_orig(void *ip)
 {
 	struct dl_iterate_data data;
 
@@ -660,3 +661,13 @@ void lttng_ust_statedump_destroy(void)
 	lttng_ust__tracepoints__destroy();
 	ust_dl_state_destroy();
 }
+
+/* Custom upgrade 2.12 to 2.13 */
+#undef lttng_ust_dl_update
+void lttng_ust_dl_update1(void *ip)
+	__attribute__ ((alias ("lttng_ust_dl_update_orig")));
+
+#ifdef LTTNG_UST_CUSTOM_UPGRADE_CONFLICTING_SYMBOLS
+void lttng_ust_dl_update(void *ip)
+	__attribute__ ((alias ("lttng_ust_dl_update_orig")));
+#endif
