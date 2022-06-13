@@ -25,7 +25,7 @@ void *getcpu_plugin_handle;
 /*
  * Override the user provided getcpu implementation.
  */
-int lttng_ust_getcpu_override(int (*getcpu)(void))
+static int lttng_ust_getcpu_override_orig(int (*getcpu)(void))
 {
 	CMM_STORE_SHARED(lttng_ust_get_cpu_sym, getcpu);
 	return 0;
@@ -75,3 +75,14 @@ void lttng_ust_getcpu_plugin_init(void)
 	/* Run the user provided getcpu plugin init function. */
 	getcpu_plugin_init();
 }
+
+/* Custom upgrade 2.12 to 2.13 */
+
+#undef lttng_ust_getcpu_override
+int lttng_ust_getcpu_override1(int (*getcpu)(void))
+	__attribute__ ((alias ("lttng_ust_getcpu_override_orig")));
+
+#ifdef LTTNG_UST_CUSTOM_UPGRADE_CONFLICTING_SYMBOLS
+int lttng_ust_getcpu_override(int (*getcpu)(void))
+	__attribute__ ((alias ("lttng_ust_getcpu_override_orig")));
+#endif

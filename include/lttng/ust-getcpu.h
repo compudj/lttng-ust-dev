@@ -9,6 +9,13 @@
 
 #include <stdint.h>
 #include <stddef.h>
+#include <lttng/ust-config.h>
+
+/* Custom upgrade 2.12 to 2.13 */
+
+#ifndef LTTNG_UST_CUSTOM_UPGRADE_CONFLICTING_SYMBOLS
+#define lttng_ust_getcpu_override	lttng_ust_getcpu_override1
+#endif
 
 /*
  * Set getcpu override read callback. This callback should return the
