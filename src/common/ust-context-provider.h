@@ -12,6 +12,7 @@
 #define _LTTNG_UST_CONTEXT_PROVIDER_H
 
 #include <stddef.h>
+#include <lttng/ust-config.h>
 #include <lttng/ust-events.h>
 
 #include "common/dynamic-type.h"
@@ -87,6 +88,12 @@ struct lttng_ust_app_context {
 
 	/* End of base ABI. Fields below should be used after checking struct_size. */
 };
+
+/* Custom upgrade 2.12 to 2.13 */
+#ifndef LTTNG_UST_CUSTOM_UPGRADE_CONFLICTING_SYMBOLS
+#define lttng_ust_context_provider_register		lttng_ust_context_provider_register1
+#define lttng_ust_context_provider_unregister		lttng_ust_context_provider_unregister1
+#endif
 
 /*
  * Returns an opaque pointer on success, which must be passed to

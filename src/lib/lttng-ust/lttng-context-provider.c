@@ -60,7 +60,8 @@ static const struct lttng_ust_context_provider *
 	return NULL;
 }
 
-struct lttng_ust_registered_context_provider *lttng_ust_context_provider_register(struct lttng_ust_context_provider *provider)
+static
+struct lttng_ust_registered_context_provider *lttng_ust_context_provider_register_orig(struct lttng_ust_context_provider *provider)
 {
 	struct lttng_ust_registered_context_provider *reg_provider = NULL;
 	struct cds_hlist_head *head;
@@ -99,7 +100,8 @@ end:
 	return reg_provider;
 }
 
-void lttng_ust_context_provider_unregister(struct lttng_ust_registered_context_provider *reg_provider)
+static
+void lttng_ust_context_provider_unregister_orig(struct lttng_ust_registered_context_provider *reg_provider)
 {
 	lttng_ust_alloc_tls();
 
@@ -210,3 +212,18 @@ error_field_name_alloc:
 error_event_field_alloc:
 	return ret;
 }
+
+/* Custom upgrade 2.12 to 2.13 */
+#undef lttng_ust_context_provider_register
+#undef lttng_ust_context_provider_unregister
+struct lttng_ust_registered_context_provider *lttng_ust_context_provider_register1(struct lttng_ust_context_provider *provider)
+	__attribute ((alias ("lttng_ust_context_provider_register_orig")));
+void lttng_ust_context_provider_unregister1(struct lttng_ust_registered_context_provider *reg_provider)
+	__attribute ((alias ("lttng_ust_context_provider_unregister_orig")));
+
+#ifdef LTTNG_UST_CUSTOM_UPGRADE_CONFLICTING_SYMBOLS
+struct lttng_ust_registered_context_provider *lttng_ust_context_provider_register(struct lttng_ust_context_provider *provider)
+	__attribute ((alias ("lttng_ust_context_provider_register_orig")));
+void lttng_ust_context_provider_unregister(struct lttng_ust_registered_context_provider *reg_provider)
+	__attribute ((alias ("lttng_ust_context_provider_unregister_orig")));
+#endif
