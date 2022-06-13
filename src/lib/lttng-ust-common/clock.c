@@ -73,7 +73,7 @@ const char *trace_clock_description_monotonic(void)
 	return "Monotonic Clock";
 }
 
-int lttng_ust_trace_clock_set_read64_cb(lttng_ust_clock_read64_function read64_cb)
+static int lttng_ust_trace_clock_set_read64_cb_orig(lttng_ust_clock_read64_function read64_cb)
 {
 	if (CMM_LOAD_SHARED(lttng_ust_trace_clock))
 		return -EBUSY;
@@ -94,7 +94,7 @@ int lttng_ust_trace_clock_get_read64_cb(lttng_ust_clock_read64_function *read64_
 	return 0;
 }
 
-int lttng_ust_trace_clock_set_freq_cb(lttng_ust_clock_freq_function freq_cb)
+static int lttng_ust_trace_clock_set_freq_cb_orig(lttng_ust_clock_freq_function freq_cb)
 {
 	if (CMM_LOAD_SHARED(lttng_ust_trace_clock))
 		return -EBUSY;
@@ -115,7 +115,7 @@ int lttng_ust_trace_clock_get_freq_cb(lttng_ust_clock_freq_function *freq_cb)
 	return 0;
 }
 
-int lttng_ust_trace_clock_set_uuid_cb(lttng_ust_clock_uuid_function uuid_cb)
+static int lttng_ust_trace_clock_set_uuid_cb_orig(lttng_ust_clock_uuid_function uuid_cb)
 {
 	if (CMM_LOAD_SHARED(lttng_ust_trace_clock))
 		return -EBUSY;
@@ -136,7 +136,7 @@ int lttng_ust_trace_clock_get_uuid_cb(lttng_ust_clock_uuid_function *uuid_cb)
 	return 0;
 }
 
-int lttng_ust_trace_clock_set_name_cb(lttng_ust_clock_name_function name_cb)
+static int lttng_ust_trace_clock_set_name_cb_orig(lttng_ust_clock_name_function name_cb)
 {
 	if (CMM_LOAD_SHARED(lttng_ust_trace_clock))
 		return -EBUSY;
@@ -157,7 +157,7 @@ int lttng_ust_trace_clock_get_name_cb(lttng_ust_clock_name_function *name_cb)
 	return 0;
 }
 
-int lttng_ust_trace_clock_set_description_cb(lttng_ust_clock_description_function description_cb)
+static int lttng_ust_trace_clock_set_description_cb_orig(lttng_ust_clock_description_function description_cb)
 {
 	if (CMM_LOAD_SHARED(lttng_ust_trace_clock))
 		return -EBUSY;
@@ -178,7 +178,7 @@ int lttng_ust_trace_clock_get_description_cb(lttng_ust_clock_description_functio
 	return 0;
 }
 
-int lttng_ust_enable_trace_clock_override(void)
+static int lttng_ust_enable_trace_clock_override_orig(void)
 {
 	if (CMM_LOAD_SHARED(lttng_ust_trace_clock))
 		return -EBUSY;
@@ -222,3 +222,40 @@ void lttng_ust_clock_init(void)
 	}
 	libinit();
 }
+
+/* Custom upgrade 2.12 to 2.13 */
+
+#undef lttng_ust_trace_clock_set_read64_cb
+#undef lttng_ust_trace_clock_set_freq_cb
+#undef lttng_ust_trace_clock_set_uuid_cb
+#undef lttng_ust_trace_clock_set_name_cb
+#undef lttng_ust_trace_clock_set_description_cb
+#undef lttng_ust_enable_trace_clock_override
+
+int lttng_ust_trace_clock_set_read64_cb1(lttng_ust_clock_read64_function read64_cb)
+	__attribute ((alias ("lttng_ust_trace_clock_set_read64_cb_orig")));
+int lttng_ust_trace_clock_set_freq_cb1(lttng_ust_clock_freq_function freq_cb)
+	__attribute ((alias ("lttng_ust_trace_clock_set_freq_cb_orig")));
+int lttng_ust_trace_clock_set_uuid_cb1(lttng_ust_clock_uuid_function uuid_cb)
+	__attribute ((alias ("lttng_ust_trace_clock_set_uuid_cb_orig")));
+int lttng_ust_trace_clock_set_name_cb1(lttng_ust_clock_name_function name_cb)
+	__attribute ((alias ("lttng_ust_trace_clock_set_name_cb_orig")));
+int lttng_ust_trace_clock_set_description_cb1(lttng_ust_clock_description_function description_cb)
+	__attribute ((alias ("lttng_ust_trace_clock_set_description_cb_orig")));
+int lttng_ust_enable_trace_clock_override1(void)
+	__attribute ((alias ("lttng_ust_enable_trace_clock_override_orig")));
+
+#ifdef LTTNG_UST_CUSTOM_UPGRADE_CONFLICTING_SYMBOLS
+int lttng_ust_trace_clock_set_read64_cb(lttng_ust_clock_read64_function read64_cb)
+	__attribute ((alias ("lttng_ust_trace_clock_set_read64_cb_orig")));
+int lttng_ust_trace_clock_set_freq_cb(lttng_ust_clock_freq_function freq_cb)
+	__attribute ((alias ("lttng_ust_trace_clock_set_freq_cb_orig")));
+int lttng_ust_trace_clock_set_uuid_cb(lttng_ust_clock_uuid_function uuid_cb)
+	__attribute ((alias ("lttng_ust_trace_clock_set_uuid_cb_orig")));
+int lttng_ust_trace_clock_set_name_cb(lttng_ust_clock_name_function name_cb)
+	__attribute ((alias ("lttng_ust_trace_clock_set_name_cb_orig")));
+int lttng_ust_trace_clock_set_description_cb(lttng_ust_clock_description_function description_cb)
+	__attribute ((alias ("lttng_ust_trace_clock_set_description_cb_orig")));
+int lttng_ust_enable_trace_clock_override(void)
+	__attribute ((alias ("lttng_ust_enable_trace_clock_override_orig")));
+#endif

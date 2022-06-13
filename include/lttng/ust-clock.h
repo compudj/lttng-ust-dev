@@ -9,6 +9,7 @@
 
 #include <stdint.h>
 #include <stddef.h>
+#include <lttng/ust-config.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -25,6 +26,17 @@ typedef uint64_t (*lttng_ust_clock_freq_function)(void);
 typedef int (*lttng_ust_clock_uuid_function)(char *uuid);
 typedef const char *(*lttng_ust_clock_name_function)(void);
 typedef const char *(*lttng_ust_clock_description_function)(void);
+
+/* Custom upgrade 2.12 to 2.13 */
+
+#ifndef LTTNG_UST_CUSTOM_UPGRADE_CONFLICTING_SYMBOLS
+#define lttng_ust_trace_clock_set_read64_cb		lttng_ust_trace_clock_set_read64_cb1
+#define lttng_ust_trace_clock_set_freq_cb		lttng_ust_trace_clock_set_freq_cb1
+#define lttng_ust_trace_clock_set_uuid_cb		lttng_ust_trace_clock_set_uuid_cb1
+#define lttng_ust_trace_clock_set_name_cb		lttng_ust_trace_clock_set_name_cb1
+#define lttng_ust_trace_clock_set_description_cb	lttng_ust_trace_clock_set_description_cb1
+#define lttng_ust_enable_trace_clock_override		lttng_ust_enable_trace_clock_override1
+#endif
 
 /*
  * Set/Get clock override read callback. This callback should return the
