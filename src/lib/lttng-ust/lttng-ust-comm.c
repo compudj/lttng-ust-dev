@@ -28,6 +28,7 @@
 #include <urcu/compiler.h>
 #include <lttng/urcu/urcu-ust.h>
 
+#include <lttng/ust-config.h>
 #include <lttng/ust-utils.h>
 #include <lttng/ust-events.h>
 #include <lttng/ust-abi.h>
@@ -113,10 +114,10 @@ static int lttng_ust_comm_should_quit;
 /*
  * This variable can be tested by applications to check whether
  * lttng-ust is loaded. They simply have to define their own
- * "lttng_ust_loaded" weak symbol, and test it. It is set to 1 by the
+ * "lttng_ust_loaded1" weak symbol, and test it. It is set to 1 by the
  * library constructor.
  */
-int lttng_ust_loaded __attribute__((weak));
+static int lttng_ust_loaded_orig;
 
 /*
  * Notes on async-signal-safety of ust lock: a few libc functions are used
@@ -2185,7 +2186,7 @@ void lttng_ust_ctor(void)
 	 */
 	lttng_ust_alloc_tls();
 
-	lttng_ust_loaded = 1;
+	lttng_ust_loaded_orig = 1;
 
 	/*
 	 * Check if we find a symbol of the previous ABI in the current process
@@ -2631,3 +2632,10 @@ void lttng_ust_sockinfo_session_enabled(void *owner)
 	struct sock_info *sock_info = owner;
 	sock_info->statedump_pending = 1;
 }
+
+/* Custom upgrade 2.12 to 2.13 */
+extern int lttng_ust_loaded1 __attribute__((weak, alias("lttng_ust_loaded_orig")));
+
+#ifdef LTTNG_UST_CUSTOM_UPGRADE_CONFLICTING_SYMBOLS
+extern int lttng_ust_loaded __attribute__((weak, alias("lttng_ust_loaded_orig")));
+#endif

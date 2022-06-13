@@ -1180,20 +1180,20 @@ Detect if LTTng-UST is loaded
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 To detect if `liblttng-ust` is loaded from an application:
 
-. Define the `lttng_ust_loaded` weak symbol globally:
+. Define the `lttng_ust_loaded1` weak symbol globally:
 +
 ------------------------------------------------------------------------
-int lttng_ust_loaded __attribute__((weak));
+int lttng_ust_loaded1 __attribute__((weak));
 ------------------------------------------------------------------------
 +
 This weak symbol is set by the constructor of `liblttng-ust`.
 
-. Test `lttng_ust_loaded` where needed:
+. Test `lttng_ust_loaded1` where needed:
 +
 ------------------------------------------------------------------------
 /* ... */
 
-if (lttng_ust_loaded) {
+if (lttng_ust_loaded1) {
     /* LTTng-UST is loaded */
 } else {
     /* LTTng-UST is NOT loaded */
