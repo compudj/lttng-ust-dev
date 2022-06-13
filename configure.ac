@@ -371,6 +371,11 @@ AE_FEATURE([examples],[Do not build and install examples])
 AE_FEATURE_DEFAULT_ENABLE
 AE_FEATURE([man-pages],[Do not build and install man pages (already built in a distributed tarball)])
 
+# Custom upgrade conflicting symbols
+# Disabled by default
+AE_FEATURE_DEFAULT_DISABLE
+AE_FEATURE([custom-upgrade-conflicting-symbols],[Emit and use original symbols for custom upgrade from 2.12 to 2.13])
+
 # Systemtap sdt.h integration
 # Disabled by default
 AC_ARG_WITH([sdt],
@@ -506,6 +511,11 @@ they will not be installed.
   ], [
     have_asciidoc_xmlto=yes
   ])
+])
+
+# Emit and use original symbols for custom upgrade from 2.12 to 2.13
+AE_IF_FEATURE_ENABLED([custom-upgrade-conflicting-symbols], [
+  AC_DEFINE([LTTNG_UST_CUSTOM_UPGRADE_CONFLICTING_SYMBOLS], [1], [Emit and use original symbols for custom upgrade from 2.12 to 2.13])
 ])
 
 AS_IF([test "x$with_sdt" = "xyes"], [
