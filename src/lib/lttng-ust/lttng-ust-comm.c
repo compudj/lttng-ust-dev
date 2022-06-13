@@ -2124,6 +2124,7 @@ void lttng_ust_libc_wrapper_malloc_ctor(void)
 {
 }
 
+#ifdef LTTNG_UST_CUSTOM_UPGRADE_CONFLICTING_SYMBOLS
 /*
  * Use a symbol of the previous ABI to detect if liblttng-ust.so.0 is loaded in
  * the current process.
@@ -2158,6 +2159,9 @@ void init_usterr(void)
 		"The process is likely linked against different major soname of LTTng-UST which is unsupported. "
 		"The detection was triggered by canary symbol \"%s\"\n", __func__);
 }
+#else
+static void lttng_ust_check_soname_0(void) {}
+#endif
 
 /*
  * sessiond monitoring thread: monitor presence of global and per-user

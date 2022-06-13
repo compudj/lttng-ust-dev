@@ -21,6 +21,7 @@
 #include <urcu/compiler.h>
 #include <urcu/system.h>
 
+#include <lttng/ust-config.h>
 #include <lttng/tracepoint.h>
 #include <lttng/ust-abi.h>	/* for LTTNG_UST_ABI_SYM_NAME_LEN */
 #include <lttng/ust-common.h>
@@ -608,6 +609,7 @@ static void tracepoint_release_queue_add_old_probes(void *old)
 	}
 }
 
+#ifdef LTTNG_UST_CUSTOM_UPGRADE_CONFLICTING_SYMBOLS
 /*
  * Use a symbol of the previous ABI to detect if liblttng-ust-tracepoint.so.0
  * is loaded in the current process.
@@ -640,6 +642,9 @@ int tracepoint_register_lib(void *arg0 __attribute__((unused)), int arg1 __attri
 
 	return -1;
 }
+#else
+static void lttng_ust_tracepoint_check_soname_0(void) {}
+#endif
 
 /**
  * lttng_ust_tracepoint_provider_register -  Connect a probe to a tracepoint
