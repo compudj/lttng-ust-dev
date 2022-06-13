@@ -118,7 +118,7 @@ void lttng_ust_fd_tracker_init(void)
 	CMM_STORE_SHARED(init_done, 1);
 }
 
-void lttng_ust_lock_fd_tracker(void)
+static void lttng_ust_lock_fd_tracker_orig(void)
 {
 	sigset_t sig_all_blocked, orig_mask;
 	int ret;
@@ -145,7 +145,7 @@ void lttng_ust_lock_fd_tracker(void)
 	}
 }
 
-void lttng_ust_unlock_fd_tracker(void)
+static void lttng_ust_unlock_fd_tracker_orig(void)
 {
 	sigset_t sig_all_blocked, orig_mask;
 	int ret;
@@ -251,7 +251,7 @@ error:
  * Return -1 on error.
  *
  */
-int lttng_ust_add_fd_to_tracker(int fd)
+static int lttng_ust_add_fd_to_tracker_orig(int fd)
 {
 	int ret;
 	/*
@@ -284,7 +284,7 @@ error:
  * Needs to be called with ust_safe_guard_fd_mutex held when opening the fd.
  * Has strict checking for fd validity.
  */
-void lttng_ust_delete_fd_from_tracker(int fd)
+static void lttng_ust_delete_fd_from_tracker_orig(int fd)
 {
 	/*
 	 * Ensure the tracker is initialized when called from
@@ -306,7 +306,7 @@ void lttng_ust_delete_fd_from_tracker(int fd)
  * We check if it is owned by lttng-ust, and return -1, errno=EBADF
  * instead of closing it if it is the case.
  */
-int lttng_ust_safe_close_fd(int fd, int (*close_cb)(int fd))
+static int lttng_ust_safe_close_fd_orig(int fd, int (*close_cb)(int fd))
 {
 	int ret = 0;
 
@@ -342,7 +342,7 @@ int lttng_ust_safe_close_fd(int fd, int (*close_cb)(int fd))
  * We check if it is owned by lttng-ust, and return -1, errno=EBADF
  * instead of closing it if it is the case.
  */
-int lttng_ust_safe_fclose_stream(FILE *stream, int (*fclose_cb)(FILE *stream))
+static int lttng_ust_safe_fclose_stream_orig(FILE *stream, int (*fclose_cb)(FILE *stream))
 {
 	int ret = 0, fd;
 
@@ -397,7 +397,7 @@ static int test_close_success(const int *p __attribute__((unused)))
 /*
  * Implement helper for closefrom() override.
  */
-int lttng_ust_safe_closefrom_fd(int lowfd, int (*close_cb)(int fd))
+static int lttng_ust_safe_closefrom_fd_orig(int lowfd, int (*close_cb)(int fd))
 {
 	int ret = 0, close_success = 0, i;
 
@@ -466,3 +466,45 @@ int lttng_ust_safe_closefrom_fd(int lowfd, int (*close_cb)(int fd))
 end:
 	return ret;
 }
+
+/* Custom upgrade 2.12 to 2.13 */
+
+#undef lttng_ust_add_fd_to_tracker
+#undef lttng_ust_delete_fd_from_tracker
+#undef lttng_ust_lock_fd_tracker
+#undef lttng_ust_unlock_fd_tracker
+#undef lttng_ust_safe_close_fd
+#undef lttng_ust_safe_fclose_stream
+#undef lttng_ust_safe_closefrom_fd
+
+int lttng_ust_add_fd_to_tracker1(int fd)
+	__attribute__ ((alias ("lttng_ust_add_fd_to_tracker_orig")));
+void lttng_ust_delete_fd_from_tracker1(int fd)
+	__attribute__ ((alias ("lttng_ust_delete_fd_from_tracker_orig")));
+void lttng_ust_lock_fd_tracker1(void)
+	__attribute__ ((alias ("lttng_ust_lock_fd_tracker_orig")));
+void lttng_ust_unlock_fd_tracker1(void)
+	__attribute__ ((alias ("lttng_ust_unlock_fd_tracker_orig")));
+int lttng_ust_safe_close_fd1(int fd, int (*close_cb)(int))
+	__attribute__ ((alias ("lttng_ust_safe_close_fd_orig")));
+int lttng_ust_safe_fclose_stream1(FILE *stream, int (*fclose_cb)(FILE *stream))
+	__attribute__ ((alias ("lttng_ust_safe_fclose_stream_orig")));
+int lttng_ust_safe_closefrom_fd1(int lowfd, int (*close_cb)(int))
+	__attribute__ ((alias ("lttng_ust_safe_closefrom_fd_orig")));
+
+#ifdef LTTNG_UST_CUSTOM_UPGRADE_CONFLICTING_SYMBOLS
+int lttng_ust_add_fd_to_tracker(int fd)
+	__attribute__ ((alias ("lttng_ust_add_fd_to_tracker_orig")));
+void lttng_ust_delete_fd_from_tracker(int fd)
+	__attribute__ ((alias ("lttng_ust_delete_fd_from_tracker_orig")));
+void lttng_ust_lock_fd_tracker(void)
+	__attribute__ ((alias ("lttng_ust_lock_fd_tracker_orig")));
+void lttng_ust_unlock_fd_tracker(void)
+	__attribute__ ((alias ("lttng_ust_unlock_fd_tracker_orig")));
+int lttng_ust_safe_close_fd(int fd, int (*close_cb)(int))
+	__attribute__ ((alias ("lttng_ust_safe_close_fd_orig")));
+int lttng_ust_safe_fclose_stream(FILE *stream, int (*fclose_cb)(FILE *stream))
+	__attribute__ ((alias ("lttng_ust_safe_fclose_stream_orig")));
+int lttng_ust_safe_closefrom_fd(int lowfd, int (*close_cb)(int))
+	__attribute__ ((alias ("lttng_ust_safe_closefrom_fd_orig")));
+#endif

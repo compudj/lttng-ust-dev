@@ -16,6 +16,19 @@
  */
 
 #include <stdio.h>
+#include <lttng/ust-config.h>
+
+/* Custom upgrade 2.12 to 2.13 */
+
+#ifndef LTTNG_UST_CUSTOM_UPGRADE_CONFLICTING_SYMBOLS
+#define lttng_ust_add_fd_to_tracker		lttng_ust_add_fd_to_tracker1
+#define lttng_ust_delete_fd_from_tracker	lttng_ust_delete_fd_from_tracker1
+#define lttng_ust_lock_fd_tracker		lttng_ust_lock_fd_tracker1
+#define lttng_ust_unlock_fd_tracker		lttng_ust_unlock_fd_tracker1
+#define lttng_ust_safe_close_fd			lttng_ust_safe_close_fd1
+#define lttng_ust_safe_fclose_stream		lttng_ust_safe_fclose_stream1
+#define lttng_ust_safe_closefrom_fd		lttng_ust_safe_closefrom_fd1
+#endif
 
 int lttng_ust_add_fd_to_tracker(int fd);
 void lttng_ust_delete_fd_from_tracker(int fd);
