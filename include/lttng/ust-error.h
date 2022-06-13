@@ -10,6 +10,7 @@
 
 #include <limits.h>
 #include <unistd.h>
+#include <lttng/ust-config.h>
 #include <lttng/ust-abi.h>
 
 #ifdef __cplusplus
@@ -38,6 +39,11 @@ enum lttng_ust_error_code {
 	/* MUST be last element */
 	LTTNG_UST_ERR_NR,			/* Last element */
 };
+
+/* Custom upgrade 2.12 to 2.13 */
+#ifndef LTTNG_UST_CUSTOM_UPGRADE_CONFLICTING_SYMBOLS
+#define lttng_ust_strerror		lttng_ust_strerror1
+#endif
 
 /*
  * lttng_ust_strerror

@@ -37,7 +37,7 @@ static const char *ustcomm_readable_code[] = {
  * Returns a ptr to a string representing a human readable error code from the
  * ustcomm_return_code enum.
  */
-const char *lttng_ust_strerror(int code)
+static const char *lttng_ust_strerror_orig(int code)
 {
 	code = -code;
 
@@ -46,3 +46,13 @@ const char *lttng_ust_strerror(int code)
 
 	return ustcomm_readable_code[CODE_OFFSET(code)];
 }
+
+/* Custom upgrade 2.12 to 2.13 */
+#undef lttng_ust_strerror
+const char *lttng_ust_strerror1(int code)
+	__attribute__ ((alias ("lttng_ust_strerror_orig")));
+
+#ifdef LTTNG_UST_CUSTOM_UPGRADE_CONFLICTING_SYMBOLS
+const char *lttng_ust_strerror(int code)
+	__attribute__ ((alias ("lttng_ust_strerror_orig")));
+#endif
