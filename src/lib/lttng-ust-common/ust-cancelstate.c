@@ -19,7 +19,7 @@ struct ust_cancelstate {
 
 static DEFINE_URCU_TLS(struct ust_cancelstate, thread_state);
 
-int lttng_ust_cancelstate_disable_push(void)
+static int lttng_ust_cancelstate_disable_push_orig(void)
 {
 	struct ust_cancelstate *state = &URCU_TLS(thread_state);
 	int ret, oldstate;
@@ -36,7 +36,7 @@ end:
 	return 0;
 }
 
-int lttng_ust_cancelstate_disable_pop(void)
+static int lttng_ust_cancelstate_disable_pop_orig(void)
 {
 	struct ust_cancelstate *state = &URCU_TLS(thread_state);
 	int ret, oldstate;
@@ -58,4 +58,19 @@ end:
 	return 0;
 }
 
+/* Custom upgrade 2.12 to 2.13 */
 
+#undef lttng_ust_cancelstate_disable_push
+#undef lttng_ust_cancelstate_disable_pop
+
+int lttng_ust_cancelstate_disable_push1(void)
+	__attribute ((alias ("lttng_ust_cancelstate_disable_push_orig")));
+int lttng_ust_cancelstate_disable_pop1(void)
+	__attribute ((alias ("lttng_ust_cancelstate_disable_pop_orig")));
+
+#ifdef LTTNG_UST_CUSTOM_UPGRADE_CONFLICTING_SYMBOLS
+int lttng_ust_cancelstate_disable_push(void)
+	__attribute ((alias ("lttng_ust_cancelstate_disable_push_orig")));
+int lttng_ust_cancelstate_disable_pop(void)
+	__attribute ((alias ("lttng_ust_cancelstate_disable_pop_orig")));
+#endif
