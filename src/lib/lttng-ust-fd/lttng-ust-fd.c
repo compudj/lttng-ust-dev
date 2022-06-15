@@ -66,6 +66,19 @@ void _lttng_ust_fd_ctor(void)
 static
 void _lttng_ust_fd_ctor(void)
 {
+#if !defined(LTTNG_UST_CUSTOM_UPGRADE_CONFLICTING_SYMBOLS)
+	void *handle = NULL;
+
+	/*
+	 * Load ust-2.12 in the global symbol namespace.
+	 */
+	handle = dlopen("liblttng-ust.so.0", RTLD_GLOBAL | RTLD_NOW);
+	if (!handle) {
+		fprintf(stderr, "liblttng-ust-fd.so.1: Failed to dlopen liblttng-ust.so.0: %s\n", dlerror());
+		abort();
+	}
+#endif
+
 	lttng_ust_common_ctor();
 
 	/*

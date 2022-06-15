@@ -18,6 +18,223 @@
 
 #include <lttng/ust-fork.h>
 
+#if !defined(LTTNG_UST_CUSTOM_UPGRADE_CONFLICTING_SYMBOLS)
+static int (*__ust_before_fork)(sigset_t *save_sigset) = NULL;
+static int (*__ust_after_fork_child)(sigset_t *restore_sigset) = NULL;
+static int (*__ust_after_fork_parent)(sigset_t *restore_sigset) = NULL;
+
+static void (*__ust_after_setns)(void) = NULL;
+static void (*__ust_after_unshare)(void) = NULL;
+static void (*__ust_after_setuid)(void) = NULL;
+static void (*__ust_after_setgid)(void) = NULL;
+static void (*__ust_after_seteuid)(void) = NULL;
+static void (*__ust_after_setegid)(void) = NULL;
+static void (*__ust_after_setreuid)(void) = NULL;
+static void (*__ust_after_setregid)(void) = NULL;
+static void (*__ust_after_setresuid)(void) = NULL;
+static void (*__ust_after_setresgid)(void) = NULL;
+
+static
+void *_init_ust_before_fork(void)
+{
+	if (__ust_before_fork == NULL) {
+		__ust_before_fork = dlsym(RTLD_DEFAULT, "ust_before_fork");
+
+		if (__ust_before_fork == NULL) {
+			fprintf(stderr, "%s\n", dlerror());
+		}
+	}
+
+	return __ust_before_fork;
+}
+
+static
+void *_init_ust_after_fork_child(void)
+{
+	if (__ust_after_fork_child == NULL) {
+		__ust_after_fork_child = dlsym(RTLD_DEFAULT, "ust_after_fork_child");
+
+		if (__ust_after_fork_child == NULL) {
+			fprintf(stderr, "%s\n", dlerror());
+		}
+	}
+
+	return __ust_after_fork_child;
+}
+
+static
+void *_init_ust_after_fork_parent(void)
+{
+	if (__ust_after_fork_parent == NULL) {
+		__ust_after_fork_parent = dlsym(RTLD_DEFAULT, "ust_after_fork_parent");
+
+		if (__ust_after_fork_parent == NULL) {
+			fprintf(stderr, "%s\n", dlerror());
+		}
+	}
+
+	return __ust_after_fork_parent;
+}
+
+static
+void *_init_ust_after_setns(void)
+{
+	if (__ust_after_setns == NULL) {
+		__ust_after_setns = dlsym(RTLD_DEFAULT, "ust_after_setns");
+
+		if (__ust_after_setns == NULL) {
+			fprintf(stderr, "%s\n", dlerror());
+		}
+	}
+
+	return __ust_after_setns;
+}
+
+static
+void *_init_ust_after_unshare(void)
+{
+	if (__ust_after_unshare == NULL) {
+		__ust_after_unshare = dlsym(RTLD_DEFAULT, "ust_after_unshare");
+
+		if (__ust_after_unshare == NULL) {
+			fprintf(stderr, "%s\n", dlerror());
+		}
+	}
+
+	return __ust_after_unshare;
+}
+
+static
+void *_init_ust_after_setuid(void)
+{
+	if (__ust_after_setuid == NULL) {
+		__ust_after_setuid = dlsym(RTLD_DEFAULT, "ust_after_setuid");
+
+		if (__ust_after_setuid == NULL) {
+			fprintf(stderr, "%s\n", dlerror());
+		}
+	}
+
+	return __ust_after_setuid;
+}
+
+static
+void *_init_ust_after_setgid(void)
+{
+	if (__ust_after_setgid == NULL) {
+		__ust_after_setgid = dlsym(RTLD_DEFAULT, "ust_after_setgid");
+
+		if (__ust_after_setgid == NULL) {
+			fprintf(stderr, "%s\n", dlerror());
+		}
+	}
+
+	return __ust_after_setgid;
+}
+
+static
+void *_init_ust_after_seteuid(void)
+{
+	if (__ust_after_seteuid == NULL) {
+		__ust_after_seteuid = dlsym(RTLD_DEFAULT, "ust_after_seteuid");
+
+		if (__ust_after_seteuid == NULL) {
+			fprintf(stderr, "%s\n", dlerror());
+		}
+	}
+
+	return __ust_after_seteuid;
+}
+
+static
+void *_init_ust_after_setegid(void)
+{
+	if (__ust_after_setegid == NULL) {
+		__ust_after_setegid = dlsym(RTLD_DEFAULT, "ust_after_setegid");
+
+		if (__ust_after_setegid == NULL) {
+			fprintf(stderr, "%s\n", dlerror());
+		}
+	}
+
+	return __ust_after_setegid;
+}
+
+static
+void *_init_ust_after_setreuid(void)
+{
+	if (__ust_after_setreuid == NULL) {
+		__ust_after_setreuid = dlsym(RTLD_DEFAULT, "ust_after_setreuid");
+
+		if (__ust_after_setreuid == NULL) {
+			fprintf(stderr, "%s\n", dlerror());
+		}
+	}
+
+	return __ust_after_setreuid;
+}
+
+static
+void *_init_ust_after_setregid(void)
+{
+	if (__ust_after_setregid == NULL) {
+		__ust_after_setregid = dlsym(RTLD_DEFAULT, "ust_after_setregid");
+
+		if (__ust_after_setregid == NULL) {
+			fprintf(stderr, "%s\n", dlerror());
+		}
+	}
+
+	return __ust_after_setregid;
+}
+
+static
+void *_init_ust_after_setresuid(void)
+{
+	if (__ust_after_setresuid == NULL) {
+		__ust_after_setresuid = dlsym(RTLD_DEFAULT, "ust_after_setresuid");
+
+		if (__ust_after_setresuid == NULL) {
+			fprintf(stderr, "%s\n", dlerror());
+		}
+	}
+
+	return __ust_after_setresuid;
+}
+
+static
+void *_init_ust_after_setresgid(void)
+{
+	if (__ust_after_setresgid == NULL) {
+		__ust_after_setresgid = dlsym(RTLD_DEFAULT, "ust_after_setresgid");
+
+		if (__ust_after_setresgid == NULL) {
+			fprintf(stderr, "%s\n", dlerror());
+		}
+	}
+
+	return __ust_after_setresgid;
+}
+
+static
+void _lttng_ust_fork_ctor(void)
+	__attribute__((constructor));
+static
+void _lttng_ust_fork_ctor(void)
+{
+	void *handle = NULL;
+
+	/*
+	 * Load ust-2.12 in the global symbol namespace.
+	 */
+	handle = dlopen("liblttng-ust.so.0", RTLD_GLOBAL | RTLD_NOW);
+	if (!handle) {
+		fprintf(stderr, "liblttng-ust-fork.so.1: Failed to dlopen liblttng-ust.so.0: %s\n", dlerror());
+		abort();
+	}
+}
+#endif
+
 pid_t fork(void)
 {
 	static pid_t (*plibc_func)(void) = NULL;
@@ -35,14 +252,30 @@ pid_t fork(void)
 	}
 
 	lttng_ust_before_fork(&sigset);
+#if !defined(LTTNG_UST_CUSTOM_UPGRADE_CONFLICTING_SYMBOLS)
+	if (_init_ust_before_fork()) {
+		__ust_before_fork(&sigset);
+	}
+#endif
+
 	/* Do the real fork */
 	retval = plibc_func();
 	saved_errno = errno;
 	if (retval == 0) {
 		/* child */
 		lttng_ust_after_fork_child(&sigset);
+#if !defined(LTTNG_UST_CUSTOM_UPGRADE_CONFLICTING_SYMBOLS)
+		if (_init_ust_after_fork_child()) {
+			__ust_after_fork_child(&sigset);
+		}
+#endif
 	} else {
 		lttng_ust_after_fork_parent(&sigset);
+#if !defined(LTTNG_UST_CUSTOM_UPGRADE_CONFLICTING_SYMBOLS)
+		if (_init_ust_after_fork_parent()) {
+			__ust_after_fork_parent(&sigset);
+		}
+#endif
 	}
 	errno = saved_errno;
 	return retval;
@@ -65,15 +298,31 @@ int daemon(int nochdir, int noclose)
 	}
 
 	lttng_ust_before_fork(&sigset);
+#if !defined(LTTNG_UST_CUSTOM_UPGRADE_CONFLICTING_SYMBOLS)
+	if (_init_ust_before_fork()) {
+		__ust_before_fork(&sigset);
+	}
+#endif
+
 	/* Do the real daemon call */
 	retval = plibc_func(nochdir, noclose);
 	saved_errno = errno;
 	if (retval == 0) {
 		/* child, parent called _exit() directly */
 		lttng_ust_after_fork_child(&sigset);
+#if !defined(LTTNG_UST_CUSTOM_UPGRADE_CONFLICTING_SYMBOLS)
+		if (_init_ust_after_fork_child()) {
+			__ust_after_fork_child(&sigset);
+		}
+#endif
 	} else {
 		/* on error in the parent */
 		lttng_ust_after_fork_parent(&sigset);
+#if !defined(LTTNG_UST_CUSTOM_UPGRADE_CONFLICTING_SYMBOLS)
+		if (_init_ust_after_fork_parent()) {
+			__ust_after_fork_parent(&sigset);
+		}
+#endif
 	}
 	errno = saved_errno;
 	return retval;
@@ -99,6 +348,11 @@ int setuid(uid_t uid)
 	saved_errno = errno;
 
 	lttng_ust_after_setuid();
+#if !defined(LTTNG_UST_CUSTOM_UPGRADE_CONFLICTING_SYMBOLS)
+	if (_init_ust_after_setuid()) {
+		__ust_after_setuid();
+	}
+#endif
 
 	errno = saved_errno;
 	return retval;
@@ -124,6 +378,11 @@ int setgid(gid_t gid)
 	saved_errno = errno;
 
 	lttng_ust_after_setgid();
+#if !defined(LTTNG_UST_CUSTOM_UPGRADE_CONFLICTING_SYMBOLS)
+	if (_init_ust_after_setgid()) {
+		__ust_after_setgid();
+	}
+#endif
 
 	errno = saved_errno;
 	return retval;
@@ -149,6 +408,11 @@ int seteuid(uid_t euid)
 	saved_errno = errno;
 
 	lttng_ust_after_seteuid();
+#if !defined(LTTNG_UST_CUSTOM_UPGRADE_CONFLICTING_SYMBOLS)
+	if (_init_ust_after_seteuid()) {
+		__ust_after_seteuid();
+	}
+#endif
 
 	errno = saved_errno;
 	return retval;
@@ -174,6 +438,11 @@ int setegid(gid_t egid)
 	saved_errno = errno;
 
 	lttng_ust_after_setegid();
+#if !defined(LTTNG_UST_CUSTOM_UPGRADE_CONFLICTING_SYMBOLS)
+	if (_init_ust_after_setegid()) {
+		__ust_after_setegid();
+	}
+#endif
 
 	errno = saved_errno;
 	return retval;
@@ -199,6 +468,11 @@ int setreuid(uid_t ruid, uid_t euid)
 	saved_errno = errno;
 
 	lttng_ust_after_setreuid();
+#if !defined(LTTNG_UST_CUSTOM_UPGRADE_CONFLICTING_SYMBOLS)
+	if (_init_ust_after_setreuid()) {
+		__ust_after_setreuid();
+	}
+#endif
 
 	errno = saved_errno;
 	return retval;
@@ -224,6 +498,11 @@ int setregid(gid_t rgid, gid_t egid)
 	saved_errno = errno;
 
 	lttng_ust_after_setregid();
+#if !defined(LTTNG_UST_CUSTOM_UPGRADE_CONFLICTING_SYMBOLS)
+	if (_init_ust_after_setregid()) {
+		__ust_after_setregid();
+	}
+#endif
 
 	errno = saved_errno;
 	return retval;
@@ -245,6 +524,11 @@ static int clone_fn(void *arg)
 
 	/* clone is now done and we are in child */
 	lttng_ust_after_fork_child(&info->sigset);
+#if !defined(LTTNG_UST_CUSTOM_UPGRADE_CONFLICTING_SYMBOLS)
+	if (_init_ust_after_fork_child()) {
+		__ust_after_fork_child(&info->sigset);
+	}
+#endif
 	return info->fn(info->arg);
 }
 
@@ -290,11 +574,21 @@ int clone(int (*fn)(void *), void *child_stack, int flags, void *arg, ...)
 		struct ustfork_clone_info info = { .fn = fn, .arg = arg };
 
 		lttng_ust_before_fork(&info.sigset);
+#if !defined(LTTNG_UST_CUSTOM_UPGRADE_CONFLICTING_SYMBOLS)
+		if (_init_ust_before_fork()) {
+			__ust_before_fork(&info.sigset);
+		}
+#endif
 		retval = plibc_func(clone_fn, child_stack, flags, &info,
 				ptid, tls, ctid);
 		saved_errno = errno;
 		/* The child doesn't get here. */
 		lttng_ust_after_fork_parent(&info.sigset);
+#if !defined(LTTNG_UST_CUSTOM_UPGRADE_CONFLICTING_SYMBOLS)
+		if (_init_ust_after_fork_parent()) {
+			__ust_after_fork_parent(&info.sigset);
+		}
+#endif
 	}
 	errno = saved_errno;
 	return retval;
@@ -320,6 +614,11 @@ int setns(int fd, int nstype)
 	saved_errno = errno;
 
 	lttng_ust_after_setns();
+#if !defined(LTTNG_UST_CUSTOM_UPGRADE_CONFLICTING_SYMBOLS)
+	if (_init_ust_after_setns()) {
+		__ust_after_setns();
+	}
+#endif
 
 	errno = saved_errno;
 	return retval;
@@ -345,6 +644,11 @@ int unshare(int flags)
 	saved_errno = errno;
 
 	lttng_ust_after_unshare();
+#if !defined(LTTNG_UST_CUSTOM_UPGRADE_CONFLICTING_SYMBOLS)
+	if (_init_ust_after_unshare()) {
+		__ust_after_unshare();
+	}
+#endif
 
 	errno = saved_errno;
 	return retval;
@@ -370,6 +674,11 @@ int setresuid(uid_t ruid, uid_t euid, uid_t suid)
 	saved_errno = errno;
 
 	lttng_ust_after_setresuid();
+#if !defined(LTTNG_UST_CUSTOM_UPGRADE_CONFLICTING_SYMBOLS)
+	if (_init_ust_after_setresuid()) {
+		__ust_after_setresuid();
+	}
+#endif
 
 	errno = saved_errno;
 	return retval;
@@ -395,6 +704,11 @@ int setresgid(gid_t rgid, gid_t egid, gid_t sgid)
 	saved_errno = errno;
 
 	lttng_ust_after_setresgid();
+#if !defined(LTTNG_UST_CUSTOM_UPGRADE_CONFLICTING_SYMBOLS)
+	if (_init_ust_after_setresgid()) {
+		__ust_after_setresgid();
+	}
+#endif
 
 	errno = saved_errno;
 	return retval;

@@ -21,6 +21,7 @@
 #include <pthread.h>
 #include <signal.h>
 #include <stdbool.h>
+#include <dlfcn.h>
 #include <urcu/compiler.h>
 #include <urcu/tls-compat.h>
 #include <urcu/system.h>
@@ -301,6 +302,35 @@ static void lttng_ust_delete_fd_from_tracker_orig(int fd)
 	DEL_FD_FROM_SET(fd, lttng_fd_set);
 }
 
+#if !defined(LTTNG_UST_CUSTOM_UPGRADE_CONFLICTING_SYMBOLS)
+static int (*__lttng_ust_safe_close_fd)(int fd, int (*close_cb)(int fd)) = NULL;
+
+static
+void *_init_lttng_ust_safe_close_fd(void)
+{
+	if (__lttng_ust_safe_close_fd == NULL) {
+		__lttng_ust_safe_close_fd = dlsym(RTLD_DEFAULT, "lttng_ust_safe_close_fd");
+
+		if (__lttng_ust_safe_close_fd == NULL) {
+			fprintf(stderr, "%s\n", dlerror());
+		}
+	}
+
+	return __lttng_ust_safe_close_fd;
+}
+
+static int lttng_ust_safe_close_fd_chain(int fd, int (*close_cb)(int fd))
+{
+	if (_init_lttng_ust_safe_close_fd()) {
+		/* Chain on ust-2.12 preload */
+		return __lttng_ust_safe_close_fd(fd, close_cb);
+	} else {
+		/* Fallback to libc symbol */
+		return close_cb(fd);
+	}
+}
+#endif
+
 /*
  * Interface allowing applications to close arbitrary file descriptors.
  * We check if it is owned by lttng-ust, and return -1, errno=EBADF
@@ -322,20 +352,58 @@ static int lttng_ust_safe_close_fd_orig(int fd, int (*close_cb)(int fd))
 	 * If called from lttng-ust, we directly call close without
 	 * validating whether the FD is part of the tracked set.
 	 */
-	if (URCU_TLS(ust_fd_mutex_nest))
+	if (URCU_TLS(ust_fd_mutex_nest)) {
+#if !defined(LTTNG_UST_CUSTOM_UPGRADE_CONFLICTING_SYMBOLS)
+		return lttng_ust_safe_close_fd_chain(fd, close_cb);
+#else
 		return close_cb(fd);
+#endif
+	}
 
 	lttng_ust_lock_fd_tracker();
 	if (IS_FD_VALID(fd) && IS_FD_SET(fd, lttng_fd_set)) {
 		ret = -1;
 		errno = EBADF;
 	} else {
+#if !defined(LTTNG_UST_CUSTOM_UPGRADE_CONFLICTING_SYMBOLS)
+		ret = lttng_ust_safe_close_fd_chain(fd, close_cb);
+#else
 		ret = close_cb(fd);
+#endif
 	}
 	lttng_ust_unlock_fd_tracker();
 
 	return ret;
 }
+
+#if !defined(LTTNG_UST_CUSTOM_UPGRADE_CONFLICTING_SYMBOLS)
+static int (*__lttng_ust_safe_fclose_stream)(FILE *stream, int (*fclose_cb)(FILE *stream)) = NULL;
+
+static
+void *_init_lttng_ust_safe_fclose_stream(void)
+{
+	if (__lttng_ust_safe_fclose_stream == NULL) {
+		__lttng_ust_safe_fclose_stream = dlsym(RTLD_DEFAULT, "lttng_ust_safe_fclose_stream");
+
+		if (__lttng_ust_safe_fclose_stream == NULL) {
+			fprintf(stderr, "%s\n", dlerror());
+		}
+	}
+
+	return __lttng_ust_safe_fclose_stream;
+}
+
+static int lttng_ust_safe_fclose_stream_chain(FILE *stream, int (*fclose_cb)(FILE *stream))
+{
+	if (_init_lttng_ust_safe_fclose_stream()) {
+		/* Chain on ust-2.12 preload */
+		return __lttng_ust_safe_fclose_stream(stream, fclose_cb);
+	} else {
+		/* Fallback to libc symbol */
+		return fclose_cb(stream);
+	}
+}
+#endif
 
 /*
  * Interface allowing applications to close arbitrary streams.
@@ -358,8 +426,13 @@ static int lttng_ust_safe_fclose_stream_orig(FILE *stream, int (*fclose_cb)(FILE
 	 * If called from lttng-ust, we directly call fclose without
 	 * validating whether the FD is part of the tracked set.
 	 */
-	if (URCU_TLS(ust_fd_mutex_nest))
+	if (URCU_TLS(ust_fd_mutex_nest)) {
+#if !defined(LTTNG_UST_CUSTOM_UPGRADE_CONFLICTING_SYMBOLS)
+		return lttng_ust_safe_fclose_stream_chain(stream, fclose_cb);
+#else
 		return fclose_cb(stream);
+#endif
+	}
 
 	fd = fileno(stream);
 
@@ -368,7 +441,11 @@ static int lttng_ust_safe_fclose_stream_orig(FILE *stream, int (*fclose_cb)(FILE
 		ret = -1;
 		errno = EBADF;
 	} else {
+#if !defined(LTTNG_UST_CUSTOM_UPGRADE_CONFLICTING_SYMBOLS)
+		ret = lttng_ust_safe_fclose_stream_chain(stream, fclose_cb);
+#else
 		ret = fclose_cb(stream);
+#endif
 	}
 	lttng_ust_unlock_fd_tracker();
 

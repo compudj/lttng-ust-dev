@@ -577,7 +577,7 @@ AM_CONDITIONAL([HAVE_CMAKE], [test "x$CMAKE" != "x"])
 AM_CONDITIONAL([HAVE_CXX], [test "$HAVE_CXX11" = "1"])
 AM_CONDITIONAL([HAVE_JAVAH], [test "x$JAVAH" != "x"])
 AM_CONDITIONAL([HAVE_PERF_EVENT], [test "x$ac_cv_header_linux_perf_event_h" = "xyes"])
-
+AM_CONDITIONAL([ENABLE_LTTNG_UST_CUSTOM_UPGRADE_CONFLICTING_SYMBOLS], AE_IS_FEATURE_ENABLED([custom-upgrade-conflicting-symbols]))
 
 ##                                             ##
 ## Substitute variables for use in Makefile.am ##
