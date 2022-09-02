@@ -1426,7 +1426,7 @@ int copy_counter_key(struct lttng_counter_key *internal_key,
 				offset += sizeof(struct lttng_ust_abi_counter_key_string);
 				if (offset > arg_len)
 					return -EINVAL;
-				internal_token->type = LTTNG_UST_ABI_KEY_TOKEN_STRING;
+				internal_token->type = LTTNG_KEY_TOKEN_STRING;
 				if (!abi_key_string->string_len || abi_key_string->string_len > LTTNG_KEY_TOKEN_STRING_LEN_MAX)
 					return -EINVAL;
 				offset += abi_key_string->string_len;
@@ -1439,10 +1439,10 @@ int copy_counter_key(struct lttng_counter_key *internal_key,
 				break;
 			}
 			case LTTNG_UST_ABI_KEY_TOKEN_EVENT_NAME:
-				internal_token->type = LTTNG_UST_ABI_KEY_TOKEN_EVENT_NAME;
+				internal_token->type = LTTNG_KEY_TOKEN_EVENT_NAME;
 				break;
 			case LTTNG_UST_ABI_KEY_TOKEN_PROVIDER_NAME:
-				internal_token->type = LTTNG_UST_ABI_KEY_TOKEN_PROVIDER_NAME;
+				internal_token->type = LTTNG_KEY_TOKEN_PROVIDER_NAME;
 				break;
 			default:
 				return -EINVAL;
