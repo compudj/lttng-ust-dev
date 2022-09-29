@@ -31,9 +31,6 @@ endif
 
 # Regression tests
 
-TESTS += \
-	regression/abi0-conflict/test_abi0_conflict
-
 EXTRA_DIST = README
 
 check-loop:
