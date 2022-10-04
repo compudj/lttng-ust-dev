@@ -16,6 +16,7 @@
 
 #include "common/macros.h"
 #include "common/ust-fd.h"
+#include "lib/lttng-ust-common/fd-tracker.h"
 
 #define LTTNG_UST_DLSYM_FAILED_PTR 0x1
 
@@ -60,24 +61,43 @@ void *_lttng_ust_fd_init_plibc_fclose(void)
 	return __lttng_ust_fd_plibc_fclose;
 }
 
+#if !defined(LTTNG_UST_CUSTOM_UPGRADE_CONFLICTING_SYMBOLS)
+
+static void *lttng_ust_2_12_handle;
+
+static
+void lttng_ust_init_close_chaining(void)
+{
+	if (lttng_ust_2_12_handle)
+		return;
+	/*
+	 * Load ust-2.12 in the global symbol namespace.
+	 */
+	lttng_ust_2_12_handle = dlopen("liblttng-ust.so.0", RTLD_GLOBAL | RTLD_NOW);
+	if (!lttng_ust_2_12_handle) {
+		fprintf(stderr, "liblttng-ust-fd.so.1: Failed to dlopen liblttng-ust.so.0: %s\n", dlerror());
+		abort();
+	}
+	/*
+	 * Initialize the function pointers to the ust 2.12 symbols in
+	 * the constructor since close() has to stay async-signal-safe
+	 * and as such, we can't call dlsym() in the override functions.
+	 */
+	(void) lttng_ust_safe_close_fd_init();
+	(void) lttng_ust_safe_fclose_stream_init();
+}
+#else
+static
+void lttng_ust_init_close_chaining(void) { }
+#endif
+
 static
 void _lttng_ust_fd_ctor(void)
 	__attribute__((constructor));
 static
 void _lttng_ust_fd_ctor(void)
 {
-#if !defined(LTTNG_UST_CUSTOM_UPGRADE_CONFLICTING_SYMBOLS)
-	void *handle = NULL;
-
-	/*
-	 * Load ust-2.12 in the global symbol namespace.
-	 */
-	handle = dlopen("liblttng-ust.so.0", RTLD_GLOBAL | RTLD_NOW);
-	if (!handle) {
-		fprintf(stderr, "liblttng-ust-fd.so.1: Failed to dlopen liblttng-ust.so.0: %s\n", dlerror());
-		abort();
-	}
-#endif
+	lttng_ust_init_close_chaining();
 
 	lttng_ust_common_ctor();
 
@@ -99,10 +119,13 @@ void _lttng_ust_fd_ctor(void)
  * errno=ENOSYS.
  *
  * There is a short window before the library constructor has executed where
- * this wrapper could call dlsym() and thus not be async-signal-safe.
+ * this wrapper could call dlsym() and dlopen() and thus not be
+ * async-signal-safe.
  */
 int close(int fd)
 {
+	lttng_ust_init_close_chaining();
+
 	/*
 	 * We can't retry dlsym here since close is async-signal-safe.
 	 */
@@ -131,6 +154,8 @@ int close(int fd)
  */
 int fclose(FILE *stream)
 {
+	lttng_ust_init_close_chaining();
+
 	if (_lttng_ust_fd_init_plibc_fclose() == (void *) LTTNG_UST_DLSYM_FAILED_PTR) {
 		errno = ENOSYS;
 		return -1;
@@ -141,6 +166,9 @@ int fclose(FILE *stream)
 }
 
 #if defined(__sun__) || defined(__FreeBSD__)
+
+#error "Custom upgrade branch does not support Solaris/FreeBSD closefrom"
+
 /* Solaris and FreeBSD. */
 void closefrom(int lowfd)
 {
@@ -151,6 +179,9 @@ void closefrom(int lowfd)
 	(void) lttng_ust_safe_closefrom_fd(lowfd, __lttng_ust_fd_plibc_close);
 }
 #elif defined(__NetBSD__) || defined(__OpenBSD__)
+
+#error "Custom upgrade branch does not support NetBSD/OpenBSD closefrom"
+
 /* NetBSD and OpenBSD. */
 int closefrom(int lowfd)
 {

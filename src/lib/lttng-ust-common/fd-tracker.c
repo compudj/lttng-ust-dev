@@ -34,6 +34,8 @@
 
 #include "lib/lttng-ust-common/fd-tracker.h"
 
+#define LTTNG_UST_DLSYM_FAILED_PTR 0x1
+
 /* Operations on the fd set. */
 #define IS_FD_VALID(fd)			((fd) >= 0 && (fd) < lttng_ust_max_fd)
 #define GET_FD_SET_FOR_FD(fd, fd_sets)	(&((fd_sets)[(fd) / FD_SETSIZE]))
@@ -79,6 +81,76 @@ void lttng_ust_fd_tracker_alloc_tls(void)
 {
 	asm volatile ("" : : "m" (URCU_TLS(ust_fd_mutex_nest)));
 }
+
+#if !defined(LTTNG_UST_CUSTOM_UPGRADE_CONFLICTING_SYMBOLS)
+static int (*__lttng_ust_safe_close_fd)(int fd, int (*close_cb)(int fd)) = NULL;
+
+void *lttng_ust_safe_close_fd_init(void)
+{
+	if (__lttng_ust_safe_close_fd == NULL) {
+		__lttng_ust_safe_close_fd = dlsym(RTLD_DEFAULT, "lttng_ust_safe_close_fd");
+
+		if (__lttng_ust_safe_close_fd == NULL) {
+			__lttng_ust_safe_close_fd = (void *) LTTNG_UST_DLSYM_FAILED_PTR;
+			fprintf(stderr, "%s\n", dlerror());
+		}
+	}
+
+	return __lttng_ust_safe_close_fd;
+}
+
+static int lttng_ust_safe_close_fd_chain(int fd, int (*close_cb)(int fd))
+{
+	assert(__lttng_ust_safe_close_fd != NULL);
+	if (__lttng_ust_safe_close_fd != (void *) LTTNG_UST_DLSYM_FAILED_PTR) {
+		/* Chain on ust-2.12 preload */
+		return __lttng_ust_safe_close_fd(fd, close_cb);
+	} else {
+		/* Fallback to libc symbol */
+		return close_cb(fd);
+	}
+}
+#else
+static int lttng_ust_safe_close_fd_chain(int fd, int (*close_cb)(int fd))
+{
+	return close_cb(fd);
+}
+#endif
+
+#if !defined(LTTNG_UST_CUSTOM_UPGRADE_CONFLICTING_SYMBOLS)
+static int (*__lttng_ust_safe_fclose_stream)(FILE *stream, int (*fclose_cb)(FILE *stream)) = NULL;
+
+void *lttng_ust_safe_fclose_stream_init(void)
+{
+	if (__lttng_ust_safe_fclose_stream == NULL) {
+		__lttng_ust_safe_fclose_stream = dlsym(RTLD_DEFAULT, "lttng_ust_safe_fclose_stream");
+
+		if (__lttng_ust_safe_fclose_stream == NULL) {
+			__lttng_ust_safe_fclose_stream = (void *) LTTNG_UST_DLSYM_FAILED_PTR;
+			fprintf(stderr, "%s\n", dlerror());
+		}
+	}
+
+	return __lttng_ust_safe_fclose_stream;
+}
+
+static int lttng_ust_safe_fclose_stream_chain(FILE *stream, int (*fclose_cb)(FILE *stream))
+{
+	assert(__lttng_ust_safe_fclose_stream != NULL);
+	if (__lttng_ust_safe_fclose_stream != (void *) LTTNG_UST_DLSYM_FAILED_PTR) {
+		/* Chain on ust-2.12 preload */
+		return __lttng_ust_safe_fclose_stream(stream, fclose_cb);
+	} else {
+		/* Fallback to libc symbol */
+		return fclose_cb(stream);
+	}
+}
+#else
+static int lttng_ust_safe_fclose_stream_chain(FILE *stream, int (*fclose_cb)(FILE *stream))
+{
+	return fclose_cb(stream);
+}
+#endif
 
 /*
  * Allocate the fd set array based on the hard limit set for this
@@ -302,35 +374,6 @@ static void lttng_ust_delete_fd_from_tracker_orig(int fd)
 	DEL_FD_FROM_SET(fd, lttng_fd_set);
 }
 
-#if !defined(LTTNG_UST_CUSTOM_UPGRADE_CONFLICTING_SYMBOLS)
-static int (*__lttng_ust_safe_close_fd)(int fd, int (*close_cb)(int fd)) = NULL;
-
-static
-void *_init_lttng_ust_safe_close_fd(void)
-{
-	if (__lttng_ust_safe_close_fd == NULL) {
-		__lttng_ust_safe_close_fd = dlsym(RTLD_DEFAULT, "lttng_ust_safe_close_fd");
-
-		if (__lttng_ust_safe_close_fd == NULL) {
-			fprintf(stderr, "%s\n", dlerror());
-		}
-	}
-
-	return __lttng_ust_safe_close_fd;
-}
-
-static int lttng_ust_safe_close_fd_chain(int fd, int (*close_cb)(int fd))
-{
-	if (_init_lttng_ust_safe_close_fd()) {
-		/* Chain on ust-2.12 preload */
-		return __lttng_ust_safe_close_fd(fd, close_cb);
-	} else {
-		/* Fallback to libc symbol */
-		return close_cb(fd);
-	}
-}
-#endif
-
 /*
  * Interface allowing applications to close arbitrary file descriptors.
  * We check if it is owned by lttng-ust, and return -1, errno=EBADF
@@ -365,45 +408,12 @@ static int lttng_ust_safe_close_fd_orig(int fd, int (*close_cb)(int fd))
 		ret = -1;
 		errno = EBADF;
 	} else {
-#if !defined(LTTNG_UST_CUSTOM_UPGRADE_CONFLICTING_SYMBOLS)
 		ret = lttng_ust_safe_close_fd_chain(fd, close_cb);
-#else
-		ret = close_cb(fd);
-#endif
 	}
 	lttng_ust_unlock_fd_tracker();
 
 	return ret;
 }
-
-#if !defined(LTTNG_UST_CUSTOM_UPGRADE_CONFLICTING_SYMBOLS)
-static int (*__lttng_ust_safe_fclose_stream)(FILE *stream, int (*fclose_cb)(FILE *stream)) = NULL;
-
-static
-void *_init_lttng_ust_safe_fclose_stream(void)
-{
-	if (__lttng_ust_safe_fclose_stream == NULL) {
-		__lttng_ust_safe_fclose_stream = dlsym(RTLD_DEFAULT, "lttng_ust_safe_fclose_stream");
-
-		if (__lttng_ust_safe_fclose_stream == NULL) {
-			fprintf(stderr, "%s\n", dlerror());
-		}
-	}
-
-	return __lttng_ust_safe_fclose_stream;
-}
-
-static int lttng_ust_safe_fclose_stream_chain(FILE *stream, int (*fclose_cb)(FILE *stream))
-{
-	if (_init_lttng_ust_safe_fclose_stream()) {
-		/* Chain on ust-2.12 preload */
-		return __lttng_ust_safe_fclose_stream(stream, fclose_cb);
-	} else {
-		/* Fallback to libc symbol */
-		return fclose_cb(stream);
-	}
-}
-#endif
 
 /*
  * Interface allowing applications to close arbitrary streams.
@@ -441,11 +451,7 @@ static int lttng_ust_safe_fclose_stream_orig(FILE *stream, int (*fclose_cb)(FILE
 		ret = -1;
 		errno = EBADF;
 	} else {
-#if !defined(LTTNG_UST_CUSTOM_UPGRADE_CONFLICTING_SYMBOLS)
 		ret = lttng_ust_safe_fclose_stream_chain(stream, fclose_cb);
-#else
-		ret = fclose_cb(stream);
-#endif
 	}
 	lttng_ust_unlock_fd_tracker();
 
