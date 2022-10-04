@@ -16,6 +16,7 @@ void lttng_ust_fd_tracker_alloc_tls(void)
 #if !defined(LTTNG_UST_CUSTOM_UPGRADE_CONFLICTING_SYMBOLS)
 void *lttng_ust_safe_close_fd_init(void);
 void *lttng_ust_safe_fclose_stream_init(void);
+void *lttng_ust_get_fd_mutex_nest_init(void);
 #endif
 
 #endif

@@ -85,6 +85,7 @@ void lttng_ust_init_close_chaining(void)
 	 */
 	(void) lttng_ust_safe_close_fd_init();
 	(void) lttng_ust_safe_fclose_stream_init();
+	(void) lttng_ust_get_fd_mutex_nest_init();
 }
 #else
 static

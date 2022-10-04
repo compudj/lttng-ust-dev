@@ -374,6 +374,38 @@ static void lttng_ust_delete_fd_from_tracker_orig(int fd)
 	DEL_FD_FROM_SET(fd, lttng_fd_set);
 }
 
+#if !defined(LTTNG_UST_CUSTOM_UPGRADE_CONFLICTING_SYMBOLS)
+/* lttng-ust 2.12 (custom branch) getter */
+static int (*__lttng_ust_get_fd_mutex_nest)(void) = NULL;
+
+void *lttng_ust_get_fd_mutex_nest_init(void)
+{
+	if (__lttng_ust_get_fd_mutex_nest == NULL) {
+		__lttng_ust_get_fd_mutex_nest = dlsym(RTLD_DEFAULT, "lttng_ust_get_fd_mutex_nest");
+
+		if (__lttng_ust_get_fd_mutex_nest == NULL) {
+			__lttng_ust_get_fd_mutex_nest = (void *) LTTNG_UST_DLSYM_FAILED_PTR;
+			fprintf(stderr, "%s\n", dlerror());
+		}
+	}
+
+	return __lttng_ust_get_fd_mutex_nest;
+}
+
+static int lttng_ust_get_fd_mutex_nest_chain(void)
+{
+	assert(__lttng_ust_get_fd_mutex_nest != NULL);
+	if (__lttng_ust_get_fd_mutex_nest != (void *) LTTNG_UST_DLSYM_FAILED_PTR)
+		return __lttng_ust_get_fd_mutex_nest();
+	return 0;
+}
+#else
+static int lttng_ust_get_fd_mutex_nest_chain(void)
+{
+	return 0;
+}
+#endif
+
 /*
  * Interface allowing applications to close arbitrary file descriptors.
  * We check if it is owned by lttng-ust, and return -1, errno=EBADF
@@ -395,13 +427,8 @@ static int lttng_ust_safe_close_fd_orig(int fd, int (*close_cb)(int fd))
 	 * If called from lttng-ust, we directly call close without
 	 * validating whether the FD is part of the tracked set.
 	 */
-	if (URCU_TLS(ust_fd_mutex_nest)) {
-#if !defined(LTTNG_UST_CUSTOM_UPGRADE_CONFLICTING_SYMBOLS)
-		return lttng_ust_safe_close_fd_chain(fd, close_cb);
-#else
+	if (URCU_TLS(ust_fd_mutex_nest) || lttng_ust_get_fd_mutex_nest_chain())
 		return close_cb(fd);
-#endif
-	}
 
 	lttng_ust_lock_fd_tracker();
 	if (IS_FD_VALID(fd) && IS_FD_SET(fd, lttng_fd_set)) {
@@ -436,13 +463,8 @@ static int lttng_ust_safe_fclose_stream_orig(FILE *stream, int (*fclose_cb)(FILE
 	 * If called from lttng-ust, we directly call fclose without
 	 * validating whether the FD is part of the tracked set.
 	 */
-	if (URCU_TLS(ust_fd_mutex_nest)) {
-#if !defined(LTTNG_UST_CUSTOM_UPGRADE_CONFLICTING_SYMBOLS)
-		return lttng_ust_safe_fclose_stream_chain(stream, fclose_cb);
-#else
+	if (URCU_TLS(ust_fd_mutex_nest) || lttng_ust_get_fd_mutex_nest_chain())
 		return fclose_cb(stream);
-#endif
-	}
 
 	fd = fileno(stream);
 
@@ -504,7 +526,7 @@ static int lttng_ust_safe_closefrom_fd_orig(int lowfd, int (*close_cb)(int fd))
 	 * If called from lttng-ust, we directly call close without
 	 * validating whether the FD is part of the tracked set.
 	 */
-	if (URCU_TLS(ust_fd_mutex_nest)) {
+	if (URCU_TLS(ust_fd_mutex_nest) || lttng_ust_get_fd_mutex_nest_chain()) {
 		for (i = lowfd; i < lttng_ust_max_fd; i++) {
 			if (close_cb(i) < 0) {
 				switch (errno) {
