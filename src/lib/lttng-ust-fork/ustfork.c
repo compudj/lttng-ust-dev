@@ -263,19 +263,19 @@ pid_t fork(void)
 	saved_errno = errno;
 	if (retval == 0) {
 		/* child */
-		lttng_ust_after_fork_child(&sigset);
 #if !defined(LTTNG_UST_CUSTOM_UPGRADE_CONFLICTING_SYMBOLS)
 		if (_init_ust_after_fork_child()) {
 			__ust_after_fork_child(&sigset);
 		}
 #endif
+		lttng_ust_after_fork_child(&sigset);
 	} else {
-		lttng_ust_after_fork_parent(&sigset);
 #if !defined(LTTNG_UST_CUSTOM_UPGRADE_CONFLICTING_SYMBOLS)
 		if (_init_ust_after_fork_parent()) {
 			__ust_after_fork_parent(&sigset);
 		}
 #endif
+		lttng_ust_after_fork_parent(&sigset);
 	}
 	errno = saved_errno;
 	return retval;
@@ -309,20 +309,20 @@ int daemon(int nochdir, int noclose)
 	saved_errno = errno;
 	if (retval == 0) {
 		/* child, parent called _exit() directly */
-		lttng_ust_after_fork_child(&sigset);
 #if !defined(LTTNG_UST_CUSTOM_UPGRADE_CONFLICTING_SYMBOLS)
 		if (_init_ust_after_fork_child()) {
 			__ust_after_fork_child(&sigset);
 		}
 #endif
+		lttng_ust_after_fork_child(&sigset);
 	} else {
 		/* on error in the parent */
-		lttng_ust_after_fork_parent(&sigset);
 #if !defined(LTTNG_UST_CUSTOM_UPGRADE_CONFLICTING_SYMBOLS)
 		if (_init_ust_after_fork_parent()) {
 			__ust_after_fork_parent(&sigset);
 		}
 #endif
+		lttng_ust_after_fork_parent(&sigset);
 	}
 	errno = saved_errno;
 	return retval;
@@ -347,12 +347,12 @@ int setuid(uid_t uid)
 	retval = plibc_func(uid);
 	saved_errno = errno;
 
-	lttng_ust_after_setuid();
 #if !defined(LTTNG_UST_CUSTOM_UPGRADE_CONFLICTING_SYMBOLS)
 	if (_init_ust_after_setuid()) {
 		__ust_after_setuid();
 	}
 #endif
+	lttng_ust_after_setuid();
 
 	errno = saved_errno;
 	return retval;
@@ -377,12 +377,12 @@ int setgid(gid_t gid)
 	retval = plibc_func(gid);
 	saved_errno = errno;
 
-	lttng_ust_after_setgid();
 #if !defined(LTTNG_UST_CUSTOM_UPGRADE_CONFLICTING_SYMBOLS)
 	if (_init_ust_after_setgid()) {
 		__ust_after_setgid();
 	}
 #endif
+	lttng_ust_after_setgid();
 
 	errno = saved_errno;
 	return retval;
@@ -407,12 +407,12 @@ int seteuid(uid_t euid)
 	retval = plibc_func(euid);
 	saved_errno = errno;
 
-	lttng_ust_after_seteuid();
 #if !defined(LTTNG_UST_CUSTOM_UPGRADE_CONFLICTING_SYMBOLS)
 	if (_init_ust_after_seteuid()) {
 		__ust_after_seteuid();
 	}
 #endif
+	lttng_ust_after_seteuid();
 
 	errno = saved_errno;
 	return retval;
@@ -437,12 +437,12 @@ int setegid(gid_t egid)
 	retval = plibc_func(egid);
 	saved_errno = errno;
 
-	lttng_ust_after_setegid();
 #if !defined(LTTNG_UST_CUSTOM_UPGRADE_CONFLICTING_SYMBOLS)
 	if (_init_ust_after_setegid()) {
 		__ust_after_setegid();
 	}
 #endif
+	lttng_ust_after_setegid();
 
 	errno = saved_errno;
 	return retval;
@@ -467,12 +467,12 @@ int setreuid(uid_t ruid, uid_t euid)
 	retval = plibc_func(ruid, euid);
 	saved_errno = errno;
 
-	lttng_ust_after_setreuid();
 #if !defined(LTTNG_UST_CUSTOM_UPGRADE_CONFLICTING_SYMBOLS)
 	if (_init_ust_after_setreuid()) {
 		__ust_after_setreuid();
 	}
 #endif
+	lttng_ust_after_setreuid();
 
 	errno = saved_errno;
 	return retval;
@@ -497,12 +497,12 @@ int setregid(gid_t rgid, gid_t egid)
 	retval = plibc_func(rgid, egid);
 	saved_errno = errno;
 
-	lttng_ust_after_setregid();
 #if !defined(LTTNG_UST_CUSTOM_UPGRADE_CONFLICTING_SYMBOLS)
 	if (_init_ust_after_setregid()) {
 		__ust_after_setregid();
 	}
 #endif
+	lttng_ust_after_setregid();
 
 	errno = saved_errno;
 	return retval;
@@ -523,12 +523,12 @@ static int clone_fn(void *arg)
 	struct ustfork_clone_info *info = (struct ustfork_clone_info *) arg;
 
 	/* clone is now done and we are in child */
-	lttng_ust_after_fork_child(&info->sigset);
 #if !defined(LTTNG_UST_CUSTOM_UPGRADE_CONFLICTING_SYMBOLS)
 	if (_init_ust_after_fork_child()) {
 		__ust_after_fork_child(&info->sigset);
 	}
 #endif
+	lttng_ust_after_fork_child(&info->sigset);
 	return info->fn(info->arg);
 }
 
@@ -583,12 +583,12 @@ int clone(int (*fn)(void *), void *child_stack, int flags, void *arg, ...)
 				ptid, tls, ctid);
 		saved_errno = errno;
 		/* The child doesn't get here. */
-		lttng_ust_after_fork_parent(&info.sigset);
 #if !defined(LTTNG_UST_CUSTOM_UPGRADE_CONFLICTING_SYMBOLS)
 		if (_init_ust_after_fork_parent()) {
 			__ust_after_fork_parent(&info.sigset);
 		}
 #endif
+		lttng_ust_after_fork_parent(&info.sigset);
 	}
 	errno = saved_errno;
 	return retval;
@@ -613,12 +613,12 @@ int setns(int fd, int nstype)
 	retval = plibc_func(fd, nstype);
 	saved_errno = errno;
 
-	lttng_ust_after_setns();
 #if !defined(LTTNG_UST_CUSTOM_UPGRADE_CONFLICTING_SYMBOLS)
 	if (_init_ust_after_setns()) {
 		__ust_after_setns();
 	}
 #endif
+	lttng_ust_after_setns();
 
 	errno = saved_errno;
 	return retval;
@@ -643,12 +643,12 @@ int unshare(int flags)
 	retval = plibc_func(flags);
 	saved_errno = errno;
 
-	lttng_ust_after_unshare();
 #if !defined(LTTNG_UST_CUSTOM_UPGRADE_CONFLICTING_SYMBOLS)
 	if (_init_ust_after_unshare()) {
 		__ust_after_unshare();
 	}
 #endif
+	lttng_ust_after_unshare();
 
 	errno = saved_errno;
 	return retval;
@@ -673,12 +673,12 @@ int setresuid(uid_t ruid, uid_t euid, uid_t suid)
 	retval = plibc_func(ruid, euid, suid);
 	saved_errno = errno;
 
-	lttng_ust_after_setresuid();
 #if !defined(LTTNG_UST_CUSTOM_UPGRADE_CONFLICTING_SYMBOLS)
 	if (_init_ust_after_setresuid()) {
 		__ust_after_setresuid();
 	}
 #endif
+	lttng_ust_after_setresuid();
 
 	errno = saved_errno;
 	return retval;
@@ -703,12 +703,12 @@ int setresgid(gid_t rgid, gid_t egid, gid_t sgid)
 	retval = plibc_func(rgid, egid, sgid);
 	saved_errno = errno;
 
-	lttng_ust_after_setresgid();
 #if !defined(LTTNG_UST_CUSTOM_UPGRADE_CONFLICTING_SYMBOLS)
 	if (_init_ust_after_setresgid()) {
 		__ust_after_setresgid();
 	}
 #endif
+	lttng_ust_after_setresgid();
 
 	errno = saved_errno;
 	return retval;
