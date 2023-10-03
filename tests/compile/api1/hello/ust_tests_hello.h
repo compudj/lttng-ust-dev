@@ -50,6 +50,10 @@ LTTNG_UST_TRACEPOINT_EVENT(ust_tests_hello, tptest,
 	)
 )
 
+LTTNG_UST_TRACEPOINT_TAGS(ust_tests_hello, tptest,
+	LTTNG_UST_TP_TAGS("lttng.io", "lttng.cpu")
+)
+
 LTTNG_UST_TRACEPOINT_EVENT(ust_tests_hello, tptest_sighandler,
 	LTTNG_UST_TP_ARGS(),
 	LTTNG_UST_TP_FIELDS()
