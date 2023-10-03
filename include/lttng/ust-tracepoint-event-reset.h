@@ -27,6 +27,9 @@
 #undef LTTNG_UST_TRACEPOINT_MODEL_EMF_URI
 #define LTTNG_UST_TRACEPOINT_MODEL_EMF_URI(provider, name, uri)
 
+#undef LTTNG_UST_TRACEPOINT_TAGS
+#define LTTNG_UST_TRACEPOINT_TAGS(provider, name, tags)
+
 #undef lttng_ust__field_integer_ext
 #define lttng_ust__field_integer_ext(_type, _item, _src, _byte_order, _base, \
 			_nowrite)

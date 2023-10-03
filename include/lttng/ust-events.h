@@ -282,6 +282,13 @@ struct lttng_ust_tracepoint_class {
 	/* End of base ABI. Fields below should be used after checking struct_size. */
 };
 
+struct lttng_ust_tracepoint_tags {
+	uint32_t struct_size;
+
+	const char * const *tags;
+	uint32_t nr_tags;
+} __attribute__((packed));
+
 /*
  * IMPORTANT: this structure is part of the ABI between the probe and
  * UST. Fields need to be only added at the end, never reordered, never
@@ -301,6 +308,7 @@ struct lttng_ust_event_desc {
 	const char **model_emf_uri;
 
 	/* End of base ABI. Fields below should be used after checking struct_size. */
+	const struct lttng_ust_tracepoint_tags **tags;
 };
 
 /*

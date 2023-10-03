@@ -1097,6 +1097,44 @@ LTTNG_UST_TP_EXTERN_C const char * const _model_emf_uri___##__provider##___##__n
 #undef LTTNG_UST_TP_EXTERN_C
 
 /*
+ * Stage 6.2 of tracepoint event generation.
+ *
+ * Tracepoint tags.
+ */
+
+/* Reset all macros within LTTNG_UST_TRACEPOINT_EVENT */
+#include <lttng/ust-tracepoint-event-reset.h>
+
+/*
+ * Declare _lttng_ust_tracepoint_tags___##__provider##___##__name as
+ * non-static, with hidden visibility for c++ handling of weakref. We do
+ * a weakref to the symbol in a later stage, which requires that the
+ * symbol is not mangled.
+ */
+#ifdef __cplusplus
+#define LTTNG_UST_TP_EXTERN_C extern "C"
+#else
+#define LTTNG_UST_TP_EXTERN_C
+#endif
+
+#undef LTTNG_UST_TP_TAGS
+#define LTTNG_UST_TP_TAGS(...)	__VA_ARGS__
+
+#undef LTTNG_UST_TRACEPOINT_TAGS
+#define LTTNG_UST_TRACEPOINT_TAGS(__provider, __name, __tags) \
+static const char * const _lttng_ust_tracepoint_tags_array___##__provider##___##__name[] = { __tags }; \
+LTTNG_UST_TP_EXTERN_C const struct lttng_ust_tracepoint_tags _lttng_ust_tracepoint_tags___##__provider##___##__name   \
+		__attribute__((visibility("hidden"))) = { \
+			.struct_size = sizeof(struct lttng_ust_tracepoint_tags), \
+			.tags = _lttng_ust_tracepoint_tags_array___##__provider##___##__name, \
+			.nr_tags = LTTNG_UST__TP_ARRAY_SIZE(_lttng_ust_tracepoint_tags_array___##__provider##___##__name), \
+		};
+
+#include LTTNG_UST_TRACEPOINT_INCLUDE
+
+#undef LTTNG_UST_TP_EXTERN_C
+
+/*
  * Stage 7.0 of tracepoint event generation.
  *
  * Create events description structures. We use a weakref because
@@ -1121,6 +1159,9 @@ static const int *							       \
 static const char *							       \
 	__ref_model_emf_uri___##_provider##___##_name			       \
 	__attribute__((weakref ("_model_emf_uri___" #_provider "___" #_name)));\
+static const struct lttng_ust_tracepoint_tags *				       \
+	__ref_lttng_ust_tracepoint_tags___##_provider##___##_name	       \
+	__attribute__((weakref ("_lttng_ust_tracepoint_tags___" #_provider "___" #_name))); \
 static const struct lttng_ust_event_desc lttng_ust__event_desc___##_provider##_##_name = { \
 	.struct_size = sizeof(struct lttng_ust_event_desc),		       \
 	.event_name = #_name,						       \
@@ -1128,6 +1169,7 @@ static const struct lttng_ust_event_desc lttng_ust__event_desc___##_provider##_#
 	.tp_class = &lttng_ust__event_class___##_template_provider##___##_template_name, \
 	.loglevel = &__ref_loglevel___##_provider##___##_name,		       \
 	.model_emf_uri = &__ref_model_emf_uri___##_provider##___##_name,       \
+	.tags = &__ref_lttng_ust_tracepoint_tags___##_provider##___##_name,  \
 };
 
 #include LTTNG_UST_TRACEPOINT_INCLUDE

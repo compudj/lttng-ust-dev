@@ -998,3 +998,9 @@ enum {
 #endif
 
 #endif /* #ifndef LTTNG_UST_TRACEPOINT_MODEL_EMF_URI */
+
+#ifndef LTTNG_UST_TRACEPOINT_TAGS
+
+#define LTTNG_UST_TRACEPOINT_TAGS(provider, name, tags)
+
+#endif /* #ifndef LTTNG_UST_TRACEPOINT_TAGS */
