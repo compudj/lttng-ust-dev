@@ -128,12 +128,16 @@ struct shm_object *_shm_object_table_alloc_shm(struct shm_object_table *table,
 		PERROR("ftruncate");
 		goto error_ftruncate;
 	}
+	/*
+	 * XXX: prototype: prevent reserving memory for unused buffers.
+	 */
+#if 0
 	ret = zero_file(shmfd, memory_map_size);
 	if (ret) {
 		PERROR("zero_file");
 		goto error_zero_file;
 	}
-
+#endif
 	/*
 	 * Also ensure the file metadata is synced with the storage by using
 	 * fsync(2). Some platforms don't allow fsync on POSIX shm fds, ignore
