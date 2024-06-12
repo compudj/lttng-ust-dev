@@ -40,7 +40,8 @@ for i in $(seq $ITERS); do
 done
 
 lttng-sessiond -d --no-kernel
-lttng -q create --snapshot
+#lttng -q create --snapshot
+lttng -q create
 lttng -q enable-event -u -a
 lttng -q start
 
@@ -51,6 +52,7 @@ for i in $(seq $ITERS); do
 done
 
 lttng -q stop
+lttng status
 lttng -q destroy
 killall lttng-sessiond
 
