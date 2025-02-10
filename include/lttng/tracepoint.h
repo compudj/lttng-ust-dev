@@ -59,8 +59,40 @@
 extern "C" {
 #endif
 
+#define lttng_ust_nop_branch(provider, name)				\
+	({								\
+		__label__ l_cold;					\
+		__label__ l_out;					\
+		__label__ l_generic;					\
+		int ___ret;						\
+									\
+		__asm__ goto (						\
+			/* 5-byte NOP: nopl   0x0(%rax,%rax,1). */	\
+			".byte 0x0f, 0x1f, 0x44, 0x00, 0x00\n\t"	\
+			:						\
+			:						\
+			:						\
+			: l_cold, l_generic);				\
+		/* fall through */					\
+		___ret = 0;						\
+		goto l_out;						\
+	l_cold:								\
+		___ret = 1;						\
+		goto l_out;						\
+	l_generic:							\
+		___ret = CMM_LOAD_SHARED(lttng_ust_tracepoint_##provider##___##name.state); \
+	l_out:								\
+		___ret;							\
+	 })
+
+
+#if 0
 #define lttng_ust_tracepoint_enabled(provider, name)				\
 	caa_unlikely(CMM_LOAD_SHARED(lttng_ust_tracepoint_##provider##___##name.state))
+#else
+#define lttng_ust_tracepoint_enabled(provider, name)				\
+	caa_unlikely(lttng_ust_nop_branch(provider, name))
+#endif
 
 #define lttng_ust_do_tracepoint(provider, name, ...)				\
 	lttng_ust_tracepoint_cb_##provider##___##name(__VA_ARGS__)
