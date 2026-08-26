@@ -62,7 +62,13 @@ liblttng_ust_la_SOURCES = \
 	rculfhash-mm-mmap.c \
 	rculfhash-mm-order.c \
 	strerror.c \
-	lttng-tracer-core.h
+	lttng-tracer-core.h \
+	lttng-ust-side.c \
+	side-visit-arg-vec.c \
+	side-visit-arg-vec.h \
+	side-visit-description.c \
+	side-visit-description.h
+	
 
 if HAVE_PERF_EVENT
 liblttng_ust_la_SOURCES += \
@@ -72,6 +78,7 @@ endif
 
 liblttng_ust_la_LDFLAGS = -no-undefined -version-info $(LTTNG_UST_LIBRARY_VERSION)
 
+# TODO: make libside dependency optional
 liblttng_ust_la_LIBADD = \
 	$(top_builddir)/src/common/libringbuffer.la \
 	$(top_builddir)/src/common/libringbuffer-clients.la \
@@ -82,6 +89,7 @@ liblttng_ust_la_LIBADD = \
 	$(top_builddir)/src/lib/lttng-ust-common/liblttng-ust-common.la \
 	$(top_builddir)/src/lib/lttng-ust-tracepoint/liblttng-ust-tracepoint.la \
 	-lrt \
+	-lside \
 	$(DL_LIBS)
 
 liblttng_ust_la_CFLAGS = -DUST_COMPONENT="liblttng_ust" $(AM_CFLAGS)

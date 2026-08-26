@@ -82,6 +82,11 @@ void lttng_event_notifier_notification_send(
 		struct lttng_ust_notification_ctx *notif_ctx)
 	__attribute__((visibility("hidden")));
 
+void lttng_ust_side_tracer_init(void)
+	__attribute__((visibility("hidden")));
+void lttng_ust_side_tracer_exit(void)
+	__attribute__((visibility("hidden")));
+
 #ifdef HAVE_LINUX_PERF_EVENT_H
 void lttng_ust_perf_counter_init_thread(int flags)
 	__attribute__((visibility("hidden")));

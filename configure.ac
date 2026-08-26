@@ -312,6 +312,8 @@ AC_CHECK_LIB([$libdl_name], [dlmopen], [
 # Require URCU >= 0.15 for CMM_RELEASE
 PKG_CHECK_MODULES([URCU], [liburcu >= 0.15])
 
+# Optionally depend on libside
+# TODO
 
 ##                 ##
 ## User variables  ##

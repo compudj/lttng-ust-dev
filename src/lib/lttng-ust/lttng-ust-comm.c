@@ -2583,6 +2583,7 @@ void lttng_ust_ctor(void)
 	/* Call the liblttng-ust-common constructor. */
 	lttng_ust_common_ctor();
 
+	lttng_ust_side_tracer_init();
 	lttng_ust_tp_init();
 	lttng_ust_statedump_init();
 	lttng_ust_ring_buffer_clients_init();
@@ -2751,6 +2752,7 @@ void lttng_ust_cleanup(int exiting)
 	lttng_ust_counter_clients_exit();
 	lttng_ust_statedump_destroy();
 	lttng_ust_tp_exit();
+	lttng_ust_side_tracer_exit();
 	if (!exiting) {
 		/* Reinitialize values for fork */
 		sem_count = sem_count_initial_value;
