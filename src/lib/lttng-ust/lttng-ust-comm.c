@@ -3216,7 +3216,31 @@ void ust_context_vgids_reset(void)
  * Holding this mutex protects these structures across fork and clone.
  */
 /*
- * Fork handling is coordinated through libphased-atfork: every
+ * Fork handling contract: fork() must behave as if the tracing
+ * runtime was not loaded.
+ *
+ * The threads added behind the back of the application (the listener
+ * threads here, the statedump agent thread in libside) are quiesced
+ * before fork and recreated afterwards, so that a process which is
+ * single-threaded by its own accounting gets single-threaded fork
+ * semantics: the child may keep running (and being traced) without
+ * exec.
+ *
+ * The locks which the tracing runtime covertly takes within
+ * application threads (first-use urcu thread registration, perf
+ * counter lazy initialization, fd tracker interposition on close(),
+ * probe registration from library constructors) are owned across
+ * fork by the acquire callback, so that a fork racing those hidden
+ * critical sections never hands the child a lock owned by a
+ * nonexistent thread nor torn tracer state: the child callbacks and
+ * fork+exec children depend on this.
+ *
+ * For applications forking amid their own concurrent thread
+ * activity, the tracer keeps its own state consistent in the child,
+ * but overall child viability is bounded by POSIX fork semantics as
+ * usual: no worse than without the tracer, not guaranteed better.
+ *
+ * Mechanism: coordination through libphased-atfork — every
  * participant's quiesce callback runs before any participant
  * acquires locks, and lock acquisition is dispatched in
  * cross-library lock-ordering levels (instrumentation notification
