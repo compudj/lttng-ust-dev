@@ -1788,8 +1788,26 @@ open_write:
 	 * If the open failed because the file did not exist, or because
 	 * the file was not truncated yet, try creating it ourself.
 	 */
+	/*
+	 * Use the async-signal-safe _Fork() when available: this
+	 * helper child only performs async-signal-safe operations
+	 * (open/ftruncate/_exit), and running the pthread_atfork
+	 * handlers — including the phased-atfork coordination of the
+	 * other fork participants (statedump agent thread pause, lock
+	 * acquisitions, transient recreation of service threads in
+	 * the short-lived child) — is both needless and hazardous
+	 * here: this fork runs while holding the fd tracker lock.
+	 * _Fork() also bypasses fork() interposers (e.g. old
+	 * liblttng-ust-fork preloads). The lttng_ust_nest_count guard
+	 * skips liblttng-ust's own fork handling on the plain fork()
+	 * fallback.
+	 */
 	URCU_TLS(lttng_ust_nest_count)++;
+#ifdef HAVE__FORK
+	pid = _Fork();
+#else
 	pid = fork();
+#endif
 	URCU_TLS(lttng_ust_nest_count)--;
 	if (pid > 0) {
 		int status, wait_ret;

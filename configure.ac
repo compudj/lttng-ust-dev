@@ -258,6 +258,7 @@ AC_FUNC_MMAP
 AC_FUNC_STRERROR_R
 AC_FUNC_STRNLEN
 AC_CHECK_FUNCS([ \
+  _Fork \
   atexit \
   clock_gettime \
   ftruncate \
