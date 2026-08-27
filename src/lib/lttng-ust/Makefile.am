@@ -90,6 +90,7 @@ liblttng_ust_la_LIBADD = \
 	$(top_builddir)/src/lib/lttng-ust-tracepoint/liblttng-ust-tracepoint.la \
 	-lrt \
 	-lside \
+	-lphased-atfork \
 	$(DL_LIBS)
 
 liblttng_ust_la_CFLAGS = -DUST_COMPONENT="liblttng_ust" $(AM_CFLAGS)

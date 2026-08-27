@@ -42,6 +42,7 @@
 #include <lttng/ust-cancelstate.h>
 #include <lttng/ust-fd.h>
 #include <urcu/tls-compat.h>
+#include <phased-atfork/phased-atfork.h>
 #include "lib/lttng-ust/futex.h"
 #include "common/ustcomm.h"
 #include "common/logging.h"
@@ -128,6 +129,8 @@ static pthread_mutex_t ust_fork_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 /* Should the ust comm thread quit ? */
 static int lttng_ust_comm_should_quit;
+
+static void lttng_ust_fork_participant_init(void);
 
 /*
  * This variable can be tested by applications to check whether
@@ -2583,6 +2586,12 @@ void lttng_ust_ctor(void)
 	/* Call the liblttng-ust-common constructor. */
 	lttng_ust_common_ctor();
 
+	/*
+	 * Register the tracer fork participant with the phased-atfork
+	 * coordinator.
+	 */
+	lttng_ust_fork_participant_init();
+
 	lttng_ust_side_tracer_init();
 	lttng_ust_tp_init();
 	lttng_ust_statedump_init();
@@ -2862,6 +2871,103 @@ void ust_context_vgids_reset(void)
  * in the middle of an tracepoint or ust tracing state modification.
  * Holding this mutex protects these structures across fork and clone.
  */
+/*
+ * Fork handling is coordinated through libphased-atfork: every
+ * participant's quiesce callback runs before any participant
+ * acquires locks, and lock acquisition is dispatched in
+ * cross-library lock-ordering levels (instrumentation notification
+ * locks are outer to the tracer control locks below, which are outer
+ * to instrumentation leaf locks). lttng-ust registers a tracer
+ * (level 1) participant. No quiesce callback is needed in this
+ * scheme: the ust_mutex acquisition in the acquire callback excludes
+ * the listener threads, which only hold locks while holding
+ * ust_mutex. Parking the listener threads at a quiescent point is
+ * only required to retire the LD_PRELOAD fork wrapper (future work).
+ *
+ * The lttng_ust_nest_count guard skips fork handling for the
+ * process-internal fork of get_wait_shm().
+ */
+static
+void lttng_ust_fork_acquire(void *priv __attribute__((unused)))
+{
+	if (URCU_TLS(lttng_ust_nest_count))
+		return;
+	pthread_mutex_lock(&ust_fork_mutex);
+	ust_lock_nocheck();
+	lttng_ust_urcu_before_fork();
+	lttng_ust_lock_fd_tracker();
+	lttng_perf_lock();
+}
+
+static
+void lttng_ust_fork_parent(void *priv __attribute__((unused)))
+{
+	if (URCU_TLS(lttng_ust_nest_count))
+		return;
+	DBG("process %d", getpid());
+	lttng_ust_urcu_after_fork_parent();
+	lttng_perf_unlock();
+	lttng_ust_unlock_fd_tracker();
+	ust_unlock();
+	pthread_mutex_unlock(&ust_fork_mutex);
+}
+
+/*
+ * After fork, in the child, we need to cleanup all the leftover
+ * state, except the worker threads which already magically
+ * disappeared thanks to the weird Linux fork semantics. The
+ * re-initialization (lttng_ust_ctor) is deliberately NOT performed
+ * here: it is driven by lttng_ust_after_fork_child() after the fork
+ * sequence completed and the application signal mask has been
+ * restored, so that the listener threads do not inherit a
+ * fully-blocked signal mask, and so that constructor-time work does
+ * not run within the atfork child-handler phase.
+ */
+static
+void lttng_ust_fork_child(void *priv __attribute__((unused)))
+{
+	if (URCU_TLS(lttng_ust_nest_count))
+		return;
+	lttng_context_vpid_reset();
+	lttng_context_vtid_reset();
+	lttng_ust_context_procname_reset();
+	ust_context_ns_reset();
+	ust_context_vuids_reset();
+	ust_context_vgids_reset();
+	DBG("process %d", getpid());
+	/* Release urcu mutexes */
+	lttng_ust_urcu_after_fork_child();
+	lttng_ust_cleanup(0);
+	lttng_perf_unlock();
+	lttng_ust_unlock_fd_tracker();
+	ust_unlock();
+	pthread_mutex_unlock(&ust_fork_mutex);
+}
+
+static const struct phased_atfork_ops lttng_ust_fork_ops = {
+	.acquire = lttng_ust_fork_acquire,
+	.parent = lttng_ust_fork_parent,
+	.child = lttng_ust_fork_child,
+};
+
+static struct phased_atfork_participant *lttng_ust_fork_participant;
+
+/*
+ * Called from the library constructor, which runs again in the child
+ * after fork: only register once. The participant is kept for the
+ * process lifetime.
+ */
+static
+void lttng_ust_fork_participant_init(void)
+{
+	if (lttng_ust_fork_participant)
+		return;
+	lttng_ust_fork_participant = phased_atfork_register(&lttng_ust_fork_ops,
+		NULL, PHASED_ATFORK_LEVEL_TRACER);
+	if (!lttng_ust_fork_participant)
+		ERR("Error registering phased-atfork participant");
+}
+
 void lttng_ust_before_fork(sigset_t *save_sigset)
 {
 	/*
@@ -2884,26 +2990,21 @@ void lttng_ust_before_fork(sigset_t *save_sigset)
 	if (ret == -1) {
 		PERROR("sigprocmask");
 	}
-
-	pthread_mutex_lock(&ust_fork_mutex);
-
-	ust_lock_nocheck();
-	lttng_ust_urcu_before_fork();
-	lttng_ust_lock_fd_tracker();
-	lttng_perf_lock();
+	/*
+	 * Run the whole phased-atfork prepare sequence. The
+	 * atfork-installed dispatch fired by fork() itself becomes a
+	 * nested no-op.
+	 */
+	phased_atfork_prepare();
 }
 
-static void ust_after_fork_common(sigset_t *restore_sigset)
+void lttng_ust_after_fork_parent(sigset_t *restore_sigset)
 {
 	int ret;
 
-	DBG("process %d", getpid());
-	lttng_perf_unlock();
-	lttng_ust_unlock_fd_tracker();
-	ust_unlock();
-
-	pthread_mutex_unlock(&ust_fork_mutex);
-
+	if (URCU_TLS(lttng_ust_nest_count))
+		return;
+	phased_atfork_parent();
 	/* Restore signals */
 	ret = sigprocmask(SIG_SETMASK, restore_sigset, NULL);
 	if (ret == -1) {
@@ -2911,41 +3012,23 @@ static void ust_after_fork_common(sigset_t *restore_sigset)
 	}
 }
 
-void lttng_ust_after_fork_parent(sigset_t *restore_sigset)
-{
-	if (URCU_TLS(lttng_ust_nest_count))
-		return;
-	DBG("process %d", getpid());
-	lttng_ust_urcu_after_fork_parent();
-	/* Release mutexes and re-enable signals */
-	ust_after_fork_common(restore_sigset);
-}
-
 /*
- * After fork, in the child, we need to cleanup all the leftover state,
- * except the worker thread which already magically disappeared thanks
- * to the weird Linux fork semantics. After tyding up, we call
- * lttng_ust_ctor() again to start over as a new PID.
- *
  * This is meant for forks() that have tracing in the child between the
  * fork and following exec call (if there is any).
  */
 void lttng_ust_after_fork_child(sigset_t *restore_sigset)
 {
+	int ret;
+
 	if (URCU_TLS(lttng_ust_nest_count))
 		return;
-	lttng_context_vpid_reset();
-	lttng_context_vtid_reset();
-	lttng_ust_context_procname_reset();
-	ust_context_ns_reset();
-	ust_context_vuids_reset();
-	ust_context_vgids_reset();
-	DBG("process %d", getpid());
-	/* Release urcu mutexes */
-	lttng_ust_urcu_after_fork_child();
-	lttng_ust_cleanup(0);
-	/* Release mutexes and re-enable signals */
-	ust_after_fork_common(restore_sigset);
+	phased_atfork_child();
+	/* Restore signals */
+	ret = sigprocmask(SIG_SETMASK, restore_sigset, NULL);
+	if (ret == -1) {
+		PERROR("sigprocmask");
+	}
+	/* Start over as a new PID. */
 	lttng_ust_ctor();
 }
 
