@@ -88,6 +88,19 @@ void lttng_ust_side_tracer_exit(void)
 	__attribute__((visibility("hidden")));
 
 /*
+ * Wait for a grace period of every domain from which the tracer can be
+ * invoked: the LTTng-UST RCU domain, within which the tracepoint
+ * probes are called, and the side domain, within which the side event
+ * callbacks are called. Upon return, all events which had begun before
+ * the call have completed, so data unpublished before the call can be
+ * reclaimed.
+ *
+ * Must not be invoked from a probe.
+ */
+void lttng_ust_tracer_synchronize(void)
+	__attribute__((visibility("hidden")));
+
+/*
  * Recognition and connection of side-backed event descriptors.
  * Called under ust_mutex.
  */

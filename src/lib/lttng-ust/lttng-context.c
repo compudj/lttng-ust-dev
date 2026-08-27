@@ -19,6 +19,7 @@
 #include <assert.h>
 #include <limits.h>
 #include "common/tracepoint.h"
+#include "lttng-tracer-core.h"
 
 #include "context-internal.h"
 
@@ -208,7 +209,7 @@ int lttng_ust_context_append_rcu(struct lttng_ust_ctx **ctx_p,
 	new_ctx->fields[new_ctx->nr_fields - 1] = *f;
 	lttng_context_update(new_ctx);
 	lttng_ust_rcu_assign_pointer(*ctx_p, new_ctx);
-	lttng_ust_urcu_synchronize_rcu();
+	lttng_ust_tracer_synchronize();
 	if (old_ctx) {
 		free(old_ctx->fields);
 		free(old_ctx);
@@ -296,7 +297,7 @@ int lttng_ust_context_set_provider_rcu(struct lttng_ust_ctx **_ctx,
 	}
 	new_ctx->fields = new_fields;
 	lttng_ust_rcu_assign_pointer(*_ctx, new_ctx);
-	lttng_ust_urcu_synchronize_rcu();
+	lttng_ust_tracer_synchronize();
 	free(ctx->fields);
 	free(ctx);
 	return 0;

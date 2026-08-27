@@ -24,6 +24,7 @@
 #include <urcu/list.h>
 #include <urcu/system.h>
 #include <urcu/compiler.h>
+#include <lttng/urcu/urcu-ust.h>
 
 #include "common/macros.h"
 #include "common/logging.h"
@@ -3734,4 +3735,17 @@ void lttng_ust_side_tracer_init(void)
 void lttng_ust_side_tracer_exit(void)
 {
 	side_tracer_event_notification_unregister(tracer_handle);
+}
+
+/*
+ * The tracepoint probes are called from a LTTng-UST RCU read-side
+ * critical section (lttng_ust_tp_rcu_read_lock()), and the side event
+ * callbacks are called from a side read-side critical section, which
+ * is a distinct domain. Data reachable from the probes is therefore
+ * only quiescent once both domains have observed a grace period.
+ */
+void lttng_ust_tracer_synchronize(void)
+{
+	lttng_ust_urcu_synchronize_rcu();
+	side_tracer_callback_synchronize();
 }
