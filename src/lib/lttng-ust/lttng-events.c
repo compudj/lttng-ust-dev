@@ -309,10 +309,13 @@ void register_event(struct lttng_ust_event_common *event)
 
 	assert(event->priv->registered == 0);
 	desc = event->priv->desc;
-	ret = lttng_ust_tp_probe_register_queue_release(desc->probe_desc->provider_name,
-			desc->event_name,
-			desc->tp_class->probe_callback,
-			event, desc->tp_class->signature);
+	if (lttng_ust_side_is_side_event(desc))
+		ret = lttng_ust_side_register_event(desc, event);
+	else
+		ret = lttng_ust_tp_probe_register_queue_release(desc->probe_desc->provider_name,
+				desc->event_name,
+				desc->tp_class->probe_callback,
+				event, desc->tp_class->signature);
 	WARN_ON_ONCE(ret);
 	if (!ret)
 		event->priv->registered = 1;
@@ -326,10 +329,13 @@ void unregister_event(struct lttng_ust_event_common *event)
 
 	assert(event->priv->registered == 1);
 	desc = event->priv->desc;
-	ret = lttng_ust_tp_probe_unregister_queue_release(desc->probe_desc->provider_name,
-			desc->event_name,
-			desc->tp_class->probe_callback,
-			event);
+	if (lttng_ust_side_is_side_event(desc))
+		ret = lttng_ust_side_unregister_event(desc, event);
+	else
+		ret = lttng_ust_tp_probe_unregister_queue_release(desc->probe_desc->provider_name,
+				desc->event_name,
+				desc->tp_class->probe_callback,
+				event);
 	WARN_ON_ONCE(ret);
 	if (!ret)
 		event->priv->registered = 0;

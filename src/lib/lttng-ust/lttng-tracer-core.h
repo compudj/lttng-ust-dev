@@ -87,6 +87,22 @@ void lttng_ust_side_tracer_init(void)
 void lttng_ust_side_tracer_exit(void)
 	__attribute__((visibility("hidden")));
 
+/*
+ * Recognition and connection of side-backed event descriptors.
+ * Called under ust_mutex.
+ */
+struct lttng_ust_event_desc;
+struct lttng_ust_event_common;
+
+bool lttng_ust_side_is_side_event(const struct lttng_ust_event_desc *desc)
+	__attribute__((visibility("hidden")));
+int lttng_ust_side_register_event(const struct lttng_ust_event_desc *desc,
+		struct lttng_ust_event_common *event)
+	__attribute__((visibility("hidden")));
+int lttng_ust_side_unregister_event(const struct lttng_ust_event_desc *desc,
+		struct lttng_ust_event_common *event)
+	__attribute__((visibility("hidden")));
+
 #ifdef HAVE_LINUX_PERF_EVENT_H
 void lttng_ust_perf_counter_init_thread(int flags)
 	__attribute__((visibility("hidden")));

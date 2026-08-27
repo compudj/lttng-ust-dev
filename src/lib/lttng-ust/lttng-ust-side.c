@@ -14,9 +14,19 @@
 #include <stdbool.h>
 #include <string.h>
 #include <iconv.h>
+#include <errno.h>
+#include <limits.h>
 
 #include <side/trace.h>
 
+#include <lttng/ust-events.h>
+#include <lttng/ust-ringbuffer-context.h>
+#include <urcu/list.h>
+#include <urcu/system.h>
+#include <urcu/compiler.h>
+
+#include "common/macros.h"
+#include "common/logging.h"
 #include "lttng-tracer-core.h"
 #include "side-visit-description.h"
 #include "side-visit-arg-vec.h"
@@ -1710,7 +1720,8 @@ static struct side_type_visitor type_visitor = {
 };
 
 static
-void tracer_call(const struct side_event_description *desc,
+__attribute__((unused))
+void tracer_print_call(const struct side_event_description *desc,
 		const struct side_arg_vec *side_arg_vec,
 		void *priv __attribute__((unused)),
 		void *caller_addr)
@@ -1721,7 +1732,8 @@ void tracer_call(const struct side_event_description *desc,
 }
 
 static
-void tracer_call_variadic(const struct side_event_description *desc,
+__attribute__((unused))
+void tracer_print_call_variadic(const struct side_event_description *desc,
 		const struct side_arg_vec *side_arg_vec,
 		const struct side_arg_dynamic_struct *var_struct,
 		void *priv __attribute__((unused)),
@@ -2419,6 +2431,7 @@ struct side_description_visitor_callbacks description_visitor_callbacks = {
 };
 
 static
+__attribute__((unused))
 void print_event_description(const struct side_event_description *desc)
 {
 	struct print_ctx ctx = {};
@@ -2430,68 +2443,1242 @@ void print_event_description(const struct side_event_description *desc)
 	visit_event_description(&visitor, desc);
 }
 
+/* ==================== LTTng tracing integration ==================== */
+
+/*
+ * Side event descriptions are translated into dynamically allocated
+ * LTTng probe/event descriptors registered with the probe provider
+ * registry, from which the existing enabler machinery creates
+ * events. The register_event()/unregister_event() paths connect
+ * LTTng events to side by registering the tracer_call() callback on
+ * the side event (see lttng_ust_side_register_event), which flips
+ * the side instrumentation "enabled" state: disabled side events
+ * keep their lock-free disabled fast path.
+ *
+ * Lock ordering (see the side.c lock ordering comment):
+ * side_notification_lock (held across tracer_event_notification)
+ *   -> ust_mutex (taken by lttng_ust_probe_register/unregister)
+ *     -> side_event_lock (leaf, taken by
+ *        side_tracer_callback_register/unregister from
+ *        register_event/unregister_event under ust_mutex).
+ *
+ * The translated descriptors reference strings (provider, event and
+ * field names) owned by the instrumented object: this is safe
+ * because REMOVE notifications are synchronous — the descriptors are
+ * torn down under the notification before the object may be
+ * unloaded — and ust_mutex is the descriptor validity domain on the
+ * tracer side.
+ *
+ * POC scope: static (non-variadic) events; field types supported by
+ * LTTng-UST tracepoints: integers, pointers, bool, byte, floats,
+ * UTF-8 strings, and arrays/sequences of integer elements. Variadic
+ * events and dynamic types are not mapped for now (a future "blob"
+ * type with a MIME-type such as protobuf could carry them); events
+ * containing unsupported types are skipped. Filter bytecode wiring
+ * is a separate phase: events with a filter attached are discarded.
+ * Serialization walks the description/payload with the simple
+ * visitor-based iterators (future work: bytecode).
+ */
+
+struct lttng_ust_side_event {
+	struct lttng_ust_event_desc parent;
+
+	struct lttng_ust_tracepoint_class tp_class;
+	struct lttng_ust_probe_desc probe_desc;
+	const struct lttng_ust_event_desc *event_desc_array[1];
+	struct side_event_description *side_desc;
+	struct lttng_ust_registered_probe *reg_probe;
+	const int *loglevel_ptr;
+	int loglevel;
+	const char *model_emf_uri_ptr;
+	const struct lttng_ust_event_field **fields;
+	uint32_t nr_fields;
+	struct cds_list_head node;
+};
+
+struct lttng_ust_side_registration {
+	struct cds_list_head node;
+	struct side_event_description **side_events;	/* Identity for REMOVE. */
+	uint32_t nr_side_events;
+	struct cds_list_head events;
+};
+
+/* Protected by the side notification delivery serialization. */
+static CDS_LIST_HEAD(side_registration_list);
+
+/*
+ * Map side loglevels (syslog-style 0-7) to LTTng-UST tracepoint
+ * loglevels (0-14, TRACE_EMERG..TRACE_DEBUG).
+ */
+static const int side_loglevel_to_lttng[] = {
+	[SIDE_LOGLEVEL_EMERG] = 0,
+	[SIDE_LOGLEVEL_ALERT] = 1,
+	[SIDE_LOGLEVEL_CRIT] = 2,
+	[SIDE_LOGLEVEL_ERR] = 3,
+	[SIDE_LOGLEVEL_WARNING] = 4,
+	[SIDE_LOGLEVEL_NOTICE] = 5,
+	[SIDE_LOGLEVEL_INFO] = 6,
+	[SIDE_LOGLEVEL_DEBUG] = 14,
+};
+
+/*
+ * Marker used as tp_class->probe_callback to recognize side-backed
+ * event descriptors in register_event()/unregister_event().
+ */
+static
+void lttng_ust_side_probe_marker(void)
+{
+}
+
+static
+size_t side_integer_alignof(uint16_t integer_size)
+{
+	switch (integer_size) {
+	case 1:
+		return lttng_ust_rb_alignof(uint8_t);
+	case 2:
+		return lttng_ust_rb_alignof(uint16_t);
+	case 4:
+		return lttng_ust_rb_alignof(uint32_t);
+	case 8:
+		return lttng_ust_rb_alignof(uint64_t);
+	default:
+		return 0;
+	}
+}
+
+static
+const struct lttng_ust_type_common *side_integer_type_to_lttng(
+		uint16_t integer_size, uint16_t len_bits, bool signedness,
+		const struct side_attr *attr, uint32_t nr_attr,
+		enum tracer_display_base default_base)
+{
+	struct lttng_ust_type_integer *t;
+	unsigned int base;
+	size_t align;
+
+	align = side_integer_alignof(integer_size);
+	if (!align)
+		return NULL;
+	/* Reject bit-packed integers for now. */
+	if (len_bits && len_bits != (uint16_t) (integer_size * CHAR_BIT))
+		return NULL;
+	switch (get_attr_display_base(attr, nr_attr, default_base)) {
+	case TRACER_DISPLAY_BASE_2:
+		base = 2;
+		break;
+	case TRACER_DISPLAY_BASE_8:
+		base = 8;
+		break;
+	case TRACER_DISPLAY_BASE_10:
+		base = 10;
+		break;
+	case TRACER_DISPLAY_BASE_16:
+		base = 16;
+		break;
+	default:
+		return NULL;
+	}
+	t = zmalloc(sizeof(struct lttng_ust_type_integer));
+	if (!t)
+		return NULL;
+	t->parent.type = lttng_ust_type_integer;
+	t->struct_size = sizeof(struct lttng_ust_type_integer);
+	t->size = integer_size * CHAR_BIT;
+	t->alignment = align * CHAR_BIT;
+	t->signedness = signedness;
+	/* Values are normalized to host byte order when serialized. */
+	t->reverse_byte_order = 0;
+	t->base = base;
+	return &t->parent;
+}
+
+/*
+ * Event description translation, driven by the description visitor.
+ */
+enum side_translate_state {
+	SIDE_TRANSLATE_TOPLEVEL,
+	SIDE_TRANSLATE_IN_ARRAY,
+	SIDE_TRANSLATE_IN_VLA_LENGTH,
+	SIDE_TRANSLATE_IN_VLA_ELEM,
+};
+
+struct side_translate_ctx {
+	struct lttng_ust_side_event *se;
+	const struct side_event_field *field;
+	enum side_translate_state state;
+	const struct lttng_ust_type_common *elem_type;
+	const struct lttng_ust_type_common *vla_length_type;
+	uint32_t array_length;
+	bool fail;
+};
+
+static
+void side_translate_type_destroy(const struct lttng_ust_type_common *type)
+{
+	if (!type)
+		return;
+	switch (type->type) {
+	case lttng_ust_type_array:
+	{
+		const struct lttng_ust_type_array *a =
+			caa_container_of(type, const struct lttng_ust_type_array, parent);
+		free((void *) a->elem_type);
+		break;
+	}
+	case lttng_ust_type_sequence:
+	{
+		const struct lttng_ust_type_sequence *s =
+			caa_container_of(type, const struct lttng_ust_type_sequence, parent);
+		free((void *) s->elem_type);
+		break;
+	}
+	default:
+		break;
+	}
+	free((void *) type);
+}
+
+static
+bool side_translate_append_field(struct side_translate_ctx *ctx,
+		const char *name, const struct lttng_ust_type_common *type,
+		bool nofilter)
+{
+	const struct lttng_ust_event_field **new_fields;
+	struct lttng_ust_event_field *f;
+	char *name_copy;
+
+	if (!type)
+		goto fail;
+	name_copy = strdup(name);
+	if (!name_copy)
+		goto fail_free_type;
+	f = zmalloc(sizeof(struct lttng_ust_event_field));
+	if (!f)
+		goto fail_free_name;
+	new_fields = realloc(ctx->se->fields,
+		(ctx->se->nr_fields + 1) * sizeof(*new_fields));
+	if (!new_fields)
+		goto fail_free_field;
+	ctx->se->fields = new_fields;
+	f->struct_size = sizeof(struct lttng_ust_event_field);
+	f->name = name_copy;
+	f->type = type;
+	f->nowrite = 0;
+	f->nofilter = nofilter;
+	ctx->se->fields[ctx->se->nr_fields++] = f;
+	return true;
+
+fail_free_field:
+	free(f);
+fail_free_name:
+	free(name_copy);
+fail_free_type:
+	side_translate_type_destroy(type);
+	type = NULL;
+fail:
+	ctx->fail = true;
+	return false;
+}
+
+static
+void side_translate_set_fail(struct side_translate_ctx *ctx)
+{
+	ctx->fail = true;
+}
+
+static
+void side_translate_integer_common(struct side_translate_ctx *ctx,
+		const struct lttng_ust_type_common *type)
+{
+	if (ctx->fail) {
+		side_translate_type_destroy(type);
+		return;
+	}
+	switch (ctx->state) {
+	case SIDE_TRANSLATE_TOPLEVEL:
+		(void) side_translate_append_field(ctx,
+			side_ptr_get(ctx->field->field_name), type, false);
+		break;
+	case SIDE_TRANSLATE_IN_ARRAY:
+	case SIDE_TRANSLATE_IN_VLA_ELEM:
+		if (ctx->elem_type) {
+			side_translate_type_destroy(type);
+			ctx->fail = true;
+			break;
+		}
+		if (!type) {
+			ctx->fail = true;
+			break;
+		}
+		ctx->elem_type = type;
+		break;
+	case SIDE_TRANSLATE_IN_VLA_LENGTH:
+		if (ctx->vla_length_type) {
+			side_translate_type_destroy(type);
+			ctx->fail = true;
+			break;
+		}
+		if (!type) {
+			ctx->fail = true;
+			break;
+		}
+		ctx->vla_length_type = type;
+		break;
+	}
+}
+
+static
+void side_translate_integer_type(const struct side_type_integer *t, void *priv)
+{
+	struct side_translate_ctx *ctx = (struct side_translate_ctx *) priv;
+	const struct lttng_ust_type_common *type;
+
+	type = side_integer_type_to_lttng(t->integer_size, t->len_bits,
+		t->signedness,
+		side_array_elements(&t->attributes),
+		side_array_length(&t->attributes),
+		TRACER_DISPLAY_BASE_10);
+	if (ctx->state == SIDE_TRANSLATE_IN_VLA_LENGTH && t->signedness) {
+		/* Sequence lengths must be unsigned. */
+		side_translate_type_destroy(type);
+		type = NULL;
+	}
+	side_translate_integer_common(ctx, type);
+}
+
+static
+void side_translate_pointer_type(const struct side_type_integer *t, void *priv)
+{
+	struct side_translate_ctx *ctx = (struct side_translate_ctx *) priv;
+	const struct lttng_ust_type_common *type;
+
+	type = side_integer_type_to_lttng(t->integer_size, t->len_bits,
+		t->signedness,
+		side_array_elements(&t->attributes),
+		side_array_length(&t->attributes),
+		TRACER_DISPLAY_BASE_16);
+	side_translate_integer_common(ctx, type);
+}
+
+static
+void side_translate_byte_type(const struct side_type_byte *t, void *priv)
+{
+	struct side_translate_ctx *ctx = (struct side_translate_ctx *) priv;
+	const struct lttng_ust_type_common *type;
+
+	type = side_integer_type_to_lttng(1, 0, false,
+		side_array_elements(&t->attributes),
+		side_array_length(&t->attributes),
+		TRACER_DISPLAY_BASE_16);
+	side_translate_integer_common(ctx, type);
+}
+
+static
+void side_translate_bool_type(const struct side_type_bool *t, void *priv)
+{
+	struct side_translate_ctx *ctx = (struct side_translate_ctx *) priv;
+	const struct lttng_ust_type_common *type;
+
+	if (ctx->fail)
+		return;
+	if (ctx->state != SIDE_TRANSLATE_TOPLEVEL
+			|| side_enum_get(t->byte_order) != SIDE_TYPE_BYTE_ORDER_HOST) {
+		ctx->fail = true;
+		return;
+	}
+	type = side_integer_type_to_lttng(t->bool_size, t->len_bits, false,
+		side_array_elements(&t->attributes),
+		side_array_length(&t->attributes),
+		TRACER_DISPLAY_BASE_10);
+	(void) side_translate_append_field(ctx,
+		side_ptr_get(ctx->field->field_name), type, false);
+}
+
+static
+void side_translate_float_type(const struct side_type_float *t, void *priv)
+{
+	struct side_translate_ctx *ctx = (struct side_translate_ctx *) priv;
+	struct lttng_ust_type_float *type;
+	unsigned int exp_dig, mant_dig;
+	size_t align;
+
+	if (ctx->fail)
+		return;
+	if (ctx->state != SIDE_TRANSLATE_TOPLEVEL
+			|| side_enum_get(t->byte_order) != SIDE_TYPE_BYTE_ORDER_HOST) {
+		ctx->fail = true;
+		return;
+	}
+	switch (t->float_size) {
+	case 4:
+		exp_dig = 8;
+		mant_dig = 24;
+		align = lttng_ust_rb_alignof(float);
+		break;
+	case 8:
+		exp_dig = 11;
+		mant_dig = 53;
+		align = lttng_ust_rb_alignof(double);
+		break;
+	default:
+		ctx->fail = true;
+		return;
+	}
+	type = zmalloc(sizeof(struct lttng_ust_type_float));
+	if (!type) {
+		ctx->fail = true;
+		return;
+	}
+	type->parent.type = lttng_ust_type_float;
+	type->struct_size = sizeof(struct lttng_ust_type_float);
+	type->exp_dig = exp_dig;
+	type->mant_dig = mant_dig;
+	type->alignment = align * CHAR_BIT;
+	type->reverse_byte_order = 0;
+	(void) side_translate_append_field(ctx,
+		side_ptr_get(ctx->field->field_name), &type->parent, false);
+}
+
+static
+void side_translate_string_type(const struct side_type_string *t, void *priv)
+{
+	struct side_translate_ctx *ctx = (struct side_translate_ctx *) priv;
+	struct lttng_ust_type_string *type;
+
+	if (ctx->fail)
+		return;
+	if (ctx->state != SIDE_TRANSLATE_TOPLEVEL || t->unit_size != 1) {
+		ctx->fail = true;
+		return;
+	}
+	type = zmalloc(sizeof(struct lttng_ust_type_string));
+	if (!type) {
+		ctx->fail = true;
+		return;
+	}
+	type->parent.type = lttng_ust_type_string;
+	type->struct_size = sizeof(struct lttng_ust_type_string);
+	type->encoding = lttng_ust_string_encoding_UTF8;
+	(void) side_translate_append_field(ctx,
+		side_ptr_get(ctx->field->field_name), &type->parent, false);
+}
+
+static
+void side_translate_before_field(const struct side_event_field *item_desc, void *priv)
+{
+	struct side_translate_ctx *ctx = (struct side_translate_ctx *) priv;
+
+	ctx->field = item_desc;
+}
+
+static
+void side_translate_after_field(const struct side_event_field *item_desc __attribute__((unused)),
+		void *priv)
+{
+	struct side_translate_ctx *ctx = (struct side_translate_ctx *) priv;
+
+	ctx->field = NULL;
+}
+
+static
+void side_translate_before_array(const struct side_type_array *a, void *priv)
+{
+	struct side_translate_ctx *ctx = (struct side_translate_ctx *) priv;
+
+	if (ctx->fail)
+		return;
+	if (ctx->state != SIDE_TRANSLATE_TOPLEVEL) {
+		ctx->fail = true;
+		return;
+	}
+	ctx->state = SIDE_TRANSLATE_IN_ARRAY;
+	ctx->elem_type = NULL;
+	ctx->array_length = a->length;
+}
+
+static
+void side_translate_after_array(const struct side_type_array *a __attribute__((unused)),
+		void *priv)
+{
+	struct side_translate_ctx *ctx = (struct side_translate_ctx *) priv;
+	struct lttng_ust_type_array *type;
+
+	if (ctx->state != SIDE_TRANSLATE_IN_ARRAY)
+		ctx->fail = true;
+	ctx->state = SIDE_TRANSLATE_TOPLEVEL;
+	if (ctx->fail)
+		goto fail;
+	if (!ctx->elem_type)
+		goto fail;
+	type = zmalloc(sizeof(struct lttng_ust_type_array));
+	if (!type)
+		goto fail;
+	type->parent.type = lttng_ust_type_array;
+	type->struct_size = sizeof(struct lttng_ust_type_array);
+	type->elem_type = ctx->elem_type;
+	type->length = ctx->array_length;
+	type->alignment = 0;
+	type->encoding = lttng_ust_string_encoding_none;
+	ctx->elem_type = NULL;
+	(void) side_translate_append_field(ctx,
+		side_ptr_get(ctx->field->field_name), &type->parent, false);
+	return;
+
+fail:
+	side_translate_type_destroy(ctx->elem_type);
+	ctx->elem_type = NULL;
+	ctx->fail = true;
+}
+
+static
+void side_translate_before_vla(const struct side_type_vla *v __attribute__((unused)),
+		void *priv)
+{
+	struct side_translate_ctx *ctx = (struct side_translate_ctx *) priv;
+
+	if (ctx->fail)
+		return;
+	if (ctx->state != SIDE_TRANSLATE_TOPLEVEL) {
+		ctx->fail = true;
+		return;
+	}
+	ctx->state = SIDE_TRANSLATE_IN_VLA_LENGTH;
+	ctx->elem_type = NULL;
+	ctx->vla_length_type = NULL;
+}
+
+static
+void side_translate_after_length_vla(const struct side_type_vla *v __attribute__((unused)),
+		void *priv)
+{
+	struct side_translate_ctx *ctx = (struct side_translate_ctx *) priv;
+
+	if (ctx->state != SIDE_TRANSLATE_IN_VLA_LENGTH || !ctx->vla_length_type)
+		ctx->fail = true;
+	ctx->state = SIDE_TRANSLATE_IN_VLA_ELEM;
+}
+
+static
+void side_translate_after_element_vla(const struct side_type_vla *v __attribute__((unused)),
+		void *priv)
+{
+	struct side_translate_ctx *ctx = (struct side_translate_ctx *) priv;
+	struct lttng_ust_type_sequence *type;
+	char length_name[LTTNG_UST_ABI_SYM_NAME_LEN];
+
+	if (ctx->state != SIDE_TRANSLATE_IN_VLA_ELEM)
+		ctx->fail = true;
+	ctx->state = SIDE_TRANSLATE_TOPLEVEL;
+	if (ctx->fail)
+		goto fail;
+	if (!ctx->elem_type || !ctx->vla_length_type)
+		goto fail;
+	/* Hidden length field, followed by the sequence itself. */
+	if (snprintf(length_name, sizeof(length_name), "_%s_length",
+			side_ptr_get(ctx->field->field_name)) >= (int) sizeof(length_name))
+		goto fail;
+	if (!side_translate_append_field(ctx, length_name,
+			ctx->vla_length_type, true)) {
+		ctx->vla_length_type = NULL;
+		goto fail;
+	}
+	ctx->vla_length_type = NULL;
+	type = zmalloc(sizeof(struct lttng_ust_type_sequence));
+	if (!type)
+		goto fail;
+	type->parent.type = lttng_ust_type_sequence;
+	type->struct_size = sizeof(struct lttng_ust_type_sequence);
+	type->length_name = NULL;	/* Use previous field. */
+	type->elem_type = ctx->elem_type;
+	type->alignment = 0;
+	type->encoding = lttng_ust_string_encoding_none;
+	ctx->elem_type = NULL;
+	(void) side_translate_append_field(ctx,
+		side_ptr_get(ctx->field->field_name), &type->parent, false);
+	return;
+
+fail:
+	side_translate_type_destroy(ctx->elem_type);
+	ctx->elem_type = NULL;
+	side_translate_type_destroy(ctx->vla_length_type);
+	ctx->vla_length_type = NULL;
+	ctx->fail = true;
+}
+
+/* Unsupported description elements: fail the translation. */
+static
+void side_translate_unsupported_null(const struct side_type_null *t __attribute__((unused)), void *priv)
+{
+	side_translate_set_fail((struct side_translate_ctx *) priv);
+}
+
+static
+void side_translate_unsupported_dynamic(const struct side_type *t __attribute__((unused)), void *priv)
+{
+	side_translate_set_fail((struct side_translate_ctx *) priv);
+}
+
+#define SIDE_TRANSLATE_UNSUPPORTED(_name, _type)				\
+static										\
+void side_translate_unsupported_##_name(_type *t __attribute__((unused)),	\
+		void *priv)							\
+{										\
+	side_translate_set_fail((struct side_translate_ctx *) priv);		\
+}
+
+SIDE_TRANSLATE_UNSUPPORTED(struct, const struct side_type_struct)
+SIDE_TRANSLATE_UNSUPPORTED(variant, const struct side_type_variant)
+SIDE_TRANSLATE_UNSUPPORTED(variant_sel, const struct side_type)
+SIDE_TRANSLATE_UNSUPPORTED(option, const struct side_variant_option)
+SIDE_TRANSLATE_UNSUPPORTED(optional, const struct side_type_optional)
+SIDE_TRANSLATE_UNSUPPORTED(enum, const struct side_type_enum)
+SIDE_TRANSLATE_UNSUPPORTED(enum_bitmap, const struct side_type_enum_bitmap)
+SIDE_TRANSLATE_UNSUPPORTED(gather_bool, const struct side_type_gather_bool)
+SIDE_TRANSLATE_UNSUPPORTED(gather_byte, const struct side_type_gather_byte)
+SIDE_TRANSLATE_UNSUPPORTED(gather_integer, const struct side_type_gather_integer)
+SIDE_TRANSLATE_UNSUPPORTED(gather_float, const struct side_type_gather_float)
+SIDE_TRANSLATE_UNSUPPORTED(gather_string, const struct side_type_gather_string)
+SIDE_TRANSLATE_UNSUPPORTED(gather_struct, const struct side_type_gather_struct)
+SIDE_TRANSLATE_UNSUPPORTED(gather_array, const struct side_type_gather_array)
+SIDE_TRANSLATE_UNSUPPORTED(gather_vla, const struct side_type_gather_vla)
+SIDE_TRANSLATE_UNSUPPORTED(gather_enum, const struct side_type_gather_enum)
+
+static
+const struct side_description_visitor_callbacks side_translate_visitor_callbacks = {
+	.before_field_func = side_translate_before_field,
+	.after_field_func = side_translate_after_field,
+
+	.null_type_func = side_translate_unsupported_null,
+	.bool_type_func = side_translate_bool_type,
+	.integer_type_func = side_translate_integer_type,
+	.byte_type_func = side_translate_byte_type,
+	.pointer_type_func = side_translate_pointer_type,
+	.float_type_func = side_translate_float_type,
+	.string_type_func = side_translate_string_type,
+
+	.before_struct_type_func = side_translate_unsupported_struct,
+	.before_variant_type_func = side_translate_unsupported_variant,
+	.after_variant_selector_type_func = side_translate_unsupported_variant_sel,
+	.before_option_func = side_translate_unsupported_option,
+	.before_array_type_func = side_translate_before_array,
+	.after_array_type_func = side_translate_after_array,
+	.before_vla_type_func = side_translate_before_vla,
+	.after_length_vla_type_func = side_translate_after_length_vla,
+	.after_element_vla_type_func = side_translate_after_element_vla,
+	.before_optional_type_func = side_translate_unsupported_optional,
+
+	.before_enum_type_func = side_translate_unsupported_enum,
+	.before_enum_bitmap_type_func = side_translate_unsupported_enum_bitmap,
+
+	.gather_bool_type_func = side_translate_unsupported_gather_bool,
+	.gather_byte_type_func = side_translate_unsupported_gather_byte,
+	.gather_integer_type_func = side_translate_unsupported_gather_integer,
+	.gather_pointer_type_func = side_translate_unsupported_gather_integer,
+	.gather_float_type_func = side_translate_unsupported_gather_float,
+	.gather_string_type_func = side_translate_unsupported_gather_string,
+	.before_gather_struct_type_func = side_translate_unsupported_gather_struct,
+	.before_gather_array_type_func = side_translate_unsupported_gather_array,
+	.before_gather_vla_type_func = side_translate_unsupported_gather_vla,
+	.before_gather_enum_type_func = side_translate_unsupported_gather_enum,
+
+	.dynamic_type_func = side_translate_unsupported_dynamic,
+};
+
+static
+void lttng_ust_side_event_destroy(struct lttng_ust_side_event *se)
+{
+	uint32_t i;
+
+	if (!se)
+		return;
+	for (i = 0; i < se->nr_fields; i++) {
+		const struct lttng_ust_event_field *f = se->fields[i];
+
+		side_translate_type_destroy(f->type);
+		free((void *) f->name);
+		free((void *) f);
+	}
+	free(se->fields);
+	free(se);
+}
+
+static
+struct lttng_ust_side_event *lttng_ust_side_event_create(struct side_event_description *sdesc)
+{
+	struct lttng_ust_side_event *se;
+	struct side_translate_ctx ctx = {};
+	struct side_description_visitor visitor;
+	enum side_loglevel loglevel;
+
+	if (sdesc->flags & SIDE_EVENT_FLAG_VARIADIC) {
+		DBG("Skipping side event %s:%s: variadic events are not supported",
+			side_ptr_get(sdesc->provider_name),
+			side_ptr_get(sdesc->event_name));
+		return NULL;
+	}
+	se = zmalloc(sizeof(struct lttng_ust_side_event));
+	if (!se)
+		return NULL;
+	CDS_INIT_LIST_HEAD(&se->node);
+	ctx.se = se;
+	ctx.state = SIDE_TRANSLATE_TOPLEVEL;
+	visitor.callbacks = &side_translate_visitor_callbacks;
+	visitor.priv = &ctx;
+	visit_event_description(&visitor, sdesc);
+	if (ctx.fail) {
+		DBG("Skipping side event %s:%s: unsupported field types",
+			side_ptr_get(sdesc->provider_name),
+			side_ptr_get(sdesc->event_name));
+		goto error;
+	}
+	se->side_desc = sdesc;
+	loglevel = side_enum_get(sdesc->loglevel);
+	if (loglevel <= SIDE_LOGLEVEL_DEBUG)
+		se->loglevel = side_loglevel_to_lttng[loglevel];
+	else
+		se->loglevel = side_loglevel_to_lttng[SIDE_LOGLEVEL_DEBUG];
+	se->loglevel_ptr = &se->loglevel;
+	se->model_emf_uri_ptr = NULL;
+
+	se->tp_class.struct_size = sizeof(struct lttng_ust_tracepoint_class);
+	se->tp_class.fields = se->fields;
+	se->tp_class.nr_fields = se->nr_fields;
+	se->tp_class.probe_callback = lttng_ust_side_probe_marker;
+	se->tp_class.signature = "side";
+	se->tp_class.probe_desc = &se->probe_desc;
+
+	se->parent.struct_size = sizeof(struct lttng_ust_event_desc);
+	se->parent.event_name = side_ptr_get(sdesc->event_name);
+	se->parent.probe_desc = &se->probe_desc;
+	se->parent.tp_class = &se->tp_class;
+	se->parent.loglevel = &se->loglevel_ptr;
+	se->parent.model_emf_uri = &se->model_emf_uri_ptr;
+
+	se->event_desc_array[0] = &se->parent;
+
+	se->probe_desc.struct_size = sizeof(struct lttng_ust_probe_desc);
+	se->probe_desc.provider_name = side_ptr_get(sdesc->provider_name);
+	se->probe_desc.event_desc = se->event_desc_array;
+	se->probe_desc.nr_events = 1;
+	se->probe_desc.major = LTTNG_UST_PROVIDER_MAJOR;
+	se->probe_desc.minor = LTTNG_UST_PROVIDER_MINOR;
+	return se;
+
+error:
+	lttng_ust_side_event_destroy(se);
+	return NULL;
+}
+
+/*
+ * Payload serialization into the ring buffer, driven by the arg-vec
+ * type visitor, in two passes: size/alignment computation, then
+ * writes between event_reserve and event_commit. Dynamic lengths
+ * (strings, sequences) are computed in the size pass and reused by
+ * the write pass so both passes agree even if the application
+ * concurrently modifies the pointed-to data.
+ */
+#define SIDE_SERIALIZE_MAX_DYN_LEN	16
+
+struct side_serialize_ctx {
+	bool write_pass;
+	bool fail;
+	size_t len;
+	size_t align;
+	size_t dyn_len[SIDE_SERIALIZE_MAX_DYN_LEN];
+	unsigned int dyn_idx;
+	struct lttng_ust_ring_buffer_ctx *bufctx;
+	struct lttng_ust_channel_buffer *chan;
+};
+
+static
+void side_serialize_record(struct side_serialize_ctx *c, const void *src,
+		size_t size, size_t align)
+{
+	if (c->fail)
+		return;
+	if (!c->write_pass) {
+		c->len += lttng_ust_ring_buffer_align(c->len, align);
+		c->len += size;
+		if (align > c->align)
+			c->align = align;
+	} else {
+		c->chan->ops->event_write(c->bufctx, src, size, align);
+	}
+}
+
+static
+bool side_serialize_push_dyn(struct side_serialize_ctx *c, size_t len)
+{
+	if (c->dyn_idx >= SIDE_SERIALIZE_MAX_DYN_LEN) {
+		c->fail = true;
+		return false;
+	}
+	c->dyn_len[c->dyn_idx++] = len;
+	return true;
+}
+
+static
+size_t side_serialize_next_dyn(struct side_serialize_ctx *c)
+{
+	if (c->dyn_idx >= SIDE_SERIALIZE_MAX_DYN_LEN) {
+		c->fail = true;
+		return 0;
+	}
+	return c->dyn_len[c->dyn_idx++];
+}
+
+static
+void side_serialize_integer_value(struct side_serialize_ctx *c,
+		uint16_t integer_size, uint64_t v)
+{
+	size_t align = side_integer_alignof(integer_size);
+
+	switch (integer_size) {
+	case 1:
+	{
+		uint8_t tmp = (uint8_t) v;
+
+		side_serialize_record(c, &tmp, sizeof(tmp), align);
+		break;
+	}
+	case 2:
+	{
+		uint16_t tmp = (uint16_t) v;
+
+		side_serialize_record(c, &tmp, sizeof(tmp), align);
+		break;
+	}
+	case 4:
+	{
+		uint32_t tmp = (uint32_t) v;
+
+		side_serialize_record(c, &tmp, sizeof(tmp), align);
+		break;
+	}
+	case 8:
+	{
+		uint64_t tmp = v;
+
+		side_serialize_record(c, &tmp, sizeof(tmp), align);
+		break;
+	}
+	default:
+		c->fail = true;
+		break;
+	}
+}
+
+static
+void side_serialize_integer(const struct side_type *type_desc,
+		const struct side_arg *item, void *priv)
+{
+	struct side_serialize_ctx *c = (struct side_serialize_ctx *) priv;
+	const struct side_type_integer *t = &type_desc->u.side_integer;
+	union int_value v;
+	uint16_t len_bits;
+
+	if (c->fail)
+		return;
+	if (t->integer_size > 8) {
+		c->fail = true;
+		return;
+	}
+	v = tracer_load_integer_value(t, &item->u.side_static.integer_value,
+		0, &len_bits);
+	side_serialize_integer_value(c, t->integer_size,
+		v.u[SIDE_INTEGER128_SPLIT_LOW]);
+}
+
+static
+void side_serialize_bool(const struct side_type *type_desc,
+		const struct side_arg *item, void *priv)
+{
+	struct side_serialize_ctx *c = (struct side_serialize_ctx *) priv;
+	const struct side_type_bool *t = &type_desc->u.side_bool;
+	uint64_t v;
+
+	if (c->fail)
+		return;
+	switch (t->bool_size) {
+	case 1:
+		v = item->u.side_static.bool_value.side_bool8;
+		break;
+	case 2:
+		v = item->u.side_static.bool_value.side_bool16;
+		break;
+	case 4:
+		v = item->u.side_static.bool_value.side_bool32;
+		break;
+	case 8:
+		v = item->u.side_static.bool_value.side_bool64;
+		break;
+	default:
+		c->fail = true;
+		return;
+	}
+	side_serialize_integer_value(c, t->bool_size, v);
+}
+
+static
+void side_serialize_byte(const struct side_type *type_desc __attribute__((unused)),
+		const struct side_arg *item, void *priv)
+{
+	struct side_serialize_ctx *c = (struct side_serialize_ctx *) priv;
+
+	side_serialize_record(c, &item->u.side_static.byte_value,
+		sizeof(uint8_t), lttng_ust_rb_alignof(uint8_t));
+}
+
+static
+void side_serialize_float(const struct side_type *type_desc,
+		const struct side_arg *item, void *priv)
+{
+	struct side_serialize_ctx *c = (struct side_serialize_ctx *) priv;
+	const struct side_type_float *t = &type_desc->u.side_float;
+
+	if (c->fail)
+		return;
+	switch (t->float_size) {
+	case 4:
+	{
+		float f = item->u.side_static.float_value.side_float_binary32;
+
+		side_serialize_record(c, &f, sizeof(f), lttng_ust_rb_alignof(float));
+		break;
+	}
+	case 8:
+	{
+		double d = item->u.side_static.float_value.side_float_binary64;
+
+		side_serialize_record(c, &d, sizeof(d), lttng_ust_rb_alignof(double));
+		break;
+	}
+	default:
+		c->fail = true;
+		break;
+	}
+}
+
+static
+void side_serialize_string(const struct side_type *type_desc,
+		const struct side_arg *item, void *priv)
+{
+	struct side_serialize_ctx *c = (struct side_serialize_ctx *) priv;
+	const struct side_type_string *t = &type_desc->u.side_string;
+	const char *p;
+	size_t len;
+
+	if (c->fail)
+		return;
+	if (t->unit_size != 1) {
+		c->fail = true;
+		return;
+	}
+	p = (const char *) side_ptr_get(item->u.side_static.string_value);
+	if (!p)
+		p = "";
+	if (!c->write_pass) {
+		len = strlen(p) + 1;
+		if (!side_serialize_push_dyn(c, len))
+			return;
+	} else {
+		len = side_serialize_next_dyn(c);
+		if (c->fail)
+			return;
+	}
+	side_serialize_record(c, p, len, 1);
+}
+
+static
+void side_serialize_before_array(const struct side_type_array *side_array,
+		const struct side_arg_vec *side_arg_vec, void *priv)
+{
+	struct side_serialize_ctx *c = (struct side_serialize_ctx *) priv;
+
+	if (side_arg_vec->len != side_array->length)
+		c->fail = true;
+	/* Elements are serialized through the element callbacks. */
+}
+
+static
+void side_serialize_before_vla(const struct side_type_vla *side_vla,
+		const struct side_arg_vec *side_arg_vec, void *priv)
+{
+	struct side_serialize_ctx *c = (struct side_serialize_ctx *) priv;
+	const struct side_type *lt;
+	const struct side_type_integer *t;
+	size_t len;
+
+	if (c->fail)
+		return;
+	lt = side_ptr_get(side_vla->length_type);
+	switch (side_enum_get(lt->type)) {
+	case SIDE_TYPE_U8:
+	case SIDE_TYPE_U16:
+	case SIDE_TYPE_U32:
+	case SIDE_TYPE_U64:
+		break;
+	default:
+		c->fail = true;
+		return;
+	}
+	t = &lt->u.side_integer;
+	if (!c->write_pass) {
+		len = side_arg_vec->len;
+		if (t->integer_size < 8
+				&& len >= (1ULL << (t->integer_size * CHAR_BIT))) {
+			c->fail = true;
+			return;
+		}
+		if (!side_serialize_push_dyn(c, len))
+			return;
+	} else {
+		len = side_serialize_next_dyn(c);
+		if (c->fail)
+			return;
+	}
+	side_serialize_integer_value(c, t->integer_size, len);
+	/* Elements are serialized through the element callbacks. */
+}
+
+static
+void side_serialize_fail_variadic(const struct side_arg_dynamic_struct *var_struct __attribute__((unused)),
+		void *priv)
+{
+	((struct side_serialize_ctx *) priv)->fail = true;
+}
+
+static
+void side_serialize_fail_arg(const struct side_type *type_desc __attribute__((unused)),
+		const struct side_arg *item __attribute__((unused)), void *priv)
+{
+	((struct side_serialize_ctx *) priv)->fail = true;
+}
+
+static
+void side_serialize_fail_struct(const struct side_type_struct *side_struct __attribute__((unused)),
+		const struct side_arg_vec *side_arg_vec __attribute__((unused)), void *priv)
+{
+	((struct side_serialize_ctx *) priv)->fail = true;
+}
+
+static
+void side_serialize_fail_dynamic(const struct side_arg *item __attribute__((unused)),
+		void *priv)
+{
+	((struct side_serialize_ctx *) priv)->fail = true;
+}
+
+static
+const struct side_type_visitor side_serialize_type_visitor = {
+	.before_variadic_fields_func = side_serialize_fail_variadic,
+
+	.null_type_func = side_serialize_fail_arg,
+	.bool_type_func = side_serialize_bool,
+	.integer_type_func = side_serialize_integer,
+	.byte_type_func = side_serialize_byte,
+	.pointer_type_func = side_serialize_integer,
+	.float_type_func = side_serialize_float,
+	.string_type_func = side_serialize_string,
+
+	.before_struct_type_func = side_serialize_fail_struct,
+	.before_array_type_func = side_serialize_before_array,
+	.before_vla_type_func = side_serialize_before_vla,
+
+	.enum_type_func = side_serialize_fail_arg,
+	.enum_bitmap_type_func = side_serialize_fail_arg,
+
+	.dynamic_null_func = side_serialize_fail_dynamic,
+	.dynamic_bool_func = side_serialize_fail_dynamic,
+	.dynamic_integer_func = side_serialize_fail_dynamic,
+	.dynamic_byte_func = side_serialize_fail_dynamic,
+	.dynamic_pointer_func = side_serialize_fail_dynamic,
+	.dynamic_float_func = side_serialize_fail_dynamic,
+	.dynamic_string_func = side_serialize_fail_dynamic,
+};
+
+/*
+ * Called by side with the side RCU read-side held: the LTTng event
+ * (priv) is protected against teardown by the synchronous callback
+ * unregistration grace period in unregister_event().
+ */
+static
+void tracer_call(const struct side_event_description *desc,
+		const struct side_arg_vec *side_arg_vec,
+		void *priv, void *caller_addr)
+{
+	struct lttng_ust_event_common *event = (struct lttng_ust_event_common *) priv;
+	struct lttng_ust_channel_common *chan_common;
+	struct lttng_ust_probe_ctx probe_ctx;
+	struct side_serialize_ctx c = {};
+
+	if (caa_unlikely(!CMM_ACCESS_ONCE(event->enabled)))
+		return;
+	chan_common = lttng_ust_get_chan_common_from_event_common(event);
+	if (chan_common) {
+		if (caa_unlikely(!CMM_ACCESS_ONCE(chan_common->session->active)))
+			return;
+		if (caa_unlikely(!CMM_ACCESS_ONCE(chan_common->enabled)))
+			return;
+	}
+	/* Filter bytecode wiring is a separate phase. */
+	if (caa_unlikely(CMM_ACCESS_ONCE(event->eval_filter)))
+		return;
+	probe_ctx.struct_size = sizeof(struct lttng_ust_probe_ctx);
+	probe_ctx.ip = caller_addr;
+	switch (event->type) {
+	case LTTNG_UST_EVENT_TYPE_RECORDER:
+	{
+		struct lttng_ust_event_recorder *event_recorder =
+			(struct lttng_ust_event_recorder *) event->child;
+		struct lttng_ust_channel_buffer *chan = event_recorder->chan;
+		struct lttng_ust_ring_buffer_ctx bufctx;
+
+		/* Size/alignment pass. */
+		c.write_pass = false;
+		c.len = 0;
+		c.align = 1;
+		c.chan = chan;
+		type_visitor_event(&side_serialize_type_visitor, desc,
+			side_arg_vec, NULL, caller_addr, &c);
+		if (caa_unlikely(c.fail))
+			return;
+		lttng_ust_ring_buffer_ctx_init(&bufctx, event_recorder,
+			c.len, c.align, &probe_ctx);
+		if (chan->ops->event_reserve(&bufctx) < 0)
+			return;
+		/* Write pass. */
+		c.write_pass = true;
+		c.dyn_idx = 0;
+		c.bufctx = &bufctx;
+		type_visitor_event(&side_serialize_type_visitor, desc,
+			side_arg_vec, NULL, caller_addr, &c);
+		chan->ops->event_commit(&bufctx);
+		break;
+	}
+	default:
+		/* Event notifiers and counters: later phase. */
+		break;
+	}
+}
+
+/*
+ * Recognition and connection of side-backed event descriptors,
+ * called from register_event()/unregister_event() under ust_mutex.
+ */
+bool lttng_ust_side_is_side_event(const struct lttng_ust_event_desc *desc)
+{
+	return desc->tp_class
+		&& desc->tp_class->probe_callback == lttng_ust_side_probe_marker;
+}
+
+int lttng_ust_side_register_event(const struct lttng_ust_event_desc *desc,
+		struct lttng_ust_event_common *event)
+{
+	struct lttng_ust_side_event *se =
+		caa_container_of(desc, struct lttng_ust_side_event, parent);
+
+	if (side_tracer_callback_register(se->side_desc, tracer_call,
+			event, tracer_key) != SIDE_ERROR_OK)
+		return -EINVAL;
+	return 0;
+}
+
+int lttng_ust_side_unregister_event(const struct lttng_ust_event_desc *desc,
+		struct lttng_ust_event_common *event)
+{
+	struct lttng_ust_side_event *se =
+		caa_container_of(desc, struct lttng_ust_side_event, parent);
+
+	if (side_tracer_callback_unregister(se->side_desc, tracer_call,
+			event, tracer_key) != SIDE_ERROR_OK)
+		return -EINVAL;
+	return 0;
+}
+
 static
 void tracer_event_notification(enum side_tracer_notification notif,
 		struct side_event_description **events, uint32_t nr_events,
 		void *priv __attribute__((unused)))
 {
 	uint32_t i;
-	int ret;
 
-	printf("----------------------------------------------------------\n");
-	printf("Tracer notified of events %s\n",
-		notif == SIDE_TRACER_NOTIFICATION_INSERT_EVENTS ? "inserted" : "removed");
-	for (i = 0; i < nr_events; i++) {
-		struct side_event_description *event = events[i];
+	switch (notif) {
+	case SIDE_TRACER_NOTIFICATION_INSERT_EVENTS:
+	{
+		struct lttng_ust_side_registration *reg;
 
-		/* Skip NULL pointers */
-		if (!event)
-			continue;
-		if (event->version != SIDE_EVENT_DESCRIPTION_ABI_VERSION) {
-			printf("Error: event description ABI version (%u) does not match the version supported by the tracer (%u)\n",
-				event->version, SIDE_EVENT_DESCRIPTION_ABI_VERSION);
-				return;
+		reg = zmalloc(sizeof(struct lttng_ust_side_registration));
+		if (!reg) {
+			ERR("Error allocating side event registration");
+			return;
 		}
-		printf("provider: %s, event: %s\n",
-			side_ptr_get(event->provider_name), side_ptr_get(event->event_name));
-		if (event->struct_size != side_offsetofend(struct side_event_description, side_event_description_orig_abi_last)) {
-			printf("Warning: Event %s.%s description contains fields unknown to the tracer\n",
-				side_ptr_get(event->provider_name), side_ptr_get(event->event_name));
+		reg->side_events = events;
+		reg->nr_side_events = nr_events;
+		CDS_INIT_LIST_HEAD(&reg->events);
+		cds_list_add_tail(&reg->node, &side_registration_list);
+		for (i = 0; i < nr_events; i++) {
+			struct side_event_description *sdesc = events[i];
+			struct lttng_ust_side_event *se;
+
+			if (!sdesc)
+				continue;
+			if (sdesc->version != SIDE_EVENT_DESCRIPTION_ABI_VERSION) {
+				ERR("Side event description ABI version (%u) does not match the version supported by the tracer (%u)",
+					sdesc->version,
+					SIDE_EVENT_DESCRIPTION_ABI_VERSION);
+				continue;
+			}
+			se = lttng_ust_side_event_create(sdesc);
+			if (!se)
+				continue;
+			se->reg_probe = lttng_ust_probe_register(&se->probe_desc);
+			if (!se->reg_probe) {
+				ERR("Error registering probe provider for side event %s:%s",
+					side_ptr_get(sdesc->provider_name),
+					side_ptr_get(sdesc->event_name));
+				lttng_ust_side_event_destroy(se);
+				continue;
+			}
+			cds_list_add_tail(&se->node, &reg->events);
+			DBG("Registered side event %s:%s with the LTTng tracer",
+				side_ptr_get(sdesc->provider_name),
+				side_ptr_get(sdesc->event_name));
 		}
-		if (notif == SIDE_TRACER_NOTIFICATION_INSERT_EVENTS) {
-			if (event->nr_side_type_label > _NR_SIDE_TYPE_LABEL) {
-				printf("Warning: event %s:%s may contain unknown field types (%u unknown types)\n",
-					side_ptr_get(event->provider_name), side_ptr_get(event->event_name),
-					event->nr_side_type_label - _NR_SIDE_TYPE_LABEL);
-			}
-			if (event->nr_side_attr_type > _NR_SIDE_ATTR_TYPE) {
-				printf("Warning: event %s:%s may contain unknown attribute types (%u unknown types)\n",
-					side_ptr_get(event->provider_name), side_ptr_get(event->event_name),
-					event->nr_side_attr_type - _NR_SIDE_ATTR_TYPE);
-			}
-			print_event_description(event);
-			if (event->flags & SIDE_EVENT_FLAG_VARIADIC) {
-				ret = side_tracer_callback_variadic_register(event, tracer_call_variadic, NULL, tracer_key);
-				if (ret)
-					abort();
-			} else {
-				ret = side_tracer_callback_register(event, tracer_call, NULL, tracer_key);
-				if (ret)
-					abort();
-			}
-		} else {
-			if (event->flags & SIDE_EVENT_FLAG_VARIADIC) {
-				ret = side_tracer_callback_variadic_unregister(event, tracer_call_variadic, NULL, tracer_key);
-				if (ret)
-					abort();
-			} else {
-				ret = side_tracer_callback_unregister(event, tracer_call, NULL, tracer_key);
-				if (ret)
-					abort();
-			}
-		}
+		break;
 	}
-	printf("----------------------------------------------------------\n");
+	case SIDE_TRACER_NOTIFICATION_REMOVE_EVENTS:
+	{
+		struct lttng_ust_side_registration *reg;
+		struct lttng_ust_side_event *se, *tmp;
+		bool found = false;
+
+		cds_list_for_each_entry(reg, &side_registration_list, node) {
+			if (reg->side_events == events) {
+				found = true;
+				break;
+			}
+		}
+		if (!found)
+			return;
+		cds_list_for_each_entry_safe(se, tmp, &reg->events, node) {
+			/*
+			 * Synchronously tears down every LTTng event
+			 * referencing this descriptor (which
+			 * unregisters the side callbacks through
+			 * unregister_event) before the instrumented
+			 * object may be unloaded.
+			 */
+			lttng_ust_probe_unregister(se->reg_probe);
+			cds_list_del(&se->node);
+			lttng_ust_side_event_destroy(se);
+		}
+		cds_list_del(&reg->node);
+		free(reg);
+		break;
+	}
+	}
 }
 
 void lttng_ust_side_tracer_init(void)
