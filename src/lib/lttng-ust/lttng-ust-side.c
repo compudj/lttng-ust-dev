@@ -3522,11 +3522,14 @@ void tracer_call(const struct side_event_description *desc,
 		if (caa_unlikely(!CMM_ACCESS_ONCE(chan_common->enabled)))
 			return;
 	}
-	/* Filter bytecode wiring is a separate phase. */
-	if (caa_unlikely(CMM_ACCESS_ONCE(event->eval_filter)))
-		return;
 	probe_ctx.struct_size = sizeof(struct lttng_ust_probe_ctx);
 	probe_ctx.ip = caller_addr;
+	if (caa_unlikely(CMM_ACCESS_ONCE(event->eval_filter))) {
+		if (caa_unlikely(event->run_filter(event,
+				(const char *) side_arg_vec, &probe_ctx, NULL)
+					!= LTTNG_UST_EVENT_FILTER_ACCEPT))
+			return;
+	}
 	switch (event->type) {
 	case LTTNG_UST_EVENT_TYPE_RECORDER:
 	{
@@ -3571,6 +3574,17 @@ bool lttng_ust_side_is_side_event(const struct lttng_ust_event_desc *desc)
 {
 	return desc->tp_class
 		&& desc->tp_class->probe_callback == lttng_ust_side_probe_marker;
+}
+
+const struct side_event_description *lttng_ust_side_get_side_desc(
+		const struct lttng_ust_event_desc *desc)
+{
+	const struct lttng_ust_side_event *se;
+
+	if (!lttng_ust_side_is_side_event(desc))
+		return NULL;
+	se = caa_container_of(desc, const struct lttng_ust_side_event, parent);
+	return se->side_desc;
 }
 
 int lttng_ust_side_register_event(const struct lttng_ust_event_desc *desc,

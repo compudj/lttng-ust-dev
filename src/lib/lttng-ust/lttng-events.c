@@ -43,6 +43,7 @@
 #include "common/tracepoint.h"
 #include "common/strutils.h"
 #include "lttng-bytecode.h"
+#include "lttng-bytecode-side.h"
 #include "common/tracer.h"
 #include "lttng-tracer-core.h"
 #include "lttng-ust-statedump.h"
@@ -1594,8 +1595,12 @@ void lttng_event_enabler_init_event_filter(struct lttng_event_enabler_common *ev
 		struct lttng_event_enabler_session_common *event_enabler_session =
 			caa_container_of(event_enabler, struct lttng_event_enabler_session_common, parent);
 
-		lttng_enabler_link_bytecode(event->priv->desc, &event_enabler_session->chan->session->priv->ctx,
-			&event->priv->filter_bytecode_runtime_head, &event_enabler->filter_bytecode_head);
+		if (lttng_ust_side_is_side_event(event->priv->desc))
+			lttng_enabler_link_bytecode_side(event->priv->desc, &event_enabler_session->chan->session->priv->ctx,
+				&event->priv->filter_bytecode_runtime_head, &event_enabler->filter_bytecode_head);
+		else
+			lttng_enabler_link_bytecode(event->priv->desc, &event_enabler_session->chan->session->priv->ctx,
+				&event->priv->filter_bytecode_runtime_head, &event_enabler->filter_bytecode_head);
 		break;
 	}
 	case LTTNG_EVENT_ENABLER_TYPE_NOTIFIER:
@@ -1603,8 +1608,12 @@ void lttng_event_enabler_init_event_filter(struct lttng_event_enabler_common *ev
 		struct lttng_event_notifier_enabler *event_notifier_enabler =
 			caa_container_of(event_enabler, struct lttng_event_notifier_enabler, parent);
 
-		lttng_enabler_link_bytecode(event->priv->desc, &event_notifier_enabler->group->ctx,
-			&event->priv->filter_bytecode_runtime_head, &event_enabler->filter_bytecode_head);
+		if (lttng_ust_side_is_side_event(event->priv->desc))
+			lttng_enabler_link_bytecode_side(event->priv->desc, &event_notifier_enabler->group->ctx,
+				&event->priv->filter_bytecode_runtime_head, &event_enabler->filter_bytecode_head);
+		else
+			lttng_enabler_link_bytecode(event->priv->desc, &event_notifier_enabler->group->ctx,
+				&event->priv->filter_bytecode_runtime_head, &event_enabler->filter_bytecode_head);
 		break;
 	}
 	default:
@@ -1626,9 +1635,14 @@ void lttng_event_enabler_init_event_capture(struct lttng_event_enabler_common *e
 			caa_container_of(event_enabler, struct lttng_event_notifier_enabler, parent);
 		struct lttng_ust_event_notifier *event_notifier = event->child;
 
-		lttng_enabler_link_bytecode(event->priv->desc, &event_notifier_enabler->group->ctx,
-			&event_notifier->priv->capture_bytecode_runtime_head,
-			&event_notifier_enabler->capture_bytecode_head);
+		if (lttng_ust_side_is_side_event(event->priv->desc))
+			lttng_enabler_link_bytecode_side(event->priv->desc, &event_notifier_enabler->group->ctx,
+				&event_notifier->priv->capture_bytecode_runtime_head,
+				&event_notifier_enabler->capture_bytecode_head);
+		else
+			lttng_enabler_link_bytecode(event->priv->desc, &event_notifier_enabler->group->ctx,
+				&event_notifier->priv->capture_bytecode_runtime_head,
+				&event_notifier_enabler->capture_bytecode_head);
 		event_notifier->priv->num_captures = event_notifier_enabler->num_captures;
 		break;
 	}
@@ -2116,7 +2130,10 @@ void lttng_event_sync_filter_state(struct lttng_ust_event_common *event)
 
 	/* Enable filters */
 	cds_list_for_each_entry(runtime, &event->priv->filter_bytecode_runtime_head, node) {
-		lttng_bytecode_sync_state(runtime);
+		if (lttng_ust_side_is_side_event(event->priv->desc))
+			lttng_bytecode_sync_state_side(runtime);
+		else
+			lttng_bytecode_sync_state(runtime);
 		nr_filters++;
 	}
 	CMM_STORE_SHARED(event->eval_filter, !(has_enablers_without_filter_bytecode || !nr_filters));
@@ -2137,7 +2154,10 @@ void lttng_event_sync_capture_state(struct lttng_ust_event_common *event)
 
 		/* Enable captures */
 		cds_list_for_each_entry(runtime, &event_notifier->priv->capture_bytecode_runtime_head, node) {
-			lttng_bytecode_sync_state(runtime);
+			if (lttng_ust_side_is_side_event(event->priv->desc))
+				lttng_bytecode_sync_state_side(runtime);
+			else
+				lttng_bytecode_sync_state(runtime);
 			nr_captures++;
 		}
 		CMM_STORE_SHARED(event_notifier->eval_capture, !!nr_captures);

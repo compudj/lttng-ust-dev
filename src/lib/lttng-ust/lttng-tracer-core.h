@@ -93,7 +93,11 @@ void lttng_ust_side_tracer_exit(void)
  */
 struct lttng_ust_event_desc;
 struct lttng_ust_event_common;
+struct side_event_description;
 
+const struct side_event_description *lttng_ust_side_get_side_desc(
+		const struct lttng_ust_event_desc *desc)
+	__attribute__((visibility("hidden")));
 bool lttng_ust_side_is_side_event(const struct lttng_ust_event_desc *desc)
 	__attribute__((visibility("hidden")));
 int lttng_ust_side_register_event(const struct lttng_ust_event_desc *desc,

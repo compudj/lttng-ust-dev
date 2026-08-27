@@ -16,6 +16,10 @@ liblttng_ust_la_SOURCES = \
 	lttng-bytecode-validator.c \
 	lttng-bytecode-specialize.c \
 	lttng-bytecode-interpreter.c \
+	lttng-bytecode-side.c \
+	lttng-bytecode-side.h \
+	lttng-bytecode-side-specialize.c \
+	lttng-bytecode-side-interpreter.c \
 	lttng-context-provider.c \
 	lttng-context-vtid.c \
 	lttng-context-vpid.c \
