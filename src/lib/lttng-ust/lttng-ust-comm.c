@@ -41,6 +41,7 @@
 #include <lttng/ust-common.h>
 #include <lttng/ust-cancelstate.h>
 #include <lttng/ust-fd.h>
+#include <poll.h>
 #include <urcu/tls-compat.h>
 #include <phased-atfork/phased-atfork.h>
 #include "lib/lttng-ust/futex.h"
@@ -286,6 +287,9 @@ struct sock_info {
 	int socket;
 	int notify_socket;
 
+	/* Wakes the listener thread from its blocking waits. */
+	int wakeup_pipe[2];
+
 	/*
 	 * If wait_shm_is_file is true, use standard open to open and
 	 * create the shared memory used for waiting on session daemon.
@@ -315,6 +319,8 @@ static struct sock_info ust_app = {
 	.socket = -1,
 	.notify_socket = -1,
 
+	.wakeup_pipe = { -1, -1 },
+
 	.wait_shm_is_file = true,
 
 	.statedump_pending = 0,
@@ -336,6 +342,8 @@ static struct sock_info global_apps = {
 	.socket = -1,
 	.notify_socket = -1,
 
+	.wakeup_pipe = { -1, -1 },
+
 	.wait_shm_is_file = false,
 	.wait_shm_path = "/" LTTNG_UST_WAIT_FILENAME,
 
@@ -354,6 +362,8 @@ static struct sock_info local_apps = {
 
 	.socket = -1,
 	.notify_socket = -1,
+
+	.wakeup_pipe = { -1, -1 },
 
 	.wait_shm_is_file = false,
 
@@ -1945,6 +1955,297 @@ error:
 	return NULL;
 }
 
+/*
+ * Listener park/quiescence machinery.
+ *
+ * The phased-atfork quiesce callback parks every listener thread at
+ * a quiescent point where it holds no locks, before any fork
+ * participant acquires locks. The pause request interrupts the
+ * listener blocking points (command socket wait, sessiond futex
+ * wait, reconnect delay) through a per-listener wakeup pipe and a
+ * futex wakeup. A listener within command handling parks at the next
+ * command loop iteration: the pause requester then waits for the
+ * command to complete, which is bounded by the sessiond socket
+ * timeouts.
+ *
+ * The park synchronization state is reinitialized in the child after
+ * fork() (no listener threads exist there), and the wakeup pipes are
+ * closed and recreated by the child listeners: keeping the inherited
+ * pipe would share its open file description with the parent, and a
+ * wakeup byte written in one process could be consumed by the other
+ * process's listener, losing the wakeup.
+ */
+static pthread_mutex_t ust_park_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t ust_park_resume_cond = PTHREAD_COND_INITIALIZER;
+static pthread_cond_t ust_park_ack_cond = PTHREAD_COND_INITIALIZER;
+static int ust_park_pause_count;	/* Refcounted pause requests. */
+static int ust_park_listener_count;	/* Listeners participating. */
+static int ust_park_parked_count;	/* Listeners currently parked. */
+/* Lock-free mirror of ust_park_pause_count != 0 for wait loops. */
+static int ust_park_pause_requested;
+
+/*
+ * Create the listener wakeup pipe (kept for the process lifetime)
+ * and account the listener into the park machinery. Called from the
+ * listener thread on startup. Degrades to pipe-less operation on
+ * pipe creation failure: the listener still parks at its quiescent
+ * points, only the wakeup latency of a blocked listener suffers.
+ */
+static
+void ust_listener_park_register(struct sock_info *sock_info)
+{
+	if (sock_info->wakeup_pipe[0] < 0) {
+		int fds[2] = { -1, -1 };
+		int i, ret;
+
+		lttng_ust_lock_fd_tracker();
+		ret = pipe(fds);
+		if (ret) {
+			lttng_ust_unlock_fd_tracker();
+			WARN("Error creating %s listener wakeup pipe",
+				sock_info->name);
+			goto count;
+		}
+		for (i = 0; i < 2; i++) {
+			(void) fcntl(fds[i], F_SETFD, FD_CLOEXEC);
+			(void) fcntl(fds[i], F_SETFL, O_NONBLOCK);
+			ret = lttng_ust_add_fd_to_tracker(fds[i]);
+			if (ret < 0) {
+				if (close(fds[i]))
+					PERROR("close");
+				fds[i] = -1;
+				break;
+			}
+			fds[i] = ret;
+		}
+		lttng_ust_unlock_fd_tracker();
+		sock_info->wakeup_pipe[0] = fds[0];
+		sock_info->wakeup_pipe[1] = fds[1];
+	}
+count:
+	pthread_mutex_lock(&ust_park_lock);
+	ust_park_listener_count++;
+	pthread_mutex_unlock(&ust_park_lock);
+}
+
+static
+void ust_listener_park_unregister(void)
+{
+	pthread_mutex_lock(&ust_park_lock);
+	ust_park_listener_count--;
+	pthread_cond_broadcast(&ust_park_ack_cond);
+	pthread_mutex_unlock(&ust_park_lock);
+}
+
+static
+void ust_listener_drain_wakeup(struct sock_info *sock_info)
+{
+	ssize_t readlen;
+	char buf[32];
+
+	if (sock_info->wakeup_pipe[0] < 0)
+		return;
+	do {
+		readlen = read(sock_info->wakeup_pipe[0], buf, sizeof(buf));
+	} while (readlen > 0 || (readlen < 0 && errno == EINTR));
+}
+
+static
+void ust_listener_wakeup(struct sock_info *sock_info)
+{
+	ssize_t writelen;
+
+	if (sock_info->wakeup_pipe[1] < 0)
+		return;
+	do {
+		writelen = write(sock_info->wakeup_pipe[1], "!", 1);
+	} while (writelen < 0 && errno == EINTR);
+	if (writelen < 0 && errno != EAGAIN)
+		PERROR("write %s listener wakeup pipe", sock_info->name);
+}
+
+static
+void ust_listener_wakeup_all(void)
+{
+	struct sock_info *infos[] = { &ust_app, &global_apps, &local_apps };
+	size_t i;
+
+	for (i = 0; i < LTTNG_ARRAY_SIZE(infos); i++) {
+		struct sock_info *sock_info = infos[i];
+
+		ust_listener_wakeup(sock_info);
+		/*
+		 * Kick a listener blocked in wait_for_sessiond. The
+		 * wait_shm futex word is a shared mapping: this also
+		 * wakes the listeners of other traced processes,
+		 * which tolerate spurious wakeups by re-checking the
+		 * futex value.
+		 */
+		if (sock_info->wait_shm_mmap)
+			(void) lttng_ust_futex_async(
+				(int32_t *) sock_info->wait_shm_mmap,
+				FUTEX_WAKE, INT_MAX, NULL, NULL, 0);
+	}
+}
+
+/*
+ * Park point: called by the listener thread at its quiescent points,
+ * holding no locks. The parked state runs with cancellation
+ * disabled: the exit path wakes parked listeners through should_quit
+ * and a resume broadcast before cancelling them.
+ */
+static
+void ust_listener_park_check(struct sock_info *sock_info)
+{
+	if (!uatomic_read(&ust_park_pause_requested))
+		return;
+	if (lttng_ust_cancelstate_disable_push()) {
+		ERR("lttng_ust_cancelstate_disable_push");
+	}
+	pthread_mutex_lock(&ust_park_lock);
+	if (ust_park_pause_count
+			&& !uatomic_read(&lttng_ust_comm_should_quit)) {
+		DBG("Parking %s listener thread", sock_info->name);
+		ust_park_parked_count++;
+		pthread_cond_broadcast(&ust_park_ack_cond);
+		while (ust_park_pause_count
+				&& !uatomic_read(&lttng_ust_comm_should_quit))
+			pthread_cond_wait(&ust_park_resume_cond, &ust_park_lock);
+		ust_park_parked_count--;
+		DBG("Resuming %s listener thread", sock_info->name);
+	}
+	pthread_mutex_unlock(&ust_park_lock);
+	if (lttng_ust_cancelstate_disable_pop()) {
+		ERR("lttng_ust_cancelstate_disable_pop");
+	}
+}
+
+/*
+ * Wait for a command on the socket or a wakeup. Returns nonzero when
+ * the socket is ready (proceed to receive), zero on a wakeup (loop
+ * back to the park point).
+ */
+static
+int ust_listener_wait_cmd(struct sock_info *sock_info, int sock)
+{
+	struct pollfd fds[2];
+	nfds_t nr_fds = 1;
+	int ret;
+
+	fds[0].fd = sock;
+	fds[0].events = POLLIN;
+	fds[0].revents = 0;
+	if (sock_info->wakeup_pipe[0] >= 0) {
+		fds[1].fd = sock_info->wakeup_pipe[0];
+		fds[1].events = POLLIN;
+		fds[1].revents = 0;
+		nr_fds = 2;
+	}
+	do {
+		ret = poll(fds, nr_fds, -1);
+	} while (ret < 0 && errno == EINTR);
+	if (ret < 0) {
+		PERROR("poll on %s command socket", sock_info->name);
+		return 1;	/* Let the receive path report the error. */
+	}
+	if (nr_fds == 2 && (fds[1].revents & POLLIN))
+		ust_listener_drain_wakeup(sock_info);
+	return !!(fds[0].revents & (POLLIN | POLLERR | POLLHUP));
+}
+
+/*
+ * Interruptible replacement for the reconnect delay: ends early on a
+ * wakeup (pause request or exit).
+ */
+static
+void ust_listener_wait_delay(struct sock_info *sock_info, int msec)
+{
+	struct pollfd fds;
+	int ret;
+
+	if (sock_info->wakeup_pipe[0] < 0) {
+		(void) poll(NULL, 0, msec);
+		return;
+	}
+	fds.fd = sock_info->wakeup_pipe[0];
+	fds.events = POLLIN;
+	fds.revents = 0;
+	do {
+		ret = poll(&fds, 1, msec);
+	} while (ret < 0 && errno == EINTR);
+	if (ret > 0 && (fds.revents & POLLIN))
+		ust_listener_drain_wakeup(sock_info);
+}
+
+/*
+ * Park every listener thread at a quiescent point and wait for their
+ * acknowledgment. Refcounted; pause requests are serialized by the
+ * phased-atfork coordinator, the refcount tolerates other users.
+ * Must be called without any lock held which a listener may need to
+ * reach its park point.
+ */
+static
+void ust_listener_park_all(void)
+{
+	pthread_mutex_lock(&ust_park_lock);
+	if (!ust_park_pause_count++) {
+		uatomic_set(&ust_park_pause_requested, 1);
+		ust_listener_wakeup_all();
+		while (ust_park_parked_count < ust_park_listener_count)
+			pthread_cond_wait(&ust_park_ack_cond, &ust_park_lock);
+	}
+	pthread_mutex_unlock(&ust_park_lock);
+}
+
+static
+void ust_listener_resume_all(void)
+{
+	pthread_mutex_lock(&ust_park_lock);
+	if (!--ust_park_pause_count) {
+		uatomic_set(&ust_park_pause_requested, 0);
+		pthread_cond_broadcast(&ust_park_resume_cond);
+	}
+	pthread_mutex_unlock(&ust_park_lock);
+}
+
+/*
+ * Reinitialize the park state in the child after fork(): listener
+ * threads do not exist there (recreated by lttng_ust_ctor), and the
+ * synchronization primitives may have had waiters in the parent.
+ * Close the inherited wakeup pipes for isolation from the parent;
+ * the child listeners recreate their own. Called from the fork child
+ * callback with the fd tracker lock held (taken by the fork acquire
+ * callback) and the child still single-threaded.
+ */
+static
+void ust_park_after_fork_child(void)
+{
+	struct sock_info *infos[] = { &ust_app, &global_apps, &local_apps };
+	size_t i;
+	int j;
+
+	ust_park_lock = (pthread_mutex_t) PTHREAD_MUTEX_INITIALIZER;
+	ust_park_resume_cond = (pthread_cond_t) PTHREAD_COND_INITIALIZER;
+	ust_park_ack_cond = (pthread_cond_t) PTHREAD_COND_INITIALIZER;
+	ust_park_pause_count = 0;
+	ust_park_listener_count = 0;
+	ust_park_parked_count = 0;
+	uatomic_set(&ust_park_pause_requested, 0);
+	for (i = 0; i < LTTNG_ARRAY_SIZE(infos); i++) {
+		struct sock_info *sock_info = infos[i];
+
+		for (j = 0; j < 2; j++) {
+			if (sock_info->wakeup_pipe[j] < 0)
+				continue;
+			lttng_ust_delete_fd_from_tracker(sock_info->wakeup_pipe[j]);
+			if (close(sock_info->wakeup_pipe[j]))
+				PERROR("close %s listener wakeup pipe",
+					sock_info->name);
+			sock_info->wakeup_pipe[j] = -1;
+		}
+	}
+}
+
 static
 void wait_for_sessiond(struct sock_info *sock_info)
 {
@@ -1960,8 +2261,15 @@ void wait_for_sessiond(struct sock_info *sock_info)
 	assert(sock_info->wait_shm_mmap);
 
 	DBG("Waiting for %s apps sessiond", sock_info->name);
-	/* Wait for futex wakeup */
-	while (!uatomic_read((int32_t *) sock_info->wait_shm_mmap)) {
+	/*
+	 * Wait for futex wakeup. Also return on a pause request or
+	 * exit: the requester issues a futex wakeup on the (shared)
+	 * wait_shm word, and the caller parks at its next quiescent
+	 * point.
+	 */
+	while (!uatomic_read((int32_t *) sock_info->wait_shm_mmap)
+			&& !uatomic_read(&ust_park_pause_requested)
+			&& !uatomic_read(&lttng_ust_comm_should_quit)) {
 		if (!lttng_ust_futex_async((int32_t *) sock_info->wait_shm_mmap, FUTEX_WAIT, 0, NULL, NULL, 0)) {
 			/*
 			 * Prior queued wakeups queued by unrelated code
@@ -2138,23 +2446,29 @@ void *ust_listener_thread(void *arg)
 		ERR("Unable to set UST process name");
 	}
 
+	ust_listener_park_register(sock_info);
+
 	/* Restart trying to connect to the session daemon */
 restart:
+	ust_listener_park_check(sock_info);
 	if (prev_connect_failed) {
 		/* Wait for sessiond availability with pipe */
 		wait_for_sessiond(sock_info);
 		if (has_waited) {
 			has_waited = 0;
 			/*
-			 * Sleep for 5 seconds before retrying after a
+			 * Wait for 5 seconds before retrying after a
 			 * sequence of failure / wait / failure. This
 			 * deals with a killed or broken session daemon.
+			 * The delay ends early on a pause request or
+			 * exit.
 			 */
-			sleep(5);
+			ust_listener_wait_delay(sock_info, 5000);
 		} else {
 			has_waited = 1;
 		}
 		prev_connect_failed = 0;
+		ust_listener_park_check(sock_info);
 	}
 
 	if (ust_lock()) {
@@ -2373,6 +2687,10 @@ restart:
 		memset(payload_buf, 0, sizeof(payload_buf));
 		memset(ancillary_buf, 0, sizeof(ancillary_buf));
 
+		ust_listener_park_check(sock_info);
+		if (!ust_listener_wait_cmd(sock_info, sock))
+			continue;
+
 		/*
 		 * Application command socket: never shutdown on error.
 		 * Applications close the socket when reaching a quiescent state.
@@ -2457,6 +2775,8 @@ end:
 
 quit:
 	ust_unlock();
+
+	ust_listener_park_unregister();
 
 	pthread_mutex_lock(&ust_exit_mutex);
 	sock_info->thread_active = 0;
@@ -2793,6 +3113,16 @@ void lttng_ust_exit(void)
 	lttng_ust_comm_should_quit = 1;
 	ust_unlock();
 
+	/*
+	 * Wake parked or waiting listeners so they observe
+	 * should_quit before being cancelled: the parked state runs
+	 * with cancellation disabled.
+	 */
+	pthread_mutex_lock(&ust_park_lock);
+	pthread_cond_broadcast(&ust_park_resume_cond);
+	pthread_mutex_unlock(&ust_park_lock);
+	ust_listener_wakeup_all();
+
 	pthread_mutex_lock(&ust_exit_mutex);
 	/* cancel threads */
 	if (ust_app.thread_active) {
@@ -2878,15 +3208,21 @@ void ust_context_vgids_reset(void)
  * cross-library lock-ordering levels (instrumentation notification
  * locks are outer to the tracer control locks below, which are outer
  * to instrumentation leaf locks). lttng-ust registers a tracer
- * (level 1) participant. No quiesce callback is needed in this
- * scheme: the ust_mutex acquisition in the acquire callback excludes
- * the listener threads, which only hold locks while holding
- * ust_mutex. Parking the listener threads at a quiescent point is
- * only required to retire the LD_PRELOAD fork wrapper (future work).
+ * (level 1) participant. The quiesce callback parks the listener
+ * threads at a quiescent point where they hold no locks, before any
+ * participant acquires locks.
  *
  * The lttng_ust_nest_count guard skips fork handling for the
  * process-internal fork of get_wait_shm().
  */
+static
+void lttng_ust_fork_quiesce(void *priv __attribute__((unused)))
+{
+	if (URCU_TLS(lttng_ust_nest_count))
+		return;
+	ust_listener_park_all();
+}
+
 static
 void lttng_ust_fork_acquire(void *priv __attribute__((unused)))
 {
@@ -2910,6 +3246,7 @@ void lttng_ust_fork_parent(void *priv __attribute__((unused)))
 	lttng_ust_unlock_fd_tracker();
 	ust_unlock();
 	pthread_mutex_unlock(&ust_fork_mutex);
+	ust_listener_resume_all();
 }
 
 /*
@@ -2934,6 +3271,7 @@ void lttng_ust_fork_child(void *priv __attribute__((unused)))
 	ust_context_ns_reset();
 	ust_context_vuids_reset();
 	ust_context_vgids_reset();
+	ust_park_after_fork_child();
 	DBG("process %d", getpid());
 	/* Release urcu mutexes */
 	lttng_ust_urcu_after_fork_child();
@@ -2945,6 +3283,7 @@ void lttng_ust_fork_child(void *priv __attribute__((unused)))
 }
 
 static const struct phased_atfork_ops lttng_ust_fork_ops = {
+	.quiesce = lttng_ust_fork_quiesce,
 	.acquire = lttng_ust_fork_acquire,
 	.parent = lttng_ust_fork_parent,
 	.child = lttng_ust_fork_child,
