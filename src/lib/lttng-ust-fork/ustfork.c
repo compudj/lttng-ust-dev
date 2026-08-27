@@ -54,10 +54,6 @@ static pid_t (*plibc_rfork)(int flags) = NULL;
 
 #endif
 
-static int (*plibc_daemon)(int nochdir, int noclose) = NULL;
-
-static pid_t (*plibc_fork)(void) = NULL;
-
 static int (*plibc_setegid)(gid_t egid) = NULL;
 
 static int (*plibc_seteuid)(uid_t euid) = NULL;
@@ -91,8 +87,6 @@ static void initialize(void)
 #elif defined (__FreeBSD__)
 		DEFINE_LIBC_POINTER(rfork),
 #endif
-		DEFINE_LIBC_POINTER(daemon),
-		DEFINE_LIBC_POINTER(fork),
 		DEFINE_LIBC_POINTER(setegid),
 		DEFINE_LIBC_POINTER(seteuid),
 		DEFINE_LIBC_POINTER(setgid),
@@ -164,55 +158,26 @@ out:
 static void lttng_ust_fork_wrapper_ctor(void)
 {
 	/*
-	 * Using fork here because it is defined on all supported OS.
+	 * Using setuid here because it is defined on all supported OS.
 	 */
-	(void) lazy_initialize((void**)&plibc_fork);
+	(void) lazy_initialize((void**)&plibc_setuid);
 }
 
-pid_t fork(void)
-{
-	sigset_t sigset;
-	pid_t retval;
-	int saved_errno;
-
-	pid_t (*func)(void) = LAZY_INITIALIZE_OR_NOSYS(plibc_fork);
-
-	lttng_ust_before_fork(&sigset);
-	/* Do the real fork */
-	retval = func();
-	saved_errno = errno;
-	if (retval == 0) {
-		/* child */
-		lttng_ust_after_fork_child(&sigset);
-	} else {
-		lttng_ust_after_fork_parent(&sigset);
-	}
-	errno = saved_errno;
-	return retval;
-}
-
-int daemon(int nochdir, int noclose)
-{
-	sigset_t sigset;
-	int retval;
-	int saved_errno;
-
-	int (*func)(int, int) = LAZY_INITIALIZE_OR_NOSYS(plibc_daemon);
-
-	lttng_ust_before_fork(&sigset);
-	/* Do the real daemon call */
-	retval = func(nochdir, noclose);
-	saved_errno = errno;
-	if (retval == 0) {
-		/* child, parent called _exit() directly */
-		lttng_ust_after_fork_child(&sigset);
-	} else {
-		/* on error in the parent */
-		lttng_ust_after_fork_parent(&sigset);
-	}
-	errno = saved_errno;
-	return retval;
-}
+/*
+ * fork() and daemon() are NOT wrapped anymore: both go through the
+ * libc fork implementation, which runs the pthread_atfork handlers
+ * installed by the phased-atfork coordinator, with which liblttng-ust
+ * registers a fork participant from its constructor. This preload
+ * library therefore requires a liblttng-ust registering such a
+ * participant: paired with an older liblttng-ust, plain fork() gets
+ * no tracing fork handling at all.
+ *
+ * clone() (below) remains wrapped: the libc clone implementation does
+ * not run atfork handlers, and cannot — the child starts executing
+ * the user-supplied function on a caller-provided stack, so only an
+ * interposer can run the child-side fork handling (trampoline) before
+ * the user function.
+ */
 
 int setuid(uid_t uid)
 {
