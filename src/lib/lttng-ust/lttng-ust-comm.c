@@ -95,8 +95,6 @@ static int initialized;
  *
  * ust_exit_mutex must never nest in ust_mutex.
  *
- * ust_fork_mutex must never nest in ust_mutex.
- *
  * ust_mutex_nest is a per-thread nesting counter, allowing the perf
  * counter lazy initialization called by events within the statedump,
  * which traces while the ust_mutex is held.
@@ -119,14 +117,6 @@ static DEFINE_URCU_TLS(int, ust_mutex_nest);
  * It never nests within a ust_mutex.
  */
 static pthread_mutex_t ust_exit_mutex = PTHREAD_MUTEX_INITIALIZER;
-
-/*
- * ust_fork_mutex protects base address statedump tracing against forks. It
- * prevents the dynamic loader lock to be taken (by base address statedump
- * tracing) while a fork is happening, thus preventing deadlock issues with
- * the dynamic loader lock.
- */
-static pthread_mutex_t ust_fork_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 /* Should the ust comm thread quit ? */
 static int lttng_ust_comm_should_quit;
@@ -936,9 +926,15 @@ void handle_pending_statedump(struct sock_info *sock_info)
 {
 	if (sock_info->registration_done && sock_info->statedump_pending) {
 		sock_info->statedump_pending = 0;
-		pthread_mutex_lock(&ust_fork_mutex);
+		/*
+		 * Statedump tracing (including its dynamic loader lock
+		 * sections) cannot straddle a fork sequence: the
+		 * phased-atfork quiesce acknowledgment is only given
+		 * at the listener park points, outside of command
+		 * handling. The dl_state_table accesses are protected
+		 * by the ust_mutex.
+		 */
 		lttng_handle_pending_statedump(sock_info);
-		pthread_mutex_unlock(&ust_fork_mutex);
 
 		if (!sock_info->initial_statedump_done) {
 			sock_info->initial_statedump_done = 1;
@@ -3228,7 +3224,6 @@ void lttng_ust_fork_acquire(void *priv __attribute__((unused)))
 {
 	if (URCU_TLS(lttng_ust_nest_count))
 		return;
-	pthread_mutex_lock(&ust_fork_mutex);
 	ust_lock_nocheck();
 	lttng_ust_urcu_before_fork();
 	lttng_ust_lock_fd_tracker();
@@ -3245,7 +3240,6 @@ void lttng_ust_fork_parent(void *priv __attribute__((unused)))
 	lttng_perf_unlock();
 	lttng_ust_unlock_fd_tracker();
 	ust_unlock();
-	pthread_mutex_unlock(&ust_fork_mutex);
 	ust_listener_resume_all();
 }
 
@@ -3279,7 +3273,6 @@ void lttng_ust_fork_child(void *priv __attribute__((unused)))
 	lttng_perf_unlock();
 	lttng_ust_unlock_fd_tracker();
 	ust_unlock();
-	pthread_mutex_unlock(&ust_fork_mutex);
 }
 
 static const struct phased_atfork_ops lttng_ust_fork_ops = {
