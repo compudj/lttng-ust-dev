@@ -889,77 +889,28 @@ again:
 		case OBJECT_TYPE_U64:
 		case OBJECT_TYPE_DOUBLE:
 		case OBJECT_TYPE_STRING:
-		case OBJECT_TYPE_STRING_SEQUENCE:
+		case OBJECT_TYPE_STRING_SEQUENCE:	/* Fall-through. */
+		case OBJECT_TYPE_DYNAMIC:
+			/*
+			 * Array and VLA elements are typed by the
+			 * argument itself: load it to find out.
+			 */
 			ret = dynamic_load_field(ax);
 			if (ret)
 				return ret;
 			/* Retry after loading ptr into stack top. */
 			goto again;
-		case OBJECT_TYPE_SEQUENCE:
-		{
-			struct sequence {
-				unsigned long length;
-				const char *base;
-			} __attribute__((packed));
-
-			const struct sequence *sequence = ax->u.ptr.ptr;
-
-			switch (ax->u.ptr.field->type->type) {
-			case lttng_ust_type_sequence:
-				output->type = LTTNG_INTERPRETER_TYPE_SEQUENCE;
-				output->u.sequence.ptr = sequence->base;
-				output->u.sequence.nr_elem = sequence->length;
-				output->u.sequence.nested_type = lttng_ust_get_type_sequence(ax->u.ptr.field->type)->elem_type;
-				break;
-			case lttng_ust_type_variable_length_blob:
-			{
-				const struct lttng_ust_type_variable_length_blob *blob =
-					lttng_ust_get_type_variable_length_blob(ax->u.ptr.field->type);
-				output->type = LTTNG_INTERPRETER_TYPE_BLOB;
-				output->u.blob.bytes = (const uint8_t *)sequence->base;
-				output->u.blob.length = sequence->length;
-				output->u.blob.media_type = blob->media_type;
-				break;
-			}
-			default:
-				return -EINVAL;
-			}
-			break;
-		}
+		case OBJECT_TYPE_SEQUENCE:	/* Fall-through. */
 		case OBJECT_TYPE_ARRAY:
-		{
 			/*
-			 * `length` is not used since arrays have fixed sizes.
+			 * Capturing a whole side array or VLA would
+			 * require iterating on its nested argument
+			 * vector: the capture output expects an array
+			 * of elements contiguous in memory, which side
+			 * arguments are not. Individual elements can be
+			 * captured.
 			 */
-			struct array {
-				unsigned long length;
-				const char *base;
-			} __attribute__((packed));
-
-			const struct array *array = ax->u.ptr.ptr;
-
-			switch (ax->u.ptr.field->type->type) {
-			case lttng_ust_type_array:
-				output->type = LTTNG_INTERPRETER_TYPE_SEQUENCE;
-				output->u.sequence.ptr = array->base;
-				output->u.sequence.nr_elem = lttng_ust_get_type_array(ax->u.ptr.field->type)->length;
-				output->u.sequence.nested_type = lttng_ust_get_type_array(ax->u.ptr.field->type)->elem_type;
-				break;
-			case lttng_ust_type_fixed_length_blob:
-			{
-				const struct lttng_ust_type_fixed_length_blob *blob =
-					lttng_ust_get_type_fixed_length_blob(ax->u.ptr.field->type);
-				output->type = LTTNG_INTERPRETER_TYPE_BLOB;
-				output->u.blob.bytes = (const uint8_t *)array->base;
-				output->u.blob.length = blob->length;
-				output->u.blob.media_type = blob->media_type;
-				break;
-			}
-			default:
-				return -EINVAL;
-			}
-			break;
-		}
+			return -EINVAL;
 		case OBJECT_TYPE_SIGNED_ENUM:
 			ret = dynamic_load_field(ax);
 			if (ret)

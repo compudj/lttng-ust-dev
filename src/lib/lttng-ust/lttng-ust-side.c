@@ -3560,9 +3560,36 @@ void tracer_call(const struct side_event_description *desc,
 		chan->ops->event_commit(&bufctx);
 		break;
 	}
-	default:
-		/* Event notifiers and counters: later phase. */
+	case LTTNG_UST_EVENT_TYPE_NOTIFIER:
+	{
+		struct lttng_ust_event_notifier *event_notifier =
+			(struct lttng_ust_event_notifier *) event->child;
+		struct lttng_ust_notification_ctx notif_ctx;
+
+		notif_ctx.struct_size = sizeof(struct lttng_ust_notification_ctx);
+		notif_ctx.eval_capture = CMM_ACCESS_ONCE(event_notifier->eval_capture);
+		/*
+		 * Unlike tracepoints, there is no interpreter stack to
+		 * prepare for the capture bytecode: the side argument
+		 * vector is the interpreter input.
+		 */
+		event_notifier->notification_send(event_notifier,
+			(const char *) side_arg_vec, &probe_ctx, &notif_ctx);
 		break;
+	}
+	case LTTNG_UST_EVENT_TYPE_COUNTER:
+	{
+		struct lttng_ust_event_counter *event_counter =
+			(struct lttng_ust_event_counter *) event->child;
+		struct lttng_ust_event_counter_ctx event_counter_ctx;
+
+		event_counter_ctx.struct_size = sizeof(struct lttng_ust_event_counter_ctx);
+		event_counter_ctx.args_available = CMM_ACCESS_ONCE(event_counter->use_args);
+		(void) event_counter->chan->ops->counter_hit(event_counter,
+			(const char *) side_arg_vec, &probe_ctx,
+			&event_counter_ctx);
+		break;
+	}
 	}
 }
 
