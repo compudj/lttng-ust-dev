@@ -49,6 +49,15 @@ bool lttng_bytecode_side_field_rev_bo(const struct side_event_description *side_
 		uint32_t idx)
 	__attribute__((visibility("hidden")));
 
+/*
+ * The type of a payload field, by side argument index. A gather field
+ * needs it: the argument holds the address its value is read from, and
+ * only the type says how to reach it.
+ */
+const struct side_type *lttng_bytecode_side_field_type(
+		const struct side_event_description *side_desc, uint32_t idx)
+	__attribute__((visibility("hidden")));
+
 void lttng_enabler_link_bytecode_side(const struct lttng_ust_event_desc *event_desc,
 		struct lttng_ust_ctx **ctx,
 		struct cds_list_head *instance_bytecode_head,

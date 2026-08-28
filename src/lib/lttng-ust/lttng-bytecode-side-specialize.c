@@ -546,6 +546,40 @@ static int specialize_side_load_object(const struct side_type *side_type,
 		load->rev_bo = side_elem_rev_bo(side_ptr_get(
 			side_ptr_get(side_type->u.side_vla)->elem_type));
 		break;
+	/*
+	 * A gathered value is loaded as the value it wraps, which the
+	 * interpreter reads from the address the argument carries.
+	 */
+	case SIDE_TYPE_GATHER_INTEGER:
+		load->object_type = side_type->u.side_gather.u.side_integer.type.signedness ?
+			OBJECT_TYPE_S64 : OBJECT_TYPE_U64;
+		load->rev_bo = side_integer_rev_bo(&side_type->u.side_gather.u.side_integer.type);
+		break;
+	case SIDE_TYPE_GATHER_POINTER:
+		load->object_type = OBJECT_TYPE_U64;
+		load->rev_bo = side_integer_rev_bo(&side_type->u.side_gather.u.side_integer.type);
+		break;
+	case SIDE_TYPE_GATHER_BOOL:	/* Fall-through. */
+	case SIDE_TYPE_GATHER_BYTE:
+		load->object_type = OBJECT_TYPE_U64;
+		break;
+	case SIDE_TYPE_GATHER_FLOAT:
+		load->object_type = OBJECT_TYPE_DOUBLE;
+		load->rev_bo = side_float_rev_bo(&side_type->u.side_gather.u.side_float.type);
+		break;
+	case SIDE_TYPE_GATHER_ENUM:
+	{
+		const struct side_type *container =
+			side_ptr_get(side_type->u.side_gather.u.side_enum.elem_type);
+		const struct side_type_integer *t;
+
+		if (side_enum_get(container->type) != SIDE_TYPE_GATHER_INTEGER)
+			return -EINVAL;
+		t = &container->u.side_gather.u.side_integer.type;
+		load->object_type = t->signedness ? OBJECT_TYPE_S64 : OBJECT_TYPE_U64;
+		load->rev_bo = side_integer_rev_bo(t);
+		break;
+	}
 	case SIDE_TYPE_ENUM:
 	{
 		const struct side_type *container =
@@ -613,6 +647,11 @@ static int specialize_payload_lookup(const struct side_event_description *side_d
 	gid.elem.type = load->object_type;
 	gid.elem.rev_bo = load->rev_bo;
 	gid.field = NULL;	/* payload object: side argument */
+	/*
+	 * A gather field reads its value from an address, which only
+	 * its type describes, so the interpreter needs the type.
+	 */
+	gid.side_type = side_type;
 	data_offset = bytecode_push_data(runtime, &gid,
 		__alignof__(gid), sizeof(gid));
 	if (data_offset < 0) {

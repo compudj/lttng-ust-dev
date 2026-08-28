@@ -130,6 +130,13 @@ struct bytecode_get_index_data {
 	 * support variants.
 	 */
 	const struct lttng_ust_event_field *field;
+	/*
+	 * Type of the side payload field this loads, NULL for a
+	 * tracepoint event and for an element of a side array or
+	 * sequence, which is typed by the argument. A gather type reads
+	 * its value from an address, which only its type describes.
+	 */
+	const struct side_type *side_type;
 	struct {
 		size_t len;
 		enum object_type type;
@@ -142,6 +149,7 @@ struct vstack_load {
 	enum load_type type;
 	enum object_type object_type;
 	const struct lttng_ust_event_field *field;
+	const struct side_type *side_type;	/* Side payload field type. */
 	bool rev_bo;	/* reverse byte order */
 };
 
@@ -211,6 +219,7 @@ struct load_ptr {
 	enum object_type object_type;
 	const void *ptr;
 	size_t nr_elem;
+	const struct side_type *side_type;	/* Side payload field type. */
 	bool rev_bo;
 	/* Temporary place-holders for contexts. */
 	union {

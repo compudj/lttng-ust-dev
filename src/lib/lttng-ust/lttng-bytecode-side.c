@@ -62,9 +62,34 @@ bool lttng_bytecode_side_type_rev_bo(const struct side_type *side_type)
 
 		return lttng_bytecode_side_type_rev_bo(container);
 	}
+	/* A gathered value has the byte order of the type it wraps. */
+	case SIDE_TYPE_GATHER_BOOL:	/* Fall-through. */
+	case SIDE_TYPE_GATHER_BYTE:
+		return false;
+	case SIDE_TYPE_GATHER_INTEGER:	/* Fall-through. */
+	case SIDE_TYPE_GATHER_POINTER:
+		return side_enum_get(side_type->u.side_gather.u.side_integer.type.byte_order) !=
+			SIDE_TYPE_BYTE_ORDER_HOST;
+	case SIDE_TYPE_GATHER_FLOAT:
+		return side_enum_get(side_type->u.side_gather.u.side_float.type.byte_order) !=
+			SIDE_TYPE_FLOAT_WORD_ORDER_HOST;
+	case SIDE_TYPE_GATHER_ENUM:
+		return lttng_bytecode_side_type_rev_bo(side_ptr_get(
+			side_type->u.side_gather.u.side_enum.elem_type));
 	default:
 		return false;
 	}
+}
+
+const struct side_type *lttng_bytecode_side_field_type(
+		const struct side_event_description *side_desc, uint32_t idx)
+{
+	const struct side_event_field *field;
+
+	if (!side_desc || idx >= side_array_length(&side_desc->fields))
+		return NULL;
+	field = side_array_at(&side_desc->fields, idx);
+	return &field->side_type;
 }
 
 bool lttng_bytecode_side_field_rev_bo(const struct side_event_description *side_desc,
@@ -161,6 +186,22 @@ int apply_field_reloc_side(const struct lttng_ust_event_desc *event_desc,
 			 * enumeration field is that integer.
 			 */
 			op->op = BYTECODE_OP_LOAD_FIELD_REF_S64;
+			break;
+		/*
+		 * A gathered value compares as the value it wraps. The
+		 * interpreter reads it from the address the argument
+		 * carries, which it reaches through the description this
+		 * bytecode is linked against.
+		 */
+		case SIDE_TYPE_GATHER_INTEGER:	/* Fall-through. */
+		case SIDE_TYPE_GATHER_POINTER:	/* Fall-through. */
+		case SIDE_TYPE_GATHER_BOOL:	/* Fall-through. */
+		case SIDE_TYPE_GATHER_BYTE:	/* Fall-through. */
+		case SIDE_TYPE_GATHER_ENUM:
+			op->op = BYTECODE_OP_LOAD_FIELD_REF_S64;
+			break;
+		case SIDE_TYPE_GATHER_FLOAT:
+			op->op = BYTECODE_OP_LOAD_FIELD_REF_DOUBLE;
 			break;
 		default:
 			/*

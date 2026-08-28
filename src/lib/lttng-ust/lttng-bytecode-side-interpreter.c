@@ -382,6 +382,237 @@ static int context_get_index(struct lttng_ust_ctx *ctx,
 static const struct lttng_ust_event_field side_arg_field_marker;
 
 /*
+ * A gather type reads its value from an address rather than carrying
+ * it in the argument, which holds the address instead. Resolve it: the
+ * access mode says whether the address is the value's own or a pointer
+ * to it, and the offset is applied before the access.
+ */
+static const char *side_gather_access(enum side_type_gather_access_mode access_mode,
+		const char *ptr)
+{
+	switch (access_mode) {
+	case SIDE_TYPE_GATHER_ACCESS_DIRECT:
+		return ptr;
+	case SIDE_TYPE_GATHER_ACCESS_POINTER:
+		/* Dereference pointer */
+		memcpy(&ptr, ptr, sizeof(const char *));
+		return ptr;
+	default:
+		return NULL;
+	}
+}
+
+/*
+ * Load the integer a gather type reads from memory. Bit-packed values
+ * are refused, as they are by the translation of the event.
+ */
+static int side_gather_load_integer(const struct side_type_gather_integer *t,
+		const void *gather_ptr, bool signedness, bool rev_bo, int64_t *v)
+{
+	union side_integer_value value;
+	const char *ptr;
+
+	if (t->offset_bits)
+		return -EINVAL;
+	ptr = side_gather_access(side_enum_get(t->access_mode),
+			(const char *) gather_ptr + t->offset);
+	if (!ptr)
+		return -EINVAL;
+	switch (t->type.integer_size) {
+	case 1:		/* Fall-through. */
+	case 2:		/* Fall-through. */
+	case 4:		/* Fall-through. */
+	case 8:
+		break;
+	default:
+		return -EINVAL;
+	}
+	memcpy(&value, ptr, t->type.integer_size);
+	switch (t->type.integer_size) {
+	case 1:
+		*v = signedness ? (int64_t) (int8_t) value.side_u8 :
+				(int64_t) value.side_u8;
+		break;
+	case 2:
+	{
+		uint16_t tmp = value.side_u16;
+
+		if (rev_bo)
+			tmp = lttng_ust_bswap_16(tmp);
+		*v = signedness ? (int64_t) (int16_t) tmp : (int64_t) tmp;
+		break;
+	}
+	case 4:
+	{
+		uint32_t tmp = value.side_u32;
+
+		if (rev_bo)
+			tmp = lttng_ust_bswap_32(tmp);
+		*v = signedness ? (int64_t) (int32_t) tmp : (int64_t) tmp;
+		break;
+	}
+	case 8:
+	{
+		uint64_t tmp = value.side_u64;
+
+		if (rev_bo)
+			tmp = lttng_ust_bswap_64(tmp);
+		*v = (int64_t) tmp;
+		break;
+	}
+	default:
+		return -EINVAL;
+	}
+	return 0;
+}
+
+/*
+ * Load the value a gather field reads from memory, for the types which
+ * compare as an integer. Returns -ENOENT when @side_type is not one of
+ * them, which leaves the caller with the argument to load from.
+ */
+static int side_gather_load_field_integer(const struct side_type *side_type,
+		const struct side_arg *item, bool rev_bo, int64_t *v)
+{
+	const struct side_type_gather *gather;
+
+	if (!side_type)
+		return -ENOENT;
+	gather = &side_type->u.side_gather;
+	switch (side_enum_get(side_type->type)) {
+	case SIDE_TYPE_GATHER_INTEGER:
+		return side_gather_load_integer(&gather->u.side_integer,
+			side_ptr_get(item->u.side_static.side_integer_gather_ptr),
+			gather->u.side_integer.type.signedness, rev_bo, v);
+	case SIDE_TYPE_GATHER_POINTER:
+		return side_gather_load_integer(&gather->u.side_integer,
+			side_ptr_get(item->u.side_static.side_integer_gather_ptr),
+			false, rev_bo, v);
+	case SIDE_TYPE_GATHER_ENUM:
+	{
+		const struct side_type *container =
+			side_ptr_get(gather->u.side_enum.elem_type);
+		const struct side_type_gather_integer *t;
+
+		if (side_enum_get(container->type) != SIDE_TYPE_GATHER_INTEGER)
+			return -EINVAL;
+		t = &container->u.side_gather.u.side_integer;
+		return side_gather_load_integer(t,
+			side_ptr_get(item->u.side_static.side_integer_gather_ptr),
+			t->type.signedness, rev_bo, v);
+	}
+	case SIDE_TYPE_GATHER_BOOL:
+	{
+		const struct side_type_gather_bool *t = &gather->u.side_bool;
+		union side_bool_value value;
+		const char *ptr;
+
+		if (t->offset_bits)
+			return -EINVAL;
+		ptr = side_gather_access(side_enum_get(t->access_mode),
+			(const char *) side_ptr_get(item->u.side_static.side_bool_gather_ptr)
+				+ t->offset);
+		if (!ptr)
+			return -EINVAL;
+		switch (t->type.bool_size) {
+		case 1:
+			memcpy(&value, ptr, 1);
+			*v = !!value.side_bool8;
+			break;
+		case 2:
+			memcpy(&value, ptr, 2);
+			*v = !!value.side_bool16;
+			break;
+		case 4:
+			memcpy(&value, ptr, 4);
+			*v = !!value.side_bool32;
+			break;
+		case 8:
+			memcpy(&value, ptr, 8);
+			*v = !!value.side_bool64;
+			break;
+		default:
+			return -EINVAL;
+		}
+		break;
+	}
+	case SIDE_TYPE_GATHER_BYTE:
+	{
+		const struct side_type_gather_byte *t = &gather->u.side_byte;
+		const char *ptr;
+		uint8_t byte;
+
+		ptr = side_gather_access(side_enum_get(t->access_mode),
+			(const char *) side_ptr_get(item->u.side_static.side_byte_gather_ptr)
+				+ t->offset);
+		if (!ptr)
+			return -EINVAL;
+		memcpy(&byte, ptr, 1);
+		*v = byte;
+		break;
+	}
+	default:
+		return -ENOENT;
+	}
+	return 0;
+}
+
+/* Same, for the types which compare as a double. */
+static int side_gather_load_field_double(const struct side_type *side_type,
+		const struct side_arg *item, bool rev_bo, double *d)
+{
+	const struct side_type_gather_float *t;
+	union side_float_value value;
+	const char *ptr;
+
+	if (!side_type || side_enum_get(side_type->type) != SIDE_TYPE_GATHER_FLOAT)
+		return -ENOENT;
+	t = &side_type->u.side_gather.u.side_float;
+	ptr = side_gather_access(side_enum_get(t->access_mode),
+		(const char *) side_ptr_get(item->u.side_static.side_float_gather_ptr)
+			+ t->offset);
+	if (!ptr)
+		return -EINVAL;
+	switch (t->type.float_size) {
+#if __HAVE_FLOAT32
+	case 4:
+	{
+		union {
+			float f;
+			uint32_t u;
+		} float32;
+
+		memcpy(&value, ptr, 4);
+		float32.f = value.side_float_binary32;
+		if (rev_bo)
+			float32.u = lttng_ust_bswap_32(float32.u);
+		*d = float32.f;
+		break;
+	}
+#endif
+#if __HAVE_FLOAT64
+	case 8:
+	{
+		union {
+			double f;
+			uint64_t u;
+		} float64;
+
+		memcpy(&value, ptr, 8);
+		float64.f = value.side_float_binary64;
+		if (rev_bo)
+			float64.u = lttng_ust_bswap_64(float64.u);
+		*d = float64.f;
+		break;
+	}
+#endif
+	default:
+		return -EINVAL;
+	}
+	return 0;
+}
+
+/*
  * A value travels in the byte order it is emitted with, which the
  * event description carries and the specialize phase resolved into
  * rev_bo. The interpreter compares values, so it converts them to the
@@ -595,7 +826,10 @@ static int side_arg_dynamic_load_field(struct estack_entry *stack_top)
 	{
 		int64_t v;
 
-		ret = side_arg_load_integer(item, stack_top->u.ptr.rev_bo, &v);
+		ret = side_gather_load_field_integer(stack_top->u.ptr.side_type,
+				item, stack_top->u.ptr.rev_bo, &v);
+		if (ret == -ENOENT)
+			ret = side_arg_load_integer(item, stack_top->u.ptr.rev_bo, &v);
 		if (ret)
 			return ret;
 		stack_top->u.v = v;
@@ -606,7 +840,10 @@ static int side_arg_dynamic_load_field(struct estack_entry *stack_top)
 	{
 		int64_t v;
 
-		ret = side_arg_load_integer(item, stack_top->u.ptr.rev_bo, &v);
+		ret = side_gather_load_field_integer(stack_top->u.ptr.side_type,
+				item, stack_top->u.ptr.rev_bo, &v);
+		if (ret == -ENOENT)
+			ret = side_arg_load_integer(item, stack_top->u.ptr.rev_bo, &v);
 		if (ret)
 			return ret;
 		stack_top->u.v = v;
@@ -617,7 +854,10 @@ static int side_arg_dynamic_load_field(struct estack_entry *stack_top)
 	{
 		double d;
 
-		ret = side_arg_load_double(item, stack_top->u.ptr.rev_bo, &d);
+		ret = side_gather_load_field_double(stack_top->u.ptr.side_type,
+				item, stack_top->u.ptr.rev_bo, &d);
+		if (ret == -ENOENT)
+			ret = side_arg_load_double(item, stack_top->u.ptr.rev_bo, &d);
 		if (ret)
 			return ret;
 		stack_top->u.d = d;
@@ -690,6 +930,8 @@ static int dynamic_get_index(struct lttng_ust_ctx *ctx,
 				(const char *) &side_ptr_get(sav->sav)[gid->offset];
 			stack_top->u.ptr.object_type = gid->elem.type;
 			stack_top->u.ptr.rev_bo = gid->elem.rev_bo;
+			/* An element is typed by the argument. */
+			stack_top->u.ptr.side_type = NULL;
 			/* The element is itself a side argument. */
 			break;
 		}
@@ -733,6 +975,7 @@ static int dynamic_get_index(struct lttng_ust_ctx *ctx,
 		stack_top->u.ptr.type = LOAD_OBJECT;
 		/* Mark the object as a side argument. */
 		stack_top->u.ptr.field = &side_arg_field_marker;
+		stack_top->u.ptr.side_type = gid->side_type;
 		stack_top->u.ptr.rev_bo = gid->elem.rev_bo;
 		break;
 	}
@@ -2336,14 +2579,25 @@ int lttng_bytecode_interpret_side(struct lttng_ust_bytecode_runtime *ust_bytecod
 			estack_push(stack, top, ax, bx, ax_t, bx_t);
 			/*
 			 * The legacy field reference carries an index
-			 * and no type, so the byte order comes from the
-			 * description this bytecode is linked against.
+			 * and no type, so both the byte order and the
+			 * address a gather field reads its value from
+			 * come from the description this bytecode is
+			 * linked against.
 			 */
-			ret = side_arg_load_integer(
-				&side_ptr_get(sav->sav)[ref->offset],
-				lttng_bytecode_side_field_rev_bo(bytecode->side_desc,
-					ref->offset),
-				&v);
+			{
+				const struct side_type *side_type =
+					lttng_bytecode_side_field_type(bytecode->side_desc,
+						ref->offset);
+				bool rev_bo = lttng_bytecode_side_field_rev_bo(
+						bytecode->side_desc, ref->offset);
+
+				ret = side_gather_load_field_integer(side_type,
+					&side_ptr_get(sav->sav)[ref->offset], rev_bo, &v);
+				if (ret == -ENOENT)
+					ret = side_arg_load_integer(
+						&side_ptr_get(sav->sav)[ref->offset],
+						rev_bo, &v);
+			}
 			if (unlikely(ret))
 				goto end;
 			estack_ax_v = v;
@@ -2368,11 +2622,20 @@ int lttng_bytecode_interpret_side(struct lttng_ust_bytecode_runtime *ust_bytecod
 				goto end;
 			}
 			estack_push(stack, top, ax, bx, ax_t, bx_t);
-			ret = side_arg_load_double(
-				&side_ptr_get(sav->sav)[ref->offset],
-				lttng_bytecode_side_field_rev_bo(bytecode->side_desc,
-					ref->offset),
-				&d);
+			{
+				const struct side_type *side_type =
+					lttng_bytecode_side_field_type(bytecode->side_desc,
+						ref->offset);
+				bool rev_bo = lttng_bytecode_side_field_rev_bo(
+						bytecode->side_desc, ref->offset);
+
+				ret = side_gather_load_field_double(side_type,
+					&side_ptr_get(sav->sav)[ref->offset], rev_bo, &d);
+				if (ret == -ENOENT)
+					ret = side_arg_load_double(
+						&side_ptr_get(sav->sav)[ref->offset],
+						rev_bo, &d);
+			}
 			if (unlikely(ret))
 				goto end;
 			estack_ax(stack, top)->u.d = d;
