@@ -1,0 +1,188 @@
+#!/bin/sh
+
+# SPDX-FileCopyrightText: 2026 EfficiOS, Inc
+#
+# SPDX-License-Identifier: MIT
+
+# Drive LTTng and Babeltrace over the libside example application.
+#
+# Three recording sessions in a row:
+#
+#   1. everything the three events carry, decoded by babeltrace2;
+#   2. the same events under filters which reach below the top level of
+#      the payload, so that only some of the instances are recorded;
+#   3. a trigger which captures subfields of an event.
+#
+# Nothing outside a temporary directory is touched, and the session and
+# the trigger are removed on the way out.
+
+set -u
+
+DIR=$(dirname "$0")
+DIR=$(readlink -f "$DIR")
+
+APP="$DIR/side-example"
+SESSION="side-example-$$"
+TRIGGER="side-example-$$"
+WORKDIR=
+
+die() {
+	echo "error: $*" >&2
+	exit 1
+}
+
+cleanup() {
+	lttng destroy "$SESSION" >/dev/null 2>&1
+	lttng remove-trigger "$TRIGGER" >/dev/null 2>&1
+	if [ -n "$WORKDIR" ]; then
+		rm -rf "$WORKDIR"
+	fi
+}
+
+heading() {
+	echo
+	echo "==============================================================="
+	echo "$*"
+	echo "==============================================================="
+	echo
+}
+
+command -v lttng >/dev/null 2>&1 ||
+	die "the lttng command is not in PATH (install lttng-tools)"
+command -v babeltrace2 >/dev/null 2>&1 ||
+	die "the babeltrace2 command is not in PATH (install babeltrace2)"
+[ -x "$APP" ] ||
+	die "$APP is not built: run make in $DIR first"
+
+# The application is not linked against the tracer: preload it. Prefer
+# the one of the surrounding build tree over the installed one, so that
+# running this from a source tree exercises what was just built.
+UST_LIB="$DIR/../../../src/lib/lttng-ust/.libs/liblttng-ust.so.1"
+if [ ! -f "$UST_LIB" ]; then
+	UST_LIB="liblttng-ust.so.1"
+fi
+
+WORKDIR=$(mktemp -d "${TMPDIR:-/tmp}/side-example.XXXXXX") ||
+	die "failed to create a temporary directory"
+trap cleanup EXIT INT TERM
+
+run_app() {
+	LD_PRELOAD="$UST_LIB" "$APP" >/dev/null ||
+		die "the example application failed"
+}
+
+# Create a recording session writing to $WORKDIR/$1, run the
+# application, and hand the trace to babeltrace2. The remaining
+# arguments are pairs of an event name pattern and a filter expression,
+# the latter empty for no filter.
+record() {
+	_output="$WORKDIR/$1"
+	shift
+
+	lttng -q create "$SESSION" --output="$_output" >/dev/null ||
+		die "lttng create failed"
+	while [ $# -gt 0 ]; do
+		_name=$1
+		_filter=$2
+		shift 2
+		if [ -z "$_filter" ]; then
+			lttng -q enable-event --userspace "$_name" ||
+				die "lttng enable-event $_name failed"
+		else
+			lttng -q enable-event --userspace "$_name" \
+				--filter "$_filter" ||
+				die "lttng enable-event $_name failed"
+		fi
+	done
+	lttng -q start || die "lttng start failed"
+	run_app
+	lttng -q stop || die "lttng stop failed"
+	lttng -q destroy "$SESSION" >/dev/null || die "lttng destroy failed"
+
+	babeltrace2 "$_output"
+}
+
+heading "1. Record everything the three events carry"
+
+cat <<'EOF'
+side_example:reading   the scalar types, and the three copies of one
+                       value held in host, little and big endian order
+side_example:frame     a structure, an array of structures each holding
+                       an array, a sequence of structures each holding a
+                       sequence, and a variant whose selected option
+                       differs between the two frames
+side_example:snapshot  fields gathered from the memory of the
+                       application, including a sequence of structures
+                       reached through a pointer whose length is read
+                       from the structure which holds it
+
+EOF
+
+record all 'side_example:*' ''
+
+heading "2. Filter below the top level of the payload"
+
+cat <<'EOF'
+A filter reaches the member of a structure, the element of an array or
+of a sequence, and any mix of the two, whether the values are copied
+onto the argument vector or gathered from memory:
+
+  reading    id_be == 4097
+             The three "id_" fields hold one value in three byte
+             orders. The buffer keeps the bytes as they were emitted
+             and the metadata says which order each is in; the filter
+             converts to the byte order of the host before comparing,
+             so this matches the second reading on any host.
+
+  frame      channels[1].samples[2] == 61
+             An index, then a member, then an index: the second frame.
+
+  snapshot   sensor.name == "gpu0" && sensor.axes[2].reading == 42
+             Members of a gathered structure, and the member of an
+             element of a gathered sequence of structures. Nothing is
+             copied for the filter to look at: it reads the memory of
+             the application through the description.
+
+Three of the eight events are recorded.
+
+EOF
+
+record filtered \
+	'side_example:reading' 'id_be == 4097' \
+	'side_example:frame' 'channels[1].samples[2] == 61' \
+	'side_example:snapshot' 'sensor.name == "gpu0" && sensor.axes[2].reading == 42'
+
+heading "3. Capture subfields with a trigger"
+
+if ! lttng add-trigger --help >/dev/null 2>&1; then
+	echo "This session daemon has no add-trigger command: skipping."
+	exit 0
+fi
+
+cat <<'EOF'
+A capture descriptor names what a notification carries when an event
+rule matches, and it reaches the same fields a filter does.
+
+EOF
+
+lttng add-trigger --name="$TRIGGER" \
+	--condition event-rule-matches --type=user \
+	--name='side_example:snapshot' \
+	--capture 'sensor.id' \
+	--capture 'sensor.name' \
+	--capture 'sensor.samples[0]' \
+	--capture 'sensor.axes[0].reading' \
+	--capture 'window[3]' \
+	--action notify || die "lttng add-trigger failed"
+
+lttng list-triggers
+
+cat <<'EOF'
+
+The values themselves reach a program which subscribes to the
+condition of the trigger over a notification channel, with
+lttng_notification_channel_create() and
+lttng_evaluation_event_rule_matches_get_captured_values(); see
+lttng/notification/channel.h and lttng/condition/event-rule-matches.h.
+
+EOF

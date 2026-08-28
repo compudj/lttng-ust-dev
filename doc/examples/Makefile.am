@@ -12,6 +12,7 @@ doc_examples_demo_tracelogdir = ${docdir}/examples/demo-tracelog
 doc_examples_clock_overridedir = ${docdir}/examples/clock-override
 doc_examples_getcpu_overridedir = ${docdir}/examples/getcpu-override
 doc_examples_cmakedir = ${docdir}/examples/cmake-multiple-shared-libraries
+doc_examples_side_instrumentationdir = ${docdir}/examples/side-instrumentation
 
 if ENABLE_JAVA_AGENT_WITH_JUL
 doc_examples_java_juldir = ${docdir}/examples/java-jul
@@ -128,9 +129,14 @@ dist_doc_examples_getcpu_override_DATA = getcpu-override/Makefile \
 	getcpu-override/run-getcpu-override \
 	getcpu-override/README.md
 
+dist_doc_examples_side_instrumentation_DATA = side-instrumentation/Makefile \
+	side-instrumentation/side-example.c \
+	side-instrumentation/run-side-example \
+	side-instrumentation/README.md
+
 # Copies are for VPATH build support
 SUBDIRS_PROXY = easy-ust demo hello-static-lib demo-tracef clock-override \
-		getcpu-override demo-tracelog
+		getcpu-override demo-tracelog side-instrumentation
 
 if ENABLE_GEN_TP_EXAMPLES
 SUBDIRS_PROXY += gen-tp
