@@ -1263,7 +1263,7 @@ string, boolean, enumeration, and a sequence reached through a pointer
 access mode, plus a top level gathered integer, a big-endian gathered
 integer, and a gathered array.
 
-### 3.12 Alignment of the payload, and of a variant option [PARTIAL]
+### 3.12 Alignment of the payload, and of a variant option [DONE]
 
 #### The rule
 
@@ -1311,7 +1311,7 @@ than every event which follows it), and the alignment of the elements
 of an array or of a sequence is applied when it begins rather than
 being left to a first element which may not exist.
 
-#### What remains: the variant
+#### The variant [DONE]
 
 The alignment of the payload is now a property of the class, but it is
 computed with `side_type_alignof()` answering `max(selector, options)`
@@ -1340,7 +1340,7 @@ CTF 2 would not compute. **This is a coupling**: changing
 `side_type_alignof()` to answer 1 for a variant, alone, breaks the
 nested case which works today.
 
-#### The design: size the payload against the sub-buffer offset
+#### The design, as implemented: size the payload against the sub-buffer offset
 
 Give the option the alignment CTF 2 gives it, by applying it to the
 sub-buffer offset at which it is recorded. That offset is known once
@@ -1361,9 +1361,16 @@ for the events which need one:
                     ctx->get_data_size(ctx->get_data_size_priv, base) :
                     ctx->data_size;
 
-set through `lttng_ust_ring_buffer_ctx_init()`, NULL for every event
-whose layout is static. The same substitution is made in
-`lib_ring_buffer_try_reserve_slow()`. Both paths re-read the offset
+The callback belongs to `struct lttng_ust_ring_buffer_ctx_private`,
+not to the public context, and constraint 4 below is the reason: the
+public context is allocated by the probe and filled by an inlined
+initializer compiled into it, so a field added there could only be
+read after checking `struct_size`, whereas the private context is
+allocated by the client within lttng-ust. A channel operation,
+`event_reserve_dyn()`, carries the callback to it, and only the events
+which need it use that operation, so the reservation of a tracepoint
+keeps a fixed size and one predictable branch. The same substitution
+is made in `lib_ring_buffer_try_reserve_slow()`. Both paths re-read the offset
 after a failed `v_cmpxchg`, so the callback runs again with the base of
 the new attempt, and the attempt which wins is the last one which ran.
 
@@ -1393,14 +1400,14 @@ each one is a defect the draft had.
    now the case.
 3. **`side_type_alignof()` for a variant must change with it**, and
    only with it, because of the nested-structure coupling above.
-4. **The new context fields must be gated on `ctx->struct_size`.**
-   `struct lttng_ust_ring_buffer_ctx` is declared uninitialized on the
-   probe's stack and filled by an inlined
-   `lttng_ust_ring_buffer_ctx_init()` compiled into the probe provider,
-   and nothing in the ring buffer checks `struct_size` today. Reading a
-   new field unconditionally would load uninitialized stack from an
-   older provider and call through it. The stack context in
-   `lib_ring_buffer_switch_slow()` needs zeroing for the same reason.
+4. **The callback must not live in the public context.** `struct
+   lttng_ust_ring_buffer_ctx` is declared uninitialized on the probe's
+   stack and filled by an inlined `lttng_ust_ring_buffer_ctx_init()`
+   compiled into the probe provider, and nothing in the ring buffer
+   checks `struct_size` today, so reading a new field there would load
+   uninitialized stack from an older provider and call through it.
+   Putting it in the private context, which the client allocates
+   within lttng-ust, removes the question rather than gating on it.
 5. **The callback runs before the sub-buffer ownership is taken**, not
    after: ownership is requested on `subbuf_index(o_end - 1)` and
    `o_end` needs the size. It runs with libside's RCU read side held,
@@ -1445,7 +1452,17 @@ price of unaligned variant payloads.
 The callback is the only one of the four which gives the option the
 alignment CTF 2 gives it without declaring anything beyond what the
 spec derives. It is also the only one which puts work inside the
-reservation retry loop.
+reservation retry loop, which is why it is taken only by the events
+which contain a variant: `side_event_layout_is_dynamic()` answers
+that, and every other event keeps the payload relative computation.
+
+Verified with the natural alignment of the architecture forced: a
+variant selecting a 64-bit option, which was read as its own selector
+before, decodes whichever option it selects, with and without a member
+as aligned as the option. 400000 events over eight threads, which
+makes the reservation retry and so runs the callback more than once
+per event, decode with every field intact, on both layouts. The test
+suite passes, 372 of 372, on both layouts.
 
 ---
 
@@ -1533,12 +1550,14 @@ lttng-ust:
    invariant; agent-progress wait rules; removal of ust_fork_mutex.
 7. DONE: the gather types, and the rules which keep the two
    serialization passes agreeing on the shape of an event (3.11).
-8. DONE: the alignment of the payload of an event taken from its
-   description rather than from the fields an instance records, and
+8. DONE: alignment (3.12). The alignment of the payload taken from
+   the description rather than from the fields an instance records;
    the alignment of the elements of an array or of a sequence applied
-   when it begins (3.12). FUTURE WORK in the same section: sizing the
-   payload against the sub-buffer offset so that a variant option gets
-   the alignment CTF 2 gives it.
+   when it begins; and the payload of an event which contains a
+   variant sized against the sub-buffer offset it is recorded at,
+   through a reservation which computes the size rather than being
+   given it, so that a variant option gets the alignment CTF 2 gives
+   it.
 9. DONE: integers and floats of either byte order, recorded as
    emitted and described by their byte order, converted to the host's
    only where the filter and capture bytecode compares values (3.10).
