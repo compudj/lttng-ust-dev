@@ -781,7 +781,7 @@ unsupported type. Byte order is not among them any more, see 3.10:
   serialization pass, so the write pass has to know where the elements
   of the size pass ended, and it finds that size in the entry which
   follows the length only if the elements record nothing of their own.
-#### The gather types [DONE, see 3.11]
+#### The gather types [DONE, see 3.11, including filtering on them]
 
 #### The dynamic types and variadic events
 
@@ -1347,12 +1347,41 @@ null-terminated string, and a sequence whose elements shifted moves
 the terminator, so the event it parses is not as long as the event
 that was reserved. With all four, the same test decodes whole.
 
-Filters cannot reference a gather field: the specialize phase has no
-mapping for the gather types, so the bytecode fails to link and the
-event is not recorded. It fails closed, which is safe — no wrong
-match — but it is silent. Supporting it means resolving the gather
-access in the interpreter, which has the argument (a pointer) but not
-the description.
+#### Filtering on a gather field [DONE]
+
+A filter which named a gather field used to fail to link, which left
+the event unrecorded: safe, since it never produced a wrong match, but
+silent. What the interpreter lacked is the description. A gather
+argument carries the address of the value rather than the value, and
+only the type says how to reach it: the access mode, which says
+whether that address is the value or a pointer to it, and the offset
+applied before the access.
+
+The type of the payload field now reaches the interpreter by both
+routes. The specialize phase resolves a field name to a side argument
+index, so it puts the type of that field in the data of the
+`get_index` it produces, which the interpreter reads into the load
+pointer. The legacy field reference, which the session daemon still
+emits for a plain field name and whose operand is an index with no
+type, looks the type up by index in the description the bytecode is
+linked against — the same lookup it already does for the byte order
+(3.10). The value then converts the way a stack-copy value does: an
+enumeration compares as its container, a boolean as zero or one, and
+the byte order is the one of the type the gather wraps. Bit-packed
+gathered values are refused, as the translation refuses them.
+
+The six gather scalars are covered: integer, pointer, boolean, byte,
+float and enumeration. A gathered structure is not, being unreachable
+by name, since the filter grammar addresses the top level fields of
+the payload; nor are the elements of a gathered array or sequence,
+which are not arguments of their own and so cannot be indexed the way
+the elements of a stack-copy array are. Both keep failing closed.
+
+Verified on an event carrying every gather scalar as a top level
+field, one reached through a pointer rather than directly and one
+big-endian: 17 filter expressions give the expected result, including
+the byte-swapped values which must not match, and a notifier captures
+five of those fields.
 
 Verified with an event carrying a gathered structure of a gathered
 unsigned and signed integer, byte, pointer, binary32, binary64,
@@ -1658,13 +1687,17 @@ lttng-ust:
 9. DONE: integers and floats of either byte order, recorded as
    emitted and described by their byte order, converted to the host's
    only where the filter and capture bytecode compares values (3.10).
-10. FUTURE WORK: type coverage (3.4). In ascending cost: the remaining
+10. DONE: filtering and capturing on a gather field, for the six
+   gather scalars, by carrying the type of the payload field to the
+   interpreter through both of its field lookup paths (3.11).
+11. FUTURE WORK: type coverage (3.4). In ascending cost: the remaining
    restrictions within the supported types are lttng-ust-only, as is
-   filtering on a gather field; the dynamic types and variadic events
-   need a self-describing encoding carried in a blob field, for which
+   filtering on a gathered structure or on the element of a gathered
+   array or sequence; the dynamic types and variadic events need a
+   self-describing encoding carried in a blob field, for which
    MessagePack is the candidate and is already in the tree; null,
    optional and bitmap enumeration need the whole stack.
-11. FUTURE WORK: report the events dropped for unsupported field types
+12. FUTURE WORK: report the events dropped for unsupported field types
    through something other than a DBG line (3.4), so that an
    application does not silently lose an event.
 
