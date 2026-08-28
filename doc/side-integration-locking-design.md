@@ -708,15 +708,17 @@ types", and the event is never registered with the LTTng tracer. An
 application which puts one unsupported field in one event loses that
 whole event, silently unless debug output is enabled.
 
-Of the 48 labels of `enum side_type_label`, 19 are accepted. 23 are
+Of the 48 labels of `enum side_type_label`, 29 are accepted. 13 are
 refused by the visitor table, and 6 more (`U128`, `S128`,
 `FLOAT_BINARY16`, `FLOAT_BINARY128`, `STRING_UTF16`, `STRING_UTF32`)
 reach a supported callback but are refused by its size or encoding
-restrictions.
+restrictions. The restrictions of a type apply to its gather flavour
+as well, which wraps it.
 
 | Group | Status |
 | --- | --- |
 | `BOOL`, `U8`-`U64`, `S8`-`S64`, `BYTE`, `POINTER` | supported |
+| the 10 `GATHER_*` types | supported, see 3.11 |
 | `FLOAT_BINARY32`, `FLOAT_BINARY64` | supported |
 | `STRING_UTF8` | supported |
 | `STRUCT`, `ARRAY`, `VLA`, `VARIANT`, `ENUM` | supported |
@@ -726,7 +728,6 @@ restrictions.
 | `NULL` | refused, nothing in the stack |
 | `OPTIONAL` | refused, nothing in the stack |
 | `ENUM_BITMAP` | refused, nothing in the stack |
-| the 10 `GATHER_*` types | refused, tracer-side only |
 | `DYNAMIC` and the 9 `DYNAMIC_*` types | refused, tracer-side only |
 
 Above the type level, variadic events are refused as a whole
@@ -756,22 +757,7 @@ unsupported type. Byte order is not among them any more, see 3.10:
   encoding is hardcoded to `lttng_ust_string_encoding_UTF8`, for field
   types, for enumeration labels and for attribute values. LTTng-UST's
   `enum lttng_ust_string_encoding` has no UTF-16 or UTF-32.
-#### The gather types
-
-Ten labels, `GATHER_BOOL`, `GATHER_INTEGER`, `GATHER_BYTE`,
-`GATHER_POINTER`, `GATHER_FLOAT`, `GATHER_STRING`, `GATHER_STRUCT`,
-`GATHER_ARRAY`, `GATHER_VLA` and `GATHER_ENUM`, describe values read
-from an address rather than copied onto the argument vector.
-
-This is the cheapest of the missing groups, and the only one which
-needs nothing outside lttng-ust: a gather integer *is* an integer as
-far as the description goes, so the translation of each gather type is
-close to a copy of its stack-copy counterpart, and the resulting LTTng
-type, the protocol and the session daemon are unchanged. The work is
-in the serializer, which must read through the address with the right
-`side_type_gather_access_mode` (direct or pointer dereference) and
-honour the offsets, rather than pulling the value from the argument
-vector.
+#### The gather types [DONE, see 3.11]
 
 #### The dynamic types and variadic events
 
@@ -1205,6 +1191,78 @@ and `s128_be` declared their type as unsigned, so a negative value
 emitted through one of them was described, and read back, as positive
 (libside c7c0c14). The `_le` and host counterparts were correct.
 
+### 3.11 The gather types, and what the two passes must agree on [DONE]
+
+The ten `GATHER_*` labels describe a value read from an address rather
+than copied onto the argument vector. They were refused, so an event
+carrying one was dropped whole.
+
+Nothing of the gathering belongs to the tracer. The libside argument
+vector visitor resolves the access mode (direct or pointer
+dereference) and the offsets, and calls the tracer back with the value
+itself, with the plain type the gather wrapper carries, and, for a
+sequence, with its resolved length. The translation therefore
+describes the wrapped type — `side_translate_gather_integer_type()` is
+`side_translate_integer_type()` on `&t->type` — and the serialization
+records the value through the same helpers as the stack-copy flavour,
+which were split out for the purpose. The restrictions of a type apply
+to its gather flavour, and bit-packed gathered integers and booleans
+(a non-zero `offset_bits`) are refused like their stack-copy
+counterparts.
+
+What is specific to gather is that its value is read from memory on
+each of the two serialization passes, and can change in between, which
+an argument vector cannot. A racing application must not be able to
+produce a trace which does not parse — a malformed event does not lose
+itself, it loses every event after it in the stream. Four rules hold
+that:
+
+1. **The write pass never writes past the reservation.** The context
+   mirrors the accounting of the size pass and refuses the write which
+   would exceed it.
+2. **Every byte reserved is written.** What the write pass left is
+   filled, so that no byte of the event carries into the trace what
+   the ring buffer held there before.
+3. **A string is written with `event_strcpy()`**, the ring buffer
+   operation a tracepoint string uses: it stops at the terminator or
+   at the reserved length, pads with `'#'` if the string shrank, and
+   always terminates. The terminator therefore always lands where the
+   size pass put it, which is what the reader parses.
+4. **The elements of a sequence occupy what they occupied in the size
+   pass.** The length recorded is the one of the size pass, so the
+   elements which follow it are truncated if the sequence grew and
+   filled if it shrank. This is the same guarantee a tracepoint gets
+   by construction: its write pass takes the length from
+   `lttng_ust__get_dynamic_len()`, the value the size pass stored,
+   and never re-evaluates the length expression.
+
+Rule 4 is why the elements of a gathered sequence must be of a fixed
+size, which the translation enforces: the write pass has to know where
+the elements end before it serializes them, and it finds that size in
+the entry which follows the length in the dynamic-length stack — which
+is only adjacent if the elements push nothing of their own.
+
+Rules 1 and 2 alone are not enough, and the difference is worth
+recording: with them but without rules 3 and 4, an application
+mutating the length of a gathered sequence under the tracer lost the
+stream after nine events out of 200000. The reader parses a
+null-terminated string, and a sequence whose elements shifted moves
+the terminator, so the event it parses is not as long as the event
+that was reserved. With all four, the same test decodes whole.
+
+Filters cannot reference a gather field: the specialize phase has no
+mapping for the gather types, so the bytecode fails to link and the
+event is not recorded. It fails closed, which is safe — no wrong
+match — but it is silent. Supporting it means resolving the gather
+access in the interpreter, which has the argument (a pointer) but not
+the description.
+
+Verified with an event carrying a gathered structure of a gathered
+unsigned and signed integer, byte, pointer, binary32, binary64,
+string, boolean, enumeration, and a sequence reached through a pointer
+access mode, plus a top level gathered integer, a big-endian gathered
+integer, and a gathered array.
+
 ---
 
 ## 4. Required changes
@@ -1263,8 +1321,10 @@ libside:
    registration and unregistration, with
    `side_tracer_callback_synchronize()` readying a batch and
    `side_tracer_callback_reclaim()` freeing it (3.8).
-7. Optional: `-z nodelete`.
-8. FUTURE WORK: quadratic reallocation of the per-event callback array
+7. DONE (libside c7c0c14): signedness of the big-endian signed integer
+   types, which declared themselves unsigned (3.10).
+8. Optional: `-z nodelete`.
+9. FUTURE WORK: quadratic reallocation of the per-event callback array
    (3.9). Fast-path change, deliberately out of scope for the POC.
 
 lttng-ust:
@@ -1287,15 +1347,17 @@ lttng-ust:
 5. `-Wl,-z,nodelete`; dlsym-probe for old-libside fallback.
 6. Update the lttng-ust-comm.c locking doc block: L1 order; F1
    invariant; agent-progress wait rules; removal of ust_fork_mutex.
-7. DONE: integers and floats of either byte order, recorded as
+7. DONE: the gather types, and the rules which keep the two
+   serialization passes agreeing on the shape of an event (3.11).
+8. DONE: integers and floats of either byte order, recorded as
    emitted and described by their byte order, converted to the host's
    only where the filter and capture bytecode compares values (3.10).
-8. FUTURE WORK: type coverage (3.4). In ascending cost: the gather
-   types and the remaining restrictions within the supported types are
-   lttng-ust-only; the dynamic types and variadic events need a
+9. FUTURE WORK: type coverage (3.4). In ascending cost: the remaining
+   restrictions within the supported types are lttng-ust-only, as is
+   filtering on a gather field; the dynamic types and variadic events need a
    mapping onto machinery which already exists end to end; null,
    optional and bitmap enumeration need the whole stack.
-9. FUTURE WORK: report the events dropped for unsupported field types
+10. FUTURE WORK: report the events dropped for unsupported field types
    through something other than a DBG line (3.4), so that an
    application does not silently lose an event.
 
