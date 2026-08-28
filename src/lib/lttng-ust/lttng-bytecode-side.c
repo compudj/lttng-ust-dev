@@ -29,6 +29,55 @@
 #include "common/macros.h"
 #include "common/tracer.h"
 
+/*
+ * Whether loading a value of this type requires converting it from the
+ * byte order it is emitted with to the byte order of the host.
+ */
+bool lttng_bytecode_side_type_rev_bo(const struct side_type *side_type)
+{
+	switch (side_enum_get(side_type->type)) {
+	case SIDE_TYPE_U8:		/* Fall-through. */
+	case SIDE_TYPE_S8:		/* Fall-through. */
+	case SIDE_TYPE_BOOL:		/* Fall-through. */
+	case SIDE_TYPE_BYTE:
+		/* A single byte has no byte order. */
+		return false;
+	case SIDE_TYPE_U16:		/* Fall-through. */
+	case SIDE_TYPE_U32:		/* Fall-through. */
+	case SIDE_TYPE_U64:		/* Fall-through. */
+	case SIDE_TYPE_S16:		/* Fall-through. */
+	case SIDE_TYPE_S32:		/* Fall-through. */
+	case SIDE_TYPE_S64:		/* Fall-through. */
+	case SIDE_TYPE_POINTER:
+		return side_enum_get(side_type->u.side_integer.byte_order) !=
+			SIDE_TYPE_BYTE_ORDER_HOST;
+	case SIDE_TYPE_FLOAT_BINARY32:	/* Fall-through. */
+	case SIDE_TYPE_FLOAT_BINARY64:
+		return side_enum_get(side_type->u.side_float.byte_order) !=
+			SIDE_TYPE_FLOAT_WORD_ORDER_HOST;
+	case SIDE_TYPE_ENUM:
+	{
+		const struct side_type *container =
+			side_ptr_get(side_type->u.side_enum.elem_type);
+
+		return lttng_bytecode_side_type_rev_bo(container);
+	}
+	default:
+		return false;
+	}
+}
+
+bool lttng_bytecode_side_field_rev_bo(const struct side_event_description *side_desc,
+		uint32_t idx)
+{
+	const struct side_event_field *field;
+
+	if (!side_desc || idx >= side_array_length(&side_desc->fields))
+		return false;
+	field = side_array_at(&side_desc->fields, idx);
+	return lttng_bytecode_side_type_rev_bo(&field->side_type);
+}
+
 int lttng_bytecode_side_field_lookup(const struct side_event_description *side_desc,
 		const char *name, const struct side_type **type)
 {
@@ -318,6 +367,8 @@ int link_bytecode_side(const struct lttng_ust_event_desc *event_desc,
 	runtime->p.type = bytecode->type;
 	runtime->p.bc = bytecode;
 	runtime->p.pctx = ctx;
+	/* The interpreter needs the field types this is linked against. */
+	runtime->side_desc = side_desc;
 	runtime->len = bytecode->bc.reloc_offset;
 	/* copy original bytecode */
 	memcpy(runtime->code, bytecode->bc.data, runtime->len);

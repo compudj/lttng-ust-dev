@@ -736,9 +736,9 @@ Above the type level, variadic events are refused as a whole
 
 #### Restrictions within the supported types
 
-Five parameterizations which side can describe are refused by types
+Four parameterizations which side can describe are refused by types
 which are otherwise supported. Each fails the whole event, like an
-unsupported type:
+unsupported type. Byte order is not among them any more, see 3.10:
 
 - **Integers wider than 64 bits.** `side_integer_alignof()` accepts 1,
   2, 4 and 8 bytes only, so `U128` and `S128` never translate.
@@ -756,11 +756,6 @@ unsupported type:
   encoding is hardcoded to `lttng_ust_string_encoding_UTF8`, for field
   types, for enumeration labels and for attribute values. LTTng-UST's
   `enum lttng_ust_string_encoding` has no UTF-16 or UTF-32.
-- **Non-host byte order**, for integers and for floats. Note that the
-  *serializer* does handle reverse byte order (it byte-swaps on the
-  way into the ring buffer); only the description translation refuses
-  it.
-
 #### The gather types
 
 Ten labels, `GATHER_BOOL`, `GATHER_INTEGER`, `GATHER_BYTE`,
@@ -1147,6 +1142,69 @@ nonetheless a fast-path change — it moves an ordering requirement into
 `_side_call()` where today there is none — which is why it is not part
 of the POC.
 
+### 3.10 Byte order: integers and floats of either endianness [DONE]
+
+Side describes the byte order of each integer and float, and the `_le`
+and `_be` type and field macros produce values in a byte order which
+may not be the host's. The translation used to refuse anything other
+than the host byte order, so an event with one such field was dropped
+whole.
+
+The model is the LTTng one, the same as `ctf_integer_network`: **the
+value is recorded in the byte order it is emitted with, and the
+description tells the reader which one that is**. Nothing is byte
+swapped on the way into the trace; the reader converts. This is also
+why the description is the only place which knows the byte order: a
+side *argument* carries the value and its type label, not its
+endianness.
+
+- `side_integer_type_to_lttng()` takes the byte order and sets
+  `reverse_byte_order` on the LTTng integer type;
+  `side_translate_float_type()` does the same for floats. A single
+  byte, and a boolean argument (which `side_arg_bool()` normalizes to
+  `side_bool8`), have no byte order.
+- `side_serialize_integer()` no longer normalizes through
+  `tracer_load_integer_value()`: it writes the value as emitted,
+  loading it through the unsigned member of the union, which is the
+  same storage and preserves the bit pattern of a signed value. The
+  float and boolean serializers already preserved theirs.
+- Integers and floats do not answer to the same host order:
+  `SIDE_TYPE_BYTE_ORDER_HOST` for the former,
+  `SIDE_TYPE_FLOAT_WORD_ORDER_HOST` for the latter. Both are compile
+  time aliases of LE or BE, so `_le` and `_be` are symmetric and the
+  test is always "not the host's".
+
+The filter and capture bytecode is the exception to "do not convert":
+it compares *values*, so it converts to the host byte order at load
+time. Both of its field paths were wired for it:
+
+- The indexed path (`get_symbol` specialized into `get_index`, which is
+  also how array and VLA elements are reached) resolves the byte order
+  at specialize time into `gid.elem.rev_bo`, which the interpreter
+  copies into `ptr.rev_bo`. For an array or a VLA, `load->rev_bo`
+  carries the byte order *of the elements*, which is what a value
+  loaded from it needs.
+- The legacy field reference (`BYTECODE_OP_LOAD_FIELD_REF`, which the
+  session daemon still emits for a plain field name) carries an index
+  and no type, and its operand has nowhere to hold a byte order. The
+  linker therefore records the side event description in
+  `struct bytecode_runtime`, and the interpreter looks the field's byte
+  order up by index. That is a lookup per evaluation of such a field,
+  which suits a POC; an alternative would be a pair of internal
+  reverse-byte-order opcodes.
+
+Verified end to end on x86-64 with an event carrying `u16`, `u32`,
+`u64`, `s32`, `binary32` and `binary64` in host, `_le` and `_be` form,
+plus a BE array and a BE VLA: every field of a pair decodes to the same
+value. 17 filter expressions over the same fields, including array and
+VLA element indexing and a byte-swapped value which must *not* match,
+and a notifier capturing four BE fields, all give the expected result.
+
+This work found a libside bug: `side_type_s16_be`, `s32_be`, `s64_be`
+and `s128_be` declared their type as unsigned, so a negative value
+emitted through one of them was described, and read back, as positive
+(libside c7c0c14). The `_le` and host counterparts were correct.
+
 ---
 
 ## 4. Required changes
@@ -1229,12 +1287,15 @@ lttng-ust:
 5. `-Wl,-z,nodelete`; dlsym-probe for old-libside fallback.
 6. Update the lttng-ust-comm.c locking doc block: L1 order; F1
    invariant; agent-progress wait rules; removal of ust_fork_mutex.
-7. FUTURE WORK: type coverage (3.4). In ascending cost: the gather
-   types and the restrictions within the supported types are
+7. DONE: integers and floats of either byte order, recorded as
+   emitted and described by their byte order, converted to the host's
+   only where the filter and capture bytecode compares values (3.10).
+8. FUTURE WORK: type coverage (3.4). In ascending cost: the gather
+   types and the remaining restrictions within the supported types are
    lttng-ust-only; the dynamic types and variadic events need a
    mapping onto machinery which already exists end to end; null,
    optional and bitmap enumeration need the whole stack.
-8. FUTURE WORK: report the events dropped for unsupported field types
+9. FUTURE WORK: report the events dropped for unsupported field types
    through something other than a DBG line (3.4), so that an
    application does not silently lose an event.
 

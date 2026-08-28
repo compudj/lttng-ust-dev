@@ -32,6 +32,23 @@ int lttng_bytecode_side_field_lookup(const struct side_event_description *side_d
 		const char *name, const struct side_type **type)
 	__attribute__((visibility("hidden")));
 
+/*
+ * Whether a value of this type must be converted from the byte order
+ * it is emitted with to the byte order of the host before it is
+ * compared.
+ */
+bool lttng_bytecode_side_type_rev_bo(const struct side_type *side_type)
+	__attribute__((visibility("hidden")));
+
+/*
+ * The byte order of a payload field, by side argument index. Used by
+ * the legacy field reference, whose operand is an index and which has
+ * nowhere to carry the byte order the specialize phase resolves.
+ */
+bool lttng_bytecode_side_field_rev_bo(const struct side_event_description *side_desc,
+		uint32_t idx)
+	__attribute__((visibility("hidden")));
+
 void lttng_enabler_link_bytecode_side(const struct lttng_ust_event_desc *event_desc,
 		struct lttng_ust_ctx **ctx,
 		struct cds_list_head *instance_bytecode_head,

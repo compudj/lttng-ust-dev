@@ -58,12 +58,21 @@ do {								\
 } while (0)
 #endif
 
+struct side_event_description;
+
 /* Linked bytecode. Child of struct lttng_ust_bytecode_runtime. */
 struct bytecode_runtime {
 	struct lttng_ust_bytecode_runtime p;
 	size_t data_len;
 	size_t data_alloc_len;
 	char *data;
+	/*
+	 * Description of the side event this bytecode is linked
+	 * against, NULL for a tracepoint event. The legacy field
+	 * reference carries a field index and no type, so the
+	 * interpreter finds the byte order of the field there.
+	 */
+	const struct side_event_description *side_desc;
 	uint16_t len;
 	char code[0];
 };

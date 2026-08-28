@@ -2879,9 +2879,29 @@ size_t side_struct_alignof(const struct side_type_struct *side_struct)
 	return align;
 }
 
+/*
+ * The trace records the values in the byte order they are emitted
+ * with, and the description tells the reader which one that is. Both
+ * helpers take the byte order of a side type and answer whether it
+ * differs from the byte order the reader assumes for the trace, which
+ * is the byte order of the host.
+ */
+static
+bool side_type_reverse_byte_order(enum side_type_label_byte_order byte_order)
+{
+	return byte_order != SIDE_TYPE_BYTE_ORDER_HOST;
+}
+
+static
+bool side_float_type_reverse_byte_order(enum side_type_label_byte_order byte_order)
+{
+	return byte_order != SIDE_TYPE_FLOAT_WORD_ORDER_HOST;
+}
+
 static
 const struct lttng_ust_type_common *side_integer_type_to_lttng(
 		uint16_t integer_size, uint16_t len_bits, bool signedness,
+		bool reverse_byte_order,
 		const struct side_attr *attr, uint32_t nr_attr,
 		enum tracer_display_base default_base)
 {
@@ -2920,8 +2940,12 @@ const struct lttng_ust_type_common *side_integer_type_to_lttng(
 	t->alignment = align * CHAR_BIT;
 	t->attributes = side_translate_attributes(attr, nr_attr, NULL);
 	t->signedness = signedness;
-	/* Values are normalized to host byte order when serialized. */
-	t->reverse_byte_order = 0;
+	/*
+	 * Values are serialized in the byte order they are emitted with:
+	 * the description carries that byte order, and the reader of the
+	 * trace converts.
+	 */
+	t->reverse_byte_order = reverse_byte_order;
 	t->base = base;
 	return &t->parent;
 }
@@ -3237,7 +3261,7 @@ void side_translate_integer_type(const struct side_type_integer *t, void *priv)
 	const struct lttng_ust_type_common *type;
 
 	type = side_integer_type_to_lttng(t->integer_size, t->len_bits,
-		t->signedness,
+		t->signedness, side_type_reverse_byte_order(side_enum_get(t->byte_order)),
 		side_array_elements(&t->attributes),
 		side_array_length(&t->attributes),
 		TRACER_DISPLAY_BASE_10);
@@ -3256,7 +3280,7 @@ void side_translate_pointer_type(const struct side_type_integer *t, void *priv)
 	const struct lttng_ust_type_common *type;
 
 	type = side_integer_type_to_lttng(t->integer_size, t->len_bits,
-		t->signedness,
+		t->signedness, side_type_reverse_byte_order(side_enum_get(t->byte_order)),
 		side_array_elements(&t->attributes),
 		side_array_length(&t->attributes),
 		TRACER_DISPLAY_BASE_16);
@@ -3269,7 +3293,8 @@ void side_translate_byte_type(const struct side_type_byte *t, void *priv)
 	struct side_translate_ctx *ctx = (struct side_translate_ctx *) priv;
 	const struct lttng_ust_type_common *type;
 
-	type = side_integer_type_to_lttng(1, 0, false,
+	/* A single byte has no byte order. */
+	type = side_integer_type_to_lttng(1, 0, false, false,
 		side_array_elements(&t->attributes),
 		side_array_length(&t->attributes),
 		TRACER_DISPLAY_BASE_16);
@@ -3284,11 +3309,8 @@ void side_translate_bool_type(const struct side_type_bool *t, void *priv)
 
 	if (ctx->fail)
 		return;
-	if (side_enum_get(t->byte_order) != SIDE_TYPE_BYTE_ORDER_HOST) {
-		ctx->fail = true;
-		return;
-	}
 	type = side_integer_type_to_lttng(t->bool_size, t->len_bits, false,
+		side_type_reverse_byte_order(side_enum_get(t->byte_order)),
 		side_array_elements(&t->attributes),
 		side_array_length(&t->attributes),
 		TRACER_DISPLAY_BASE_10);
@@ -3305,10 +3327,6 @@ void side_translate_float_type(const struct side_type_float *t, void *priv)
 
 	if (ctx->fail)
 		return;
-	if (side_enum_get(t->byte_order) != SIDE_TYPE_BYTE_ORDER_HOST) {
-		ctx->fail = true;
-		return;
-	}
 	switch (t->float_size) {
 	case 4:
 		exp_dig = 8;
@@ -3334,7 +3352,7 @@ void side_translate_float_type(const struct side_type_float *t, void *priv)
 	type->exp_dig = exp_dig;
 	type->mant_dig = mant_dig;
 	type->alignment = align * CHAR_BIT;
-	type->reverse_byte_order = 0;
+	type->reverse_byte_order = side_float_type_reverse_byte_order(side_enum_get(t->byte_order));
 	type->attributes = side_translate_attributes(
 		side_array_elements(&t->attributes),
 		side_array_length(&t->attributes), NULL);
@@ -4323,19 +4341,36 @@ void side_serialize_integer(const struct side_type *type_desc,
 {
 	struct side_serialize_ctx *c = (struct side_serialize_ctx *) priv;
 	const struct side_type_integer *t = &type_desc->u.side_integer;
-	union int_value v;
-	uint16_t len_bits;
+	const union side_integer_value *value =
+		&item->u.side_static.integer_value;
+	uint64_t v;
 
 	if (c->fail)
 		return;
-	if (t->integer_size > 8) {
+	/*
+	 * Record the value as it was emitted, in its own byte order:
+	 * the description tells the reader of the trace which one that
+	 * is. Load it unsigned, which preserves the bit pattern of a
+	 * signed value as well.
+	 */
+	switch (t->integer_size) {
+	case 1:
+		v = value->side_u8;
+		break;
+	case 2:
+		v = value->side_u16;
+		break;
+	case 4:
+		v = value->side_u32;
+		break;
+	case 8:
+		v = value->side_u64;
+		break;
+	default:
 		c->fail = true;
 		return;
 	}
-	v = tracer_load_integer_value(t, &item->u.side_static.integer_value,
-		0, &len_bits);
-	side_serialize_integer_value(c, t->integer_size,
-		v.u[SIDE_INTEGER128_SPLIT_LOW]);
+	side_serialize_integer_value(c, t->integer_size, v);
 }
 
 static

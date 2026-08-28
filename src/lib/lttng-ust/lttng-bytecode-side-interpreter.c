@@ -381,61 +381,143 @@ static int context_get_index(struct lttng_ust_ctx *ctx,
  */
 static const struct lttng_ust_event_field side_arg_field_marker;
 
-static int side_arg_load_integer(const struct side_arg *item, int64_t *v)
+/*
+ * A value travels in the byte order it is emitted with, which the
+ * event description carries and the specialize phase resolved into
+ * rev_bo. The interpreter compares values, so it converts them to the
+ * byte order of the host. The load is done through the unsigned member
+ * of the union, which is the same storage, so that the byte swap
+ * operates on the bit pattern before it is given its signedness.
+ */
+static int side_arg_load_integer(const struct side_arg *item, bool rev_bo,
+		int64_t *v)
 {
+	const union side_integer_value *value =
+		&item->u.side_static.integer_value;
+
 	switch (side_enum_get(item->type)) {
 	case SIDE_TYPE_S8:
-		*v = item->u.side_static.integer_value.side_s8;
+		*v = (int8_t) value->side_u8;
 		break;
 	case SIDE_TYPE_S16:
-		*v = item->u.side_static.integer_value.side_s16;
+	{
+		uint16_t tmp = value->side_u16;
+
+		if (rev_bo)
+			tmp = lttng_ust_bswap_16(tmp);
+		*v = (int16_t) tmp;
 		break;
+	}
 	case SIDE_TYPE_S32:
-		*v = item->u.side_static.integer_value.side_s32;
+	{
+		uint32_t tmp = value->side_u32;
+
+		if (rev_bo)
+			tmp = lttng_ust_bswap_32(tmp);
+		*v = (int32_t) tmp;
 		break;
+	}
 	case SIDE_TYPE_S64:
-		*v = item->u.side_static.integer_value.side_s64;
+	{
+		uint64_t tmp = value->side_u64;
+
+		if (rev_bo)
+			tmp = lttng_ust_bswap_64(tmp);
+		*v = (int64_t) tmp;
 		break;
+	}
 	case SIDE_TYPE_U8:
-		*v = (int64_t) item->u.side_static.integer_value.side_u8;
+		*v = (int64_t) value->side_u8;
 		break;
 	case SIDE_TYPE_U16:
-		*v = (int64_t) item->u.side_static.integer_value.side_u16;
+	{
+		uint16_t tmp = value->side_u16;
+
+		if (rev_bo)
+			tmp = lttng_ust_bswap_16(tmp);
+		*v = (int64_t) tmp;
 		break;
+	}
 	case SIDE_TYPE_U32:
-		*v = (int64_t) item->u.side_static.integer_value.side_u32;
+	{
+		uint32_t tmp = value->side_u32;
+
+		if (rev_bo)
+			tmp = lttng_ust_bswap_32(tmp);
+		*v = (int64_t) tmp;
 		break;
+	}
 	case SIDE_TYPE_U64:
-		*v = (int64_t) item->u.side_static.integer_value.side_u64;
+	{
+		uint64_t tmp = value->side_u64;
+
+		if (rev_bo)
+			tmp = lttng_ust_bswap_64(tmp);
+		*v = (int64_t) tmp;
 		break;
+	}
 	case SIDE_TYPE_BOOL:
 		/* Stack-copy bool arguments are stored as bool8. */
 		*v = !!item->u.side_static.bool_value.side_bool8;
 		break;
 	case SIDE_TYPE_BYTE:
+		/* A single byte has no byte order. */
 		*v = item->u.side_static.byte_value;
 		break;
 	case SIDE_TYPE_POINTER:
-		*v = (int64_t) item->u.side_static.integer_value.side_uptr;
+	{
+		uintptr_t tmp = value->side_uptr;
+
+		if (rev_bo) {
+			if (sizeof(tmp) == sizeof(uint64_t))
+				tmp = (uintptr_t) lttng_ust_bswap_64((uint64_t) tmp);
+			else
+				tmp = (uintptr_t) lttng_ust_bswap_32((uint32_t) tmp);
+		}
+		*v = (int64_t) tmp;
 		break;
+	}
 	default:
 		return -EINVAL;
 	}
 	return 0;
 }
 
-static int side_arg_load_double(const struct side_arg *item, double *d)
+static int side_arg_load_double(const struct side_arg *item, bool rev_bo,
+		double *d)
 {
 	switch (side_enum_get(item->type)) {
 #if __HAVE_FLOAT32
 	case SIDE_TYPE_FLOAT_BINARY32:
-		*d = item->u.side_static.float_value.side_float_binary32;
+	{
+		union {
+			float f;
+			uint32_t u;
+		} float32 = {
+			.f = item->u.side_static.float_value.side_float_binary32,
+		};
+
+		if (rev_bo)
+			float32.u = lttng_ust_bswap_32(float32.u);
+		*d = float32.f;
 		break;
+	}
 #endif
 #if __HAVE_FLOAT64
 	case SIDE_TYPE_FLOAT_BINARY64:
-		*d = item->u.side_static.float_value.side_float_binary64;
+	{
+		union {
+			double f;
+			uint64_t u;
+		} float64 = {
+			.f = item->u.side_static.float_value.side_float_binary64,
+		};
+
+		if (rev_bo)
+			float64.u = lttng_ust_bswap_64(float64.u);
+		*d = float64.f;
 		break;
+	}
 #endif
 	default:
 		return -EINVAL;
@@ -513,7 +595,7 @@ static int side_arg_dynamic_load_field(struct estack_entry *stack_top)
 	{
 		int64_t v;
 
-		ret = side_arg_load_integer(item, &v);
+		ret = side_arg_load_integer(item, stack_top->u.ptr.rev_bo, &v);
 		if (ret)
 			return ret;
 		stack_top->u.v = v;
@@ -524,7 +606,7 @@ static int side_arg_dynamic_load_field(struct estack_entry *stack_top)
 	{
 		int64_t v;
 
-		ret = side_arg_load_integer(item, &v);
+		ret = side_arg_load_integer(item, stack_top->u.ptr.rev_bo, &v);
 		if (ret)
 			return ret;
 		stack_top->u.v = v;
@@ -535,7 +617,7 @@ static int side_arg_dynamic_load_field(struct estack_entry *stack_top)
 	{
 		double d;
 
-		ret = side_arg_load_double(item, &d);
+		ret = side_arg_load_double(item, stack_top->u.ptr.rev_bo, &d);
 		if (ret)
 			return ret;
 		stack_top->u.d = d;
@@ -607,7 +689,7 @@ static int dynamic_get_index(struct lttng_ust_ctx *ctx,
 			stack_top->u.ptr.ptr =
 				(const char *) &side_ptr_get(sav->sav)[gid->offset];
 			stack_top->u.ptr.object_type = gid->elem.type;
-			stack_top->u.ptr.rev_bo = false;
+			stack_top->u.ptr.rev_bo = gid->elem.rev_bo;
 			/* The element is itself a side argument. */
 			break;
 		}
@@ -651,7 +733,7 @@ static int dynamic_get_index(struct lttng_ust_ctx *ctx,
 		stack_top->u.ptr.type = LOAD_OBJECT;
 		/* Mark the object as a side argument. */
 		stack_top->u.ptr.field = &side_arg_field_marker;
-		stack_top->u.ptr.rev_bo = false;
+		stack_top->u.ptr.rev_bo = gid->elem.rev_bo;
 		break;
 	}
 	}
@@ -2252,8 +2334,16 @@ int lttng_bytecode_interpret_side(struct lttng_ust_bytecode_runtime *ust_bytecod
 				goto end;
 			}
 			estack_push(stack, top, ax, bx, ax_t, bx_t);
+			/*
+			 * The legacy field reference carries an index
+			 * and no type, so the byte order comes from the
+			 * description this bytecode is linked against.
+			 */
 			ret = side_arg_load_integer(
-				&side_ptr_get(sav->sav)[ref->offset], &v);
+				&side_ptr_get(sav->sav)[ref->offset],
+				lttng_bytecode_side_field_rev_bo(bytecode->side_desc,
+					ref->offset),
+				&v);
 			if (unlikely(ret))
 				goto end;
 			estack_ax_v = v;
@@ -2279,7 +2369,10 @@ int lttng_bytecode_interpret_side(struct lttng_ust_bytecode_runtime *ust_bytecod
 			}
 			estack_push(stack, top, ax, bx, ax_t, bx_t);
 			ret = side_arg_load_double(
-				&side_ptr_get(sav->sav)[ref->offset], &d);
+				&side_ptr_get(sav->sav)[ref->offset],
+				lttng_bytecode_side_field_rev_bo(bytecode->side_desc,
+					ref->offset),
+				&d);
 			if (unlikely(ret))
 				goto end;
 			estack_ax(stack, top)->u.d = d;
