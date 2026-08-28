@@ -3470,11 +3470,11 @@ void side_translate_before_enum(const struct side_type_enum *t __attribute__((un
 }
 
 static
-void side_translate_after_enum(const struct side_type_enum *t, void *priv)
+void side_translate_after_enum_mappings(const struct side_enum_mappings *mappings,
+		void *priv)
 {
 	struct side_translate_ctx *ctx = (struct side_translate_ctx *) priv;
 	const struct lttng_ust_enum_entry **entries = NULL;
-	const struct side_enum_mappings *mappings;
 	const struct lttng_ust_type_common *container;
 	struct lttng_ust_enum_desc *desc = NULL;
 	const struct side_event_field *field;
@@ -3496,7 +3496,6 @@ void side_translate_after_enum(const struct side_type_enum *t, void *priv)
 		goto fail;
 	signedness = caa_container_of(container,
 		const struct lttng_ust_type_integer, parent)->signedness;
-	mappings = side_ptr_get(t->mappings);
 	nr_mappings = side_array_length(&mappings->mappings);
 	name = side_translate_enum_name(ctx, field);
 	if (!name)
@@ -3562,6 +3561,12 @@ fail:
 	free(name);
 	side_translate_type_destroy(container);
 	ctx->fail = true;
+}
+
+static
+void side_translate_after_enum(const struct side_type_enum *t, void *priv)
+{
+	side_translate_after_enum_mappings(side_ptr_get(t->mappings), priv);
 }
 
 /*
@@ -4056,15 +4061,171 @@ void side_translate_unsupported_##_name(_type *t __attribute__((unused)),	\
 
 SIDE_TRANSLATE_UNSUPPORTED(optional, const struct side_type_optional)
 SIDE_TRANSLATE_UNSUPPORTED(enum_bitmap, const struct side_type_enum_bitmap)
-SIDE_TRANSLATE_UNSUPPORTED(gather_bool, const struct side_type_gather_bool)
-SIDE_TRANSLATE_UNSUPPORTED(gather_byte, const struct side_type_gather_byte)
-SIDE_TRANSLATE_UNSUPPORTED(gather_integer, const struct side_type_gather_integer)
-SIDE_TRANSLATE_UNSUPPORTED(gather_float, const struct side_type_gather_float)
-SIDE_TRANSLATE_UNSUPPORTED(gather_string, const struct side_type_gather_string)
-SIDE_TRANSLATE_UNSUPPORTED(gather_struct, const struct side_type_gather_struct)
-SIDE_TRANSLATE_UNSUPPORTED(gather_array, const struct side_type_gather_array)
-SIDE_TRANSLATE_UNSUPPORTED(gather_vla, const struct side_type_gather_vla)
-SIDE_TRANSLATE_UNSUPPORTED(gather_enum, const struct side_type_gather_enum)
+
+/*
+ * The gather types describe a value read from an address rather than
+ * copied onto the argument vector, and carry the type of that value
+ * within a gather wrapper. How the value is reached is the concern of
+ * the libside visitor, which resolves the access mode and the offsets
+ * and hands the tracer the value itself, so the translation describes
+ * the wrapped type and nothing else.
+ */
+static
+void side_translate_gather_bool_type(const struct side_type_gather_bool *t, void *priv)
+{
+	struct side_translate_ctx *ctx = (struct side_translate_ctx *) priv;
+
+	if (ctx->fail)
+		return;
+	/* Reject bit-packed booleans, like the stack-copy flavour. */
+	if (t->offset_bits) {
+		side_translate_set_fail(ctx);
+		return;
+	}
+	side_translate_bool_type(&t->type, priv);
+}
+
+static
+void side_translate_gather_integer_type(const struct side_type_gather_integer *t, void *priv)
+{
+	struct side_translate_ctx *ctx = (struct side_translate_ctx *) priv;
+
+	if (ctx->fail)
+		return;
+	/* Reject bit-packed integers, like the stack-copy flavour. */
+	if (t->offset_bits) {
+		side_translate_set_fail(ctx);
+		return;
+	}
+	side_translate_integer_type(&t->type, priv);
+}
+
+static
+void side_translate_gather_pointer_type(const struct side_type_gather_integer *t, void *priv)
+{
+	struct side_translate_ctx *ctx = (struct side_translate_ctx *) priv;
+
+	if (ctx->fail)
+		return;
+	if (t->offset_bits) {
+		side_translate_set_fail(ctx);
+		return;
+	}
+	side_translate_pointer_type(&t->type, priv);
+}
+
+static
+void side_translate_gather_byte_type(const struct side_type_gather_byte *t, void *priv)
+{
+	side_translate_byte_type(&t->type, priv);
+}
+
+static
+void side_translate_gather_float_type(const struct side_type_gather_float *t, void *priv)
+{
+	side_translate_float_type(&t->type, priv);
+}
+
+static
+void side_translate_gather_string_type(const struct side_type_gather_string *t, void *priv)
+{
+	side_translate_string_type(&t->type, priv);
+}
+
+static
+void side_translate_before_gather_enum(const struct side_type_gather_enum *t __attribute__((unused)),
+		void *priv)
+{
+	side_translate_before_enum(NULL, priv);
+}
+
+static
+void side_translate_after_gather_enum(const struct side_type_gather_enum *t, void *priv)
+{
+	side_translate_after_enum_mappings(side_ptr_get(t->mappings), priv);
+}
+
+static
+void side_translate_before_gather_struct(const struct side_type_gather_struct *t, void *priv)
+{
+	side_translate_before_struct(side_ptr_get(t->type), priv);
+}
+
+static
+void side_translate_after_gather_struct(const struct side_type_gather_struct *t, void *priv)
+{
+	side_translate_after_struct(side_ptr_get(t->type), priv);
+}
+
+static
+void side_translate_before_gather_array(const struct side_type_gather_array *t, void *priv)
+{
+	side_translate_before_array(&t->type, priv);
+}
+
+static
+void side_translate_after_gather_array(const struct side_type_gather_array *t, void *priv)
+{
+	side_translate_after_array(&t->type, priv);
+}
+
+/*
+ * The number of elements of a gathered sequence is read from memory,
+ * so it can differ between the size pass and the write pass of the
+ * serialization. What is recorded is the length of the size pass, and
+ * the elements which follow it are truncated or filled to match, which
+ * requires knowing where they end. Only elements of a fixed size are
+ * therefore accepted: they are also the only ones which record nothing
+ * of their own between the length of the sequence and the size of its
+ * elements, which is how the write pass finds that size.
+ */
+static
+bool side_gather_elem_is_fixed_size(const struct side_type *elem_type)
+{
+	switch (side_enum_get(elem_type->type)) {
+	case SIDE_TYPE_GATHER_BOOL:		/* Fall-through. */
+	case SIDE_TYPE_GATHER_BYTE:		/* Fall-through. */
+	case SIDE_TYPE_GATHER_INTEGER:		/* Fall-through. */
+	case SIDE_TYPE_GATHER_POINTER:		/* Fall-through. */
+	case SIDE_TYPE_GATHER_FLOAT:
+		return true;
+	case SIDE_TYPE_GATHER_ENUM:
+	{
+		const struct side_type *container =
+			side_ptr_get(elem_type->u.side_gather.u.side_enum.elem_type);
+
+		return side_gather_elem_is_fixed_size(container);
+	}
+	default:
+		return false;
+	}
+}
+
+static
+void side_translate_before_gather_vla(const struct side_type_gather_vla *t, void *priv)
+{
+	struct side_translate_ctx *ctx = (struct side_translate_ctx *) priv;
+
+	if (ctx->fail)
+		return;
+	if (!side_gather_elem_is_fixed_size(side_ptr_get(t->type.elem_type))) {
+		side_translate_set_fail(ctx);
+		return;
+	}
+	side_translate_before_vla(&t->type, priv);
+}
+
+static
+void side_translate_after_length_gather_vla(const struct side_type_gather_vla *t, void *priv)
+{
+	side_translate_after_length_vla(&t->type, priv);
+}
+
+static
+void side_translate_after_element_gather_vla(const struct side_type_gather_vla *t, void *priv)
+{
+	side_translate_after_element_vla(&t->type, priv);
+}
 
 static
 const struct side_description_visitor_callbacks side_translate_visitor_callbacks = {
@@ -4096,16 +4257,23 @@ const struct side_description_visitor_callbacks side_translate_visitor_callbacks
 	.after_enum_type_func = side_translate_after_enum,
 	.before_enum_bitmap_type_func = side_translate_unsupported_enum_bitmap,
 
-	.gather_bool_type_func = side_translate_unsupported_gather_bool,
-	.gather_byte_type_func = side_translate_unsupported_gather_byte,
-	.gather_integer_type_func = side_translate_unsupported_gather_integer,
-	.gather_pointer_type_func = side_translate_unsupported_gather_integer,
-	.gather_float_type_func = side_translate_unsupported_gather_float,
-	.gather_string_type_func = side_translate_unsupported_gather_string,
-	.before_gather_struct_type_func = side_translate_unsupported_gather_struct,
-	.before_gather_array_type_func = side_translate_unsupported_gather_array,
-	.before_gather_vla_type_func = side_translate_unsupported_gather_vla,
-	.before_gather_enum_type_func = side_translate_unsupported_gather_enum,
+	.gather_bool_type_func = side_translate_gather_bool_type,
+	.gather_byte_type_func = side_translate_gather_byte_type,
+	.gather_integer_type_func = side_translate_gather_integer_type,
+	.gather_pointer_type_func = side_translate_gather_pointer_type,
+	.gather_float_type_func = side_translate_gather_float_type,
+	.gather_string_type_func = side_translate_gather_string_type,
+
+	.before_gather_struct_type_func = side_translate_before_gather_struct,
+	.after_gather_struct_type_func = side_translate_after_gather_struct,
+	.before_gather_array_type_func = side_translate_before_gather_array,
+	.after_gather_array_type_func = side_translate_after_gather_array,
+	.before_gather_vla_type_func = side_translate_before_gather_vla,
+	.after_length_gather_vla_type_func = side_translate_after_length_gather_vla,
+	.after_element_gather_vla_type_func = side_translate_after_element_gather_vla,
+
+	.before_gather_enum_type_func = side_translate_before_gather_enum,
+	.after_gather_enum_type_func = side_translate_after_gather_enum,
 
 	.dynamic_type_func = side_translate_unsupported_dynamic,
 };
@@ -4230,8 +4398,17 @@ error:
 struct side_serialize_ctx {
 	bool write_pass;
 	bool fail;
-	size_t len;
+	size_t len;		/* Size computed, then size reserved. */
+	size_t written;		/* Write pass only. */
 	size_t align;
+	/*
+	 * Elements of the gathered sequence being serialized: where
+	 * they begin, and where they end in the write pass, which is
+	 * where the size pass ended them.
+	 */
+	size_t seq_start;
+	size_t seq_end;
+	bool seq_open;
 	size_t dyn_len[SIDE_SERIALIZE_MAX_DYN_LEN];
 	unsigned int dyn_idx;
 	struct lttng_ust_ring_buffer_ctx *bufctx;
@@ -4250,6 +4427,28 @@ void side_serialize_record(struct side_serialize_ctx *c, const void *src,
 		if (align > c->align)
 			c->align = align;
 	} else {
+		size_t offset = c->written;
+
+		/*
+		 * A gather type reads its value from memory, which the
+		 * application can change between the size pass and the
+		 * write pass, so the length of a gathered string or of
+		 * a gathered sequence is not necessarily the one the
+		 * reservation was sized with. Never write past it.
+		 */
+		offset += lttng_ust_ring_buffer_align(offset, align);
+		/*
+		 * Drop the elements a gathered sequence grew by: the
+		 * length recorded is the one of the size pass, so the
+		 * elements which follow it must be exactly as many.
+		 */
+		if (c->seq_open && offset + size > c->seq_end)
+			return;
+		if (offset + size > c->len) {
+			c->fail = true;
+			return;
+		}
+		c->written = offset + size;
 		c->chan->ops->event_write(c->bufctx, src, size, align);
 	}
 }
@@ -4294,6 +4493,24 @@ size_t side_serialize_next_dyn(struct side_serialize_ctx *c)
 	return c->dyn_len[c->dyn_idx++];
 }
 
+/*
+ * The size of the region of the elements of a gathered sequence is
+ * pushed after its length, and nothing is pushed in between: the
+ * elements of such a sequence are of a fixed size, which the
+ * translation enforces. The write pass therefore knows the region
+ * before it serializes the elements, by looking at the entry which
+ * follows the one it just took.
+ */
+static
+size_t side_serialize_peek_dyn(struct side_serialize_ctx *c)
+{
+	if (c->dyn_idx >= SIDE_SERIALIZE_MAX_DYN_LEN) {
+		c->fail = true;
+		return 0;
+	}
+	return c->dyn_len[c->dyn_idx];
+}
+
 static
 void side_serialize_integer_value(struct side_serialize_ctx *c,
 		uint16_t integer_size, uint64_t v)
@@ -4335,14 +4552,74 @@ void side_serialize_integer_value(struct side_serialize_ctx *c,
 	}
 }
 
+/*
+ * Fill what the write pass left of the reservation. A sequence whose
+ * length is read from memory by a gather type can have fewer elements
+ * in the write pass than the size pass reserved for, and every byte
+ * reserved must be written: an unwritten byte would carry into the
+ * trace whatever the ring buffer held there before.
+ */
 static
-void side_serialize_integer(const struct side_type *type_desc,
-		const struct side_arg *item, void *priv)
+void side_serialize_pad_to(struct side_serialize_ctx *c, size_t end)
 {
-	struct side_serialize_ctx *c = (struct side_serialize_ctx *) priv;
-	const struct side_type_integer *t = &type_desc->u.side_integer;
-	const union side_integer_value *value =
-		&item->u.side_static.integer_value;
+	static const char pad[16];
+
+	if (!c->write_pass)
+		return;
+	if (end > c->len)
+		end = c->len;
+	while (c->written < end) {
+		size_t len = end - c->written;
+
+		if (len > sizeof(pad))
+			len = sizeof(pad);
+		c->written += len;
+		c->chan->ops->event_write(c->bufctx, pad, len, 1);
+	}
+}
+
+static
+void side_serialize_pad(struct side_serialize_ctx *c)
+{
+	side_serialize_pad_to(c, c->len);
+}
+
+/*
+ * The length of a sequence is counted by the tracer rather than
+ * emitted by the application, so it is produced in the byte order of
+ * the host and converted to the byte order its length type declares,
+ * which is the one the description of the length field carries.
+ */
+static
+void side_serialize_length_value(struct side_serialize_ctx *c,
+		const struct side_type_integer *t, uint64_t len)
+{
+	if (side_type_reverse_byte_order(side_enum_get(t->byte_order))) {
+		switch (t->integer_size) {
+		case 1:
+			break;
+		case 2:
+			len = side_bswap_16((uint16_t) len);
+			break;
+		case 4:
+			len = side_bswap_32((uint32_t) len);
+			break;
+		case 8:
+			len = side_bswap_64(len);
+			break;
+		default:
+			c->fail = true;
+			return;
+		}
+	}
+	side_serialize_integer_value(c, t->integer_size, len);
+}
+
+static
+void side_serialize_integer_from_value(struct side_serialize_ctx *c,
+		const struct side_type_integer *t,
+		const union side_integer_value *value)
+{
 	uint64_t v;
 
 	if (c->fail)
@@ -4374,33 +4651,49 @@ void side_serialize_integer(const struct side_type *type_desc,
 }
 
 static
-void side_serialize_bool(const struct side_type *type_desc,
+void side_serialize_integer(const struct side_type *type_desc,
 		const struct side_arg *item, void *priv)
 {
-	struct side_serialize_ctx *c = (struct side_serialize_ctx *) priv;
-	const struct side_type_bool *t = &type_desc->u.side_bool;
+	side_serialize_integer_from_value((struct side_serialize_ctx *) priv,
+		&type_desc->u.side_integer,
+		&item->u.side_static.integer_value);
+}
+
+static
+void side_serialize_bool_from_value(struct side_serialize_ctx *c,
+		const struct side_type_bool *t,
+		const union side_bool_value *value)
+{
 	uint64_t v;
 
 	if (c->fail)
 		return;
 	switch (t->bool_size) {
 	case 1:
-		v = item->u.side_static.bool_value.side_bool8;
+		v = value->side_bool8;
 		break;
 	case 2:
-		v = item->u.side_static.bool_value.side_bool16;
+		v = value->side_bool16;
 		break;
 	case 4:
-		v = item->u.side_static.bool_value.side_bool32;
+		v = value->side_bool32;
 		break;
 	case 8:
-		v = item->u.side_static.bool_value.side_bool64;
+		v = value->side_bool64;
 		break;
 	default:
 		c->fail = true;
 		return;
 	}
 	side_serialize_integer_value(c, t->bool_size, v);
+}
+
+static
+void side_serialize_bool(const struct side_type *type_desc,
+		const struct side_arg *item, void *priv)
+{
+	side_serialize_bool_from_value((struct side_serialize_ctx *) priv,
+		&type_desc->u.side_bool, &item->u.side_static.bool_value);
 }
 
 static
@@ -4414,25 +4707,23 @@ void side_serialize_byte(const struct side_type *type_desc __attribute__((unused
 }
 
 static
-void side_serialize_float(const struct side_type *type_desc,
-		const struct side_arg *item, void *priv)
+void side_serialize_float_from_value(struct side_serialize_ctx *c,
+		const struct side_type_float *t,
+		const union side_float_value *value)
 {
-	struct side_serialize_ctx *c = (struct side_serialize_ctx *) priv;
-	const struct side_type_float *t = &type_desc->u.side_float;
-
 	if (c->fail)
 		return;
 	switch (t->float_size) {
 	case 4:
 	{
-		float f = item->u.side_static.float_value.side_float_binary32;
+		float f = value->side_float_binary32;
 
 		side_serialize_record(c, &f, sizeof(f), lttng_ust_rb_alignof(float));
 		break;
 	}
 	case 8:
 	{
-		double d = item->u.side_static.float_value.side_float_binary64;
+		double d = value->side_float_binary64;
 
 		side_serialize_record(c, &d, sizeof(d), lttng_ust_rb_alignof(double));
 		break;
@@ -4444,13 +4735,59 @@ void side_serialize_float(const struct side_type *type_desc,
 }
 
 static
+void side_serialize_float(const struct side_type *type_desc,
+		const struct side_arg *item, void *priv)
+{
+	side_serialize_float_from_value((struct side_serialize_ctx *) priv,
+		&type_desc->u.side_float, &item->u.side_static.float_value);
+}
+
+/*
+ * A string is recorded with its terminator, and its length is the one
+ * of the size pass, which is the one the reservation was made with.
+ *
+ * A string read from memory by a gather type, and a string whose
+ * argument the application mutates, can be of a different length in
+ * the write pass. The ring buffer resolves that the same way it does
+ * for a tracepoint: the copy stops at the terminator or at the length,
+ * pads with '#' if the string became shorter, and always terminates.
+ * The field is therefore always exactly as long as reserved, and
+ * always well formed.
+ */
+static
+void side_serialize_string_from_ptr(struct side_serialize_ctx *c, const char *p)
+{
+	size_t len;
+
+	if (c->fail)
+		return;
+	if (!p)
+		p = "";
+	if (!c->write_pass) {
+		len = strlen(p) + 1;
+		if (!side_serialize_push_dyn(c, len))
+			return;
+		c->len += len;		/* Strings are byte aligned. */
+		return;
+	}
+	len = side_serialize_next_dyn(c);
+	if (c->fail)
+		return;
+	if (c->written + len > c->len) {
+		c->fail = true;
+		return;
+	}
+	c->written += len;
+	c->chan->ops->event_strcpy(c->bufctx, p, len);
+}
+
+static
 void side_serialize_string(const struct side_type *type_desc,
 		const struct side_arg *item, void *priv)
 {
 	struct side_serialize_ctx *c = (struct side_serialize_ctx *) priv;
 	const struct side_type_string *t = &type_desc->u.side_string;
 	const char *p;
-	size_t len;
 
 	if (c->fail)
 		return;
@@ -4459,18 +4796,7 @@ void side_serialize_string(const struct side_type *type_desc,
 		return;
 	}
 	p = (const char *) side_ptr_get(item->u.side_static.string_value);
-	if (!p)
-		p = "";
-	if (!c->write_pass) {
-		len = strlen(p) + 1;
-		if (!side_serialize_push_dyn(c, len))
-			return;
-	} else {
-		len = side_serialize_next_dyn(c);
-		if (c->fail)
-			return;
-	}
-	side_serialize_record(c, p, len, 1);
+	side_serialize_string_from_ptr(c, p);
 }
 
 /*
@@ -4605,7 +4931,7 @@ void side_serialize_before_vla(const struct side_type_vla *side_vla,
 		if (c->fail)
 			return;
 	}
-	side_serialize_integer_value(c, t->integer_size, len);
+	side_serialize_length_value(c, t, len);
 	/* Elements are serialized through the element callbacks. */
 }
 
@@ -4630,7 +4956,184 @@ void side_serialize_fail_dynamic(const struct side_arg *item __attribute__((unus
 	((struct side_serialize_ctx *) priv)->fail = true;
 }
 
+/*
+ * The gather types read their value from an address instead of taking
+ * it from the argument vector. The libside visitor resolves the access
+ * mode and the offsets and hands the tracer the value itself, so what
+ * is recorded, and how, is the same as for the stack-copy flavour.
+ */
 static
+void side_serialize_gather_bool(const struct side_type_gather_bool *t,
+		const union side_bool_value *value, void *priv)
+{
+	side_serialize_bool_from_value((struct side_serialize_ctx *) priv,
+		&t->type, value);
+}
+
+static
+void side_serialize_gather_integer(const struct side_type_gather_integer *t,
+		const union side_integer_value *value, void *priv)
+{
+	side_serialize_integer_from_value((struct side_serialize_ctx *) priv,
+		&t->type, value);
+}
+
+static
+void side_serialize_gather_byte(const struct side_type_gather_byte *t __attribute__((unused)),
+		const uint8_t *p, void *priv)
+{
+	side_serialize_record((struct side_serialize_ctx *) priv, p,
+		sizeof(uint8_t), lttng_ust_rb_alignof(uint8_t));
+}
+
+static
+void side_serialize_gather_float(const struct side_type_gather_float *t,
+		const union side_float_value *value, void *priv)
+{
+	side_serialize_float_from_value((struct side_serialize_ctx *) priv,
+		&t->type, value);
+}
+
+static
+void side_serialize_gather_string(const struct side_type_gather_string *t __attribute__((unused)),
+		const void *p, uint8_t unit_size,
+		enum side_type_label_byte_order byte_order __attribute__((unused)),
+		size_t strlen_with_null __attribute__((unused)), void *priv)
+{
+	struct side_serialize_ctx *c = (struct side_serialize_ctx *) priv;
+
+	if (c->fail)
+		return;
+	if (unit_size != 1) {
+		c->fail = true;
+		return;
+	}
+	side_serialize_string_from_ptr(c, (const char *) p);
+}
+
+static
+void side_serialize_gather_enum(const struct side_type_gather_enum *t,
+		const union side_integer_value *value, void *priv)
+{
+	struct side_serialize_ctx *c = (struct side_serialize_ctx *) priv;
+	const struct side_type *container;
+
+	if (c->fail)
+		return;
+	/* The container of a gathered enumeration is a gathered integer. */
+	container = side_ptr_get(t->elem_type);
+	if (side_enum_get(container->type) != SIDE_TYPE_GATHER_INTEGER) {
+		c->fail = true;
+		return;
+	}
+	side_serialize_integer_from_value(c,
+		&container->u.side_gather.u.side_integer.type, value);
+}
+
+static
+void side_serialize_before_gather_struct(const struct side_type_struct *side_struct,
+		void *priv)
+{
+	struct side_serialize_ctx *c = (struct side_serialize_ctx *) priv;
+
+	if (c->fail)
+		return;
+	/* Aligned like a stack-copy structure. */
+	side_serialize_align(c, side_struct_alignof(side_struct));
+	/* Members are serialized through the field callbacks. */
+}
+
+/*
+ * The elements of a gathered sequence are emitted by the libside
+ * visitor according to the length it reads on each pass, which the
+ * application can change in between. The length recorded is the one of
+ * the size pass, which is the one the reservation was made with, and
+ * the write budget of side_serialize_record() keeps a length which
+ * grew from writing past that reservation.
+ */
+static
+void side_serialize_before_gather_vla(const struct side_type_vla *side_vla,
+		uint32_t length, void *priv)
+{
+	struct side_serialize_ctx *c = (struct side_serialize_ctx *) priv;
+	const struct side_type_integer *t;
+	const struct side_type *lt;
+	size_t len;
+
+	if (c->fail)
+		return;
+	if (c->seq_open) {
+		/* Sequences of sequences are refused by the translation. */
+		c->fail = true;
+		return;
+	}
+	lt = side_ptr_get(side_vla->length_type);
+	/* The length of a gathered sequence is gathered as well. */
+	if (side_enum_get(lt->type) != SIDE_TYPE_GATHER_INTEGER) {
+		c->fail = true;
+		return;
+	}
+	t = &lt->u.side_gather.u.side_integer.type;
+	if (t->signedness) {
+		c->fail = true;
+		return;
+	}
+	if (!c->write_pass) {
+		len = length;
+		if (t->integer_size < 8
+				&& len >= (1ULL << (t->integer_size * CHAR_BIT))) {
+			c->fail = true;
+			return;
+		}
+		if (!side_serialize_push_dyn(c, len))
+			return;
+	} else {
+		len = side_serialize_next_dyn(c);
+		if (c->fail)
+			return;
+	}
+	side_serialize_length_value(c, t, len);
+	if (c->fail)
+		return;
+	/* Elements are serialized through the element callbacks. */
+	c->seq_open = true;
+	if (!c->write_pass) {
+		c->seq_start = c->len;
+		c->seq_end = SIZE_MAX;
+	} else {
+		c->seq_start = c->written;
+		c->seq_end = c->written + side_serialize_peek_dyn(c);
+	}
+}
+
+static
+void side_serialize_after_gather_vla(const struct side_type_vla *side_vla __attribute__((unused)),
+		uint32_t length __attribute__((unused)), void *priv)
+{
+	struct side_serialize_ctx *c = (struct side_serialize_ctx *) priv;
+	size_t size;
+
+	if (!c->seq_open)
+		return;
+	c->seq_open = false;
+	if (c->fail)
+		return;
+	if (!c->write_pass) {
+		/*
+		 * The elements of a gathered sequence occupy what they
+		 * did in the size pass, whatever the length read from
+		 * memory has become since.
+		 */
+		(void) side_serialize_push_dyn(c, c->len - c->seq_start);
+		return;
+	}
+	size = side_serialize_next_dyn(c);
+	if (c->fail)
+		return;
+	/* Fill for the elements the sequence shrank by. */
+	side_serialize_pad_to(c, c->seq_start + size);
+}
+
 const struct side_type_visitor side_serialize_type_visitor = {
 	.before_variadic_fields_func = side_serialize_fail_variadic,
 
@@ -4649,6 +5152,19 @@ const struct side_type_visitor side_serialize_type_visitor = {
 
 	.enum_type_func = side_serialize_enum,
 	.enum_bitmap_type_func = side_serialize_fail_arg,
+
+	.gather_bool_type_func = side_serialize_gather_bool,
+	.gather_byte_type_func = side_serialize_gather_byte,
+	.gather_integer_type_func = side_serialize_gather_integer,
+	.gather_pointer_type_func = side_serialize_gather_integer,
+	.gather_float_type_func = side_serialize_gather_float,
+	.gather_string_type_func = side_serialize_gather_string,
+
+	.before_gather_struct_type_func = side_serialize_before_gather_struct,
+	.before_gather_vla_type_func = side_serialize_before_gather_vla,
+	.after_gather_vla_type_func = side_serialize_after_gather_vla,
+
+	.gather_enum_type_func = side_serialize_gather_enum,
 
 	.dynamic_null_func = side_serialize_fail_dynamic,
 	.dynamic_bool_func = side_serialize_fail_dynamic,
@@ -4712,12 +5228,14 @@ void tracer_call(const struct side_event_description *desc,
 			c.len, c.align, &probe_ctx);
 		if (chan->ops->event_reserve(&bufctx) < 0)
 			return;
-		/* Write pass. */
+		/* Write pass. c.len is now the size reserved. */
 		c.write_pass = true;
+		c.written = 0;
 		c.dyn_idx = 0;
 		c.bufctx = &bufctx;
 		type_visitor_event(&side_serialize_type_visitor, desc,
 			side_arg_vec, NULL, caller_addr, &c);
+		side_serialize_pad(&c);
 		chan->ops->event_commit(&bufctx);
 		break;
 	}
