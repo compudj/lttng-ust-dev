@@ -876,12 +876,17 @@ read lock per event (which would pay for it on the fast path):
   event-notifier-group teardown, probe provider event unregistration,
   and the `LTTNG_UST_ABI_WAIT_QUIESCENT` command.
 
-Note that event lifetime itself does not depend on D1: the side
-callback unregistration waits for a side grace period on its own, so
-an unregistered event has no in-flight callback by the time
-`unregister_event()` returns. The combined helper is used in the
-teardown paths anyway, so that "wait for in-flight events" means the
-same thing everywhere.
+Event lifetime originally did not depend on D1 either: the side
+callback unregistration waited for a side grace period on its own, so
+an unregistered event had no in-flight callback by the time
+`unregister_event()` returned. That is no longer true since the
+batching of 3.8 — the deferred unregistration returns without waiting
+— so the teardown paths now depend on the combined helper, which they
+already called, for that guarantee. Every path which destroys an event
+object issues `lttng_ust_tracer_synchronize()` between unregistering
+and destroying it (session destroy, event notifier group destroy,
+probe provider event unregistration); the enabler synchronization,
+which unregisters without destroying, does not need it.
 
 Lock order (L1 unchanged): the side grace period takes a side leaf
 lock, and the combined helper is called with `ust_mutex` held, so this
@@ -890,6 +895,153 @@ period from within a side notification callback (the REMOVE path,
 which unregisters probes) is `side_notification_lock` → `ust_mutex` →
 side leaf, also consistent. It is safe because side read-side
 critical sections take no locks.
+
+### 3.8 Batching: connecting and disconnecting the events of a session [DONE]
+
+Connecting the tracer to a side event, and disconnecting it, waited
+for a grace period of the side event domain before returning, so that
+the array of callbacks it replaced could be freed. A session with many
+events paid one grace period per event, at every enabler
+synchronization and at every teardown. This resolves open question 4.
+
+libside gained deferred variants of the four register/unregister entry
+points (`side_tracer_callback_{,variadic_}{register,unregister}_defer()`).
+They take effect as they return, exactly like their non-deferred
+counterparts — only the memory reclaim is postponed. The protocol is:
+
+    for each event:
+            ..._defer()
+    side_tracer_callback_synchronize()
+    side_tracer_callback_reclaim()
+
+Internally the replaced arrays are queued on a *pending* list, which
+`side_tracer_callback_synchronize()` splices onto a *ready* list before
+waiting for the grace period: everything on the ready list was
+therefore unpublished before that grace period started, which is
+exactly what `side_tracer_callback_reclaim()` needs to free it. An
+array deferred while the grace period runs stays pending and waits for
+the next one. Both lists are protected by `side_event_lock`, the
+reclaim itself runs outside it, and if the queue node cannot be
+allocated the deferred call falls back to the synchronous grace period
+and free, so it never leaks and never returns early.
+
+The synchronize is left to the tracer rather than hidden inside a
+flush operation: it plays a larger role in session teardown, where it
+must also be done before tearing down the session and channel objects
+(3.7). `reclaim()` assumes a grace period has been waited for; a
+grace-period snapshot could be added as a debug option later.
+
+On the lttng-ust side, `lttng_ust_side_{,un}register_event()` use the
+deferred variants and `lttng_ust_side_prune_release_queue()` does the
+synchronize and reclaim. It is the counterpart of
+`lttng_ust_tp_probe_prune_release_queue()` for the side events and is
+called at the same places: the ends of the enabler synchronization, of
+the session destruction, of the event notifier group destruction, and
+of the unregistration of the events of a probe provider.
+
+The memory of a batch is held until it is reclaimed, so a count of
+deferred operations bounds the length of a batch
+(`SIDE_RELEASE_QUEUE_BATCH_LEN`, 32): a batch which grows past it
+reclaims in place, rather than letting an arbitrarily long enabler
+synchronization hold one queued array per event. The count is an upper
+bound on the queued arrays — a registration which replaces the empty
+callback array queues nothing — so it only ever prunes early.
+
+Measured: connecting and disconnecting a tracer to 256 events, one
+callback each, with a thread emitting meanwhile, goes from 3.7-5.4 ms
+to 0.05 ms.
+
+### 3.9 Quadratic reallocation of the callback array [FUTURE WORK]
+
+`_side_call()` iterates a NULL-terminated array of callbacks with
+plain loads. The single `__ATOMIC_CONSUME` load of the array pointer
+is the only ordering point, and it suffices because the array is
+immutable once published: every entry was written before the
+`side_rcu_assign_pointer()` release store. That immutability is what
+buys the plain loads of `->key` and `->priv`, and it is why the
+terminator can double as the length (`es0->nr_callbacks` is writer-side
+bookkeeping; the fast path never reads it).
+
+The cost is that registering the Nth callback on an event allocates
+N+2 entries and copies N: O(N^2) for a full connect. Measured with the
+grace periods removed (deferred API, so this is copy and calloc only),
+24 bytes per entry, register + unregister:
+
+| callbacks on one event | time |
+| --- | --- |
+| 64 | 0.118 ms |
+| 128 | 0.270 ms |
+| 256 | 0.797 ms |
+| 512 | 2.30 ms |
+| 1024 | 8.96 ms |
+| 2048 | 36.3 ms |
+
+A clean 4x per doubling. Note however that N here is callbacks *per
+event*, i.e. concurrent (tracer, session, key) tuples — not the number
+of events, which is what 3.8 addresses. In lttng-ust that is one per
+session containing the event, so realistically 1-10; at N=16 a full
+connect copies about 3 KB in total. It is a real quadratic on an axis
+which stays small, which is why it is future work.
+
+Two ABI facts constrain any fix, and they cut in opposite directions.
+The iteration loop lives in `libside.so` — the instrumentation macro
+emits a call to the exported `side_call()` — so the *reader* can be
+changed without recompiling applications. But `struct
+side_event_state_0` is instantiated by the application (in the
+`side_event_state` section, with `.nr_callbacks` and `.callbacks`
+initialized by the macro), and `side_empty_callback` is a data symbol
+whose address the application takes, possibly through a copy
+relocation, so its size cannot grow. Adding a capacity field to the
+event state is a `SIDE_EVENT_STATE_ABI_VERSION` bump; putting capacity
+in a library-allocated array header is not.
+
+Options:
+
+- **A — geometric growth with in-place append, keeping the NULL
+  terminator.** The writer fills `entry[n].priv` and `.key`, then
+  store-releases `entry[n].u.call`; `entry[n+1]` is already NULL from
+  the calloc. The reader's terminator test must become a load-acquire:
+  the branch on `u.call != NULL` is a control dependency, which does
+  not order the subsequent loads of `->key` and `->priv`, so a weakly
+  ordered CPU may hoist them and read `key == 0` (SIDE_KEY_MATCH_ALL)
+  together with `priv == NULL` — an immediate NULL dereference in
+  lttng-ust's `tracer_call`. Cost: one acquire load per callback per
+  emission (free on x86, an LDAR on ARM64). Bonus: an append which
+  fits the capacity unpublishes nothing, so it needs no grace period
+  at all.
+- **B — length in an array header, count-based loop.** `struct { uint32_t
+  nr; struct side_callback cb[]; }`, load-acquire on `nr` once per
+  emission, store-release on append. It replaces the per-iteration
+  terminator load with a register-held bound, so the net fast-path
+  cost is the acquire semantics on a load which is in the same cache
+  line as `cb[0]`. It needs no application ABI change: capacity and
+  count live in the library-allocated header, and `side_empty_callback`
+  can stay the same size as a zeroed `nr = 0` header. It also unlocks
+  the larger win: with a count-based loop a NULL entry is *skipped*
+  rather than terminating, so unregistration becomes a single plain
+  store of NULL — a tombstone, with no copy, no new array and no grace
+  period for the array itself (the tracer's own grace period for
+  `priv` is unaffected), compaction being folded into the next growth.
+  Register and unregister both become amortized O(1).
+- **C — two-level, ordering-free.** A small `{nr, *entries}` header
+  published per registration by `side_rcu_assign_pointer()`, entries
+  appended in place *before* the new header is published, so no
+  published object is ever mutated and dependency ordering still
+  covers everything — no acquire anywhere. Cost: one extra
+  indirection, hence a possible second cache line, on every emission.
+  Trades an acquire load for a potential cache miss.
+- **A' — array of pointers to callbacks.** The address dependency
+  gives the ordering for free on everything but Alpha, but it adds an
+  indirection per callback plus an allocation each, and destroys the
+  locality of the current flat 24-byte entries.
+
+B is the design to pick if this is done: it is the only one which also
+removes the copy on the unregister side, it needs no application ABI
+bump, and its fast-path delta is one acquire load which replaces
+per-iteration terminator loads rather than adding to them. It is
+nonetheless a fast-path change — it moves an ordering requirement into
+`_side_call()` where today there is none — which is why it is not part
+of the POC.
 
 ---
 
@@ -945,7 +1097,13 @@ libside:
    element-vs-byte sizing (side.c:411-414; sibling of the `_register`
    bug fixed in 7f095a2). Was a prerequisite for multi-tracer/multi-key
    operation.
-6. Optional: batch grace periods per notification batch; `-z nodelete`.
+6. DONE (libside 93f58bb): batched (deferred) tracer callback
+   registration and unregistration, with
+   `side_tracer_callback_synchronize()` readying a batch and
+   `side_tracer_callback_reclaim()` freeing it (3.8).
+7. Optional: `-z nodelete`.
+8. FUTURE WORK: quadratic reallocation of the per-event callback array
+   (3.9). Fast-path change, deliberately out of scope for the POC.
 
 lttng-ust:
 
@@ -1006,9 +1164,12 @@ lttng-ust:
 3. Whether libside should offer mid-statedump pause checkpoints
    (between requests, between events) to reduce fork latency and the
    dl-lock window (section 5).
-4. Multi-session/multi-key callback fan-out (one lttng callback
-   registration per key per event) magnifies the N-grace-periods cost;
-   batching design in libside.
+4. RESOLVED (3.8): multi-session/multi-key callback fan-out (one
+   lttng callback registration per key per event) magnified the
+   N-grace-periods cost. Batched via the deferred register/unregister
+   APIs plus a release queue pruned once per batch. The remaining
+   cost on that axis is the quadratic array reallocation of 3.9,
+   which is bounded by the number of concurrent tracers per event.
 5. Phased-atfork coordination library: final naming/prefix and
    soname; whether `level` should be an enum of named stages instead
    of an int; exact unregister-during-fork semantics; whether to
