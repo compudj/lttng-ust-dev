@@ -2924,6 +2924,30 @@ size_t side_struct_alignof(const struct side_type_struct *side_struct)
 }
 
 /*
+ * The alignment of the payload of an event is a property of its
+ * description, not of the values a given instance carries: a reader
+ * derives it from the field types, where a sequence is aligned on its
+ * elements whether it has any or not. Deriving it instead from the
+ * fields actually recorded would under-align the payload of an
+ * instance which records none of the fields the alignment comes from.
+ */
+static
+size_t side_event_alignof(const struct side_event_description *desc)
+{
+	uint32_t i, nr_fields = side_array_length(&desc->fields);
+	size_t align = 1;
+
+	for (i = 0; i < nr_fields; i++) {
+		const struct side_event_field *f = side_array_at(&desc->fields, i);
+		size_t field_align = side_type_alignof(&f->side_type);
+
+		if (field_align > align)
+			align = field_align;
+	}
+	return align;
+}
+
+/*
  * The trace records the values in the byte order they are emitted
  * with, and the description tells the reader which one that is. Both
  * helpers take the byte order of a side type and answer whether it
@@ -4942,14 +4966,37 @@ void side_serialize_before_struct(const struct side_type_struct *side_struct,
 	/* Members are serialized through the field callbacks. */
 }
 
+/*
+ * A reader aligns an array or a sequence on the alignment of its
+ * elements before it reads them, whether there are any or not, so the
+ * tracer applies it here rather than leaving it to the first element.
+ */
+static
+void side_serialize_align_elements(struct side_serialize_ctx *c,
+		const struct side_type *elem_type)
+{
+	size_t align = side_type_alignof(elem_type);
+
+	if (!align) {
+		c->fail = true;
+		return;
+	}
+	side_serialize_align(c, align);
+}
+
 static
 void side_serialize_before_array(const struct side_type_array *side_array,
 		const struct side_arg_vec *side_arg_vec, void *priv)
 {
 	struct side_serialize_ctx *c = (struct side_serialize_ctx *) priv;
 
-	if (side_arg_vec->len != side_array->length)
+	if (c->fail)
+		return;
+	if (side_arg_vec->len != side_array->length) {
 		c->fail = true;
+		return;
+	}
+	side_serialize_align_elements(c, side_ptr_get(side_array->elem_type));
 	/* Elements are serialized through the element callbacks. */
 }
 
@@ -4991,6 +5038,7 @@ void side_serialize_before_vla(const struct side_type_vla *side_vla,
 			return;
 	}
 	side_serialize_length_value(c, t, len);
+	side_serialize_align_elements(c, side_ptr_get(side_vla->elem_type));
 	/* Elements are serialized through the element callbacks. */
 }
 
@@ -5111,6 +5159,18 @@ void side_serialize_before_gather_struct(const struct side_type_struct *side_str
  * grew from writing past that reservation.
  */
 static
+void side_serialize_before_gather_array(const struct side_type_array *side_array,
+		void *priv)
+{
+	struct side_serialize_ctx *c = (struct side_serialize_ctx *) priv;
+
+	if (c->fail)
+		return;
+	side_serialize_align_elements(c, side_ptr_get(side_array->elem_type));
+	/* Elements are serialized through the element callbacks. */
+}
+
+static
 void side_serialize_before_gather_vla(const struct side_type_vla *side_vla,
 		uint32_t length, void *priv)
 {
@@ -5152,6 +5212,7 @@ void side_serialize_before_gather_vla(const struct side_type_vla *side_vla,
 			return;
 	}
 	side_serialize_length_value(c, t, len);
+	side_serialize_align_elements(c, side_ptr_get(side_vla->elem_type));
 	if (c->fail)
 		return;
 	/* Elements are serialized through the element callbacks. */
@@ -5220,6 +5281,7 @@ const struct side_type_visitor side_serialize_type_visitor = {
 	.gather_string_type_func = side_serialize_gather_string,
 
 	.before_gather_struct_type_func = side_serialize_before_gather_struct,
+	.before_gather_array_type_func = side_serialize_before_gather_array,
 	.before_gather_vla_type_func = side_serialize_before_gather_vla,
 	.after_gather_vla_type_func = side_serialize_after_gather_vla,
 
@@ -5277,12 +5339,27 @@ void tracer_call(const struct side_event_description *desc,
 		/* Size/alignment pass. */
 		c.write_pass = false;
 		c.len = 0;
-		c.align = 1;
+		c.align = side_event_alignof(desc);
 		c.chan = chan;
 		type_visitor_event(&side_serialize_type_visitor, desc,
 			side_arg_vec, NULL, caller_addr, &c);
 		if (caa_unlikely(c.fail))
 			return;
+		/*
+		 * The payload is aligned on the alignment of the event
+		 * description, which is what the reader of the trace
+		 * derives. Recording a field more aligned than that
+		 * would place it where the reader does not expect it,
+		 * so drop the event rather than write it: the
+		 * description alignment is incomplete for one of its
+		 * types.
+		 */
+		if (caa_unlikely(c.align != side_event_alignof(desc))) {
+			DBG("Side event %s:%s records a field more aligned than its description",
+				side_ptr_get(desc->provider_name),
+				side_ptr_get(desc->event_name));
+			return;
+		}
 		lttng_ust_ring_buffer_ctx_init(&bufctx, event_recorder,
 			c.len, c.align, &probe_ctx);
 		if (chan->ops->event_reserve(&bufctx) < 0)
