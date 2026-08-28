@@ -2201,8 +2201,17 @@ void lib_ring_buffer_switch_slow(struct lttng_ust_ring_buffer *buf, enum switch_
 {
 	struct lttng_ust_ring_buffer_channel *chan;
 	const struct lttng_ust_ring_buffer_config *config;
-	struct lttng_ust_ring_buffer_ctx_private ctx_priv;
-	struct lttng_ust_ring_buffer_ctx ctx;
+	/*
+	 * A switch carries no record, so it fills in only what the
+	 * paths it takes read. Both contexts are cleared rather than
+	 * left as they are on the stack, so that a field which a switch
+	 * does not fill in, such as the callback which computes the
+	 * size of a payload, is not read as whatever the stack held.
+	 */
+	struct lttng_ust_ring_buffer_ctx_private ctx_priv = {};
+	struct lttng_ust_ring_buffer_ctx ctx = {
+		.struct_size = sizeof(struct lttng_ust_ring_buffer_ctx),
+	};
 	struct switch_offsets offsets;
 
 	ctx.priv = &ctx_priv;

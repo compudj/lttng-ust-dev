@@ -5474,6 +5474,12 @@ void tracer_call(const struct side_event_description *desc,
 			 * reservation computes it, and computes it
 			 * again if it has to be retried.
 			 */
+			if (caa_unlikely(!chan->ops->event_reserve_dyn)) {
+				DBG("Side event %s:%s needs a reservation which computes the size of its payload, which this channel does not provide",
+					side_ptr_get(desc->provider_name),
+					side_ptr_get(desc->event_name));
+				return;
+			}
 			lttng_ust_ring_buffer_ctx_init(&bufctx, event_recorder,
 				0, c.align, &probe_ctx);
 			if (chan->ops->event_reserve_dyn(&bufctx,
