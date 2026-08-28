@@ -674,6 +674,28 @@ NEVER wait for agent-thread progress (provider register/unregister in
 agent, side.c:797,826) while holding `side_notification_lock`, any ust lock,
 or from within a notification callback.
 
+Outcome [IMPLEMENTED]: connecting the application statedump of side to
+the statedump of lttng-ust turned out to be a small change, and the
+reason is this section and the fork work of 3.1 rather than anything
+about the statedump itself.
+
+- The request is made from the loop which clears `statedump_pending`,
+  with `ust_lock` held. That is only allowed because the queue-only
+  request API takes a side leaf lock, which L1 already established.
+  Waiting for the agent thread there would have deadlocked.
+- The callbacks of the application run on the side agent thread, and
+  emit events into ring buffers through the tracer callbacks. That is
+  only safe across a fork because the agent thread is a quiesced
+  participant of the phased atfork (level 0), and because the ust fork
+  mutex, whose roles the parking and the coordinator ownership
+  subsumed, is gone: an application statedump in flight during a fork
+  no longer races the tracer.
+- The state has to reach only the session which asked for it, which
+  the side key mechanism already expresses: one key per session, and a
+  statedump requested with a key is only delivered to the callbacks
+  registered with it. Regular events are emitted with a key matching
+  them all, so they keep reaching every session.
+
 ### 3.4 Attributes: migrating the special-cased metadata [DEFERRED]
 
 Events, fields and types carry generic attributes: a name and a value
