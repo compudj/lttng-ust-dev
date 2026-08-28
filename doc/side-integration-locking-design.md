@@ -1263,6 +1263,190 @@ string, boolean, enumeration, and a sequence reached through a pointer
 access mode, plus a top level gathered integer, a big-endian gathered
 integer, and a gathered array.
 
+### 3.12 Alignment of the payload, and of a variant option [PARTIAL]
+
+#### The rule
+
+CTF 2 gives the alignment requirement of a variant field, and of an
+optional field, as **1** (§6.4.1). The requirement of a structure is
+the maximum of its `minimum-alignment` property and of the requirements
+of its members, so a variant member contributes 1 to the structure
+which contains it. A static or dynamic length array requires the
+maximum of its `minimum-alignment` and of the requirement of its
+**element** class, whatever the length of an instance. The selected
+option of a variant is a field of its own class and is aligned by that
+class. Every alignment is relative to the beginning of the packet,
+which for LTTng is the sub-buffer, which is page aligned.
+
+#### What was wrong, and is now fixed
+
+`tracer_call()` serializes in two passes: a size pass which
+accumulates `c.len` and `c.align`, and, after the reservation, a write
+pass. The size pass computes each alignment **relative to the payload**
+(`side_serialize_record()` aligns `c.len`, which starts at zero), which
+is only correct because the reservation aligns the payload itself:
+
+    slot_size  = record_header_size(...)
+    slot_size += lttng_ust_ring_buffer_align(begin + slot_size, largest_align)
+    slot_size += data_size
+
+With `largest_align` at least as large as every alignment recorded, the
+payload base is congruent to zero modulo each of them, and
+payload-relative and sub-buffer-relative alignment coincide. That
+optimization is valid for a statically known layout, which is every
+tracepoint and every side event without a variant.
+
+`c.align` was accumulated from the fields an instance **records**,
+which breaks the premise in two ways. A sequence of 64-bit integers
+with no element records its length and nothing else: the payload was
+aligned on 32 bits while the reader aligned it on 64, and the
+alignment of the elements was never applied while the reader applied it
+before reading zero elements. Everything which followed was shifted and
+the stream was lost after the event.
+
+Both are fixed: `side_event_alignof()` derives the alignment of the
+payload from the description, the size pass refuses an event whose
+fields need more than the description says (losing one event rather
+than every event which follows it), and the alignment of the elements
+of an array or of a sequence is applied when it begins rather than
+being left to a first element which may not exist.
+
+#### What remains: the variant
+
+The alignment of the payload is now a property of the class, but it is
+computed with `side_type_alignof()` answering `max(selector, options)`
+for a variant, which is not the CTF 2 requirement of 1. So the tracer
+aligns the payload of an event which contains a variant on the most
+aligned of its options, and the reader, which counts the variant as 1
+and is told nothing else (the session daemon builds the payload as
+`structure_type(0, ...)`, so no `minimum-alignment` is emitted), does
+not. Observed with the natural alignment of the architecture forced:
+
+| variant | result |
+| --- | --- |
+| all options `u32` | decodes |
+| `u32` and `u64` options, `u32` selected | decodes |
+| `u32` and `u64` options, `u64` selected | reader reads the option as the selector |
+| the same, with a `u64` member added to the event | decodes |
+
+The last row is the confirmation: an unrelated `u64` member raises the
+alignment the reader derives to the one the tracer used.
+
+A variant nested in a structure is not affected, by accident:
+`side_struct_alignof()` includes the options, that value reaches the
+session daemon as the structure type's alignment, and the reader
+honours it as `minimum-alignment`. Tracer and reader agree, on a value
+CTF 2 would not compute. **This is a coupling**: changing
+`side_type_alignof()` to answer 1 for a variant, alone, breaks the
+nested case which works today.
+
+#### The design: size the payload against the sub-buffer offset
+
+Give the option the alignment CTF 2 gives it, by applying it to the
+sub-buffer offset at which it is recorded. That offset is known once
+the reservation has computed the payload base, and before the
+reservation is taken:
+
+    o_begin = v_read(&buf->offset)                 /* try_reserve */
+    header  = record_header_size(o_begin, ...)     /* never reads data_size */
+    base    = align(o_begin + header, largest_align)
+    ...                                            /* ownership, then v_cmpxchg */
+
+Neither implementation of `record_header_size()` reads the size of the
+payload, so `base` is available before the size is needed. The
+reservation is therefore given a **size callback** rather than a size,
+for the events which need one:
+
+    data_size = ctx->get_data_size ?
+                    ctx->get_data_size(ctx->get_data_size_priv, base) :
+                    ctx->data_size;
+
+set through `lttng_ust_ring_buffer_ctx_init()`, NULL for every event
+whose layout is static. The same substitution is made in
+`lib_ring_buffer_try_reserve_slow()`. Both paths re-read the offset
+after a failed `v_cmpxchg`, so the callback runs again with the base of
+the new attempt, and the attempt which wins is the last one which ran.
+
+On the tracer side the size pass becomes the body of the callback,
+`struct side_serialize_ctx` carries the base, and `side_type_alignof()`
+answers the selector's alignment for a variant, so that the base the
+tracer reserves is the one the reader derives.
+
+#### What the design has to respect
+
+These are the outcome of an adversarial review of an earlier draft;
+each one is a defect the draft had.
+
+1. **The write pass is not unchanged.** Its *writes* align the
+   sub-buffer offset, through `event_write()`, but its *accounting*
+   (`c->written`, and `seq_start`/`seq_end`) aligns a payload-relative
+   cursor. The two coincide only while the base is congruent to zero,
+   which is exactly what this design stops guaranteeing. `c->written`
+   must be aligned as `base + written`, or `side_serialize_pad()` ends
+   the record at the wrong offset and overruns the reservation into the
+   next record, silently: the only guard in `lib_ring_buffer_write()`
+   catches crossing the buffer, not the slot.
+2. **`largest_align` cannot come from the callback.** The base is
+   computed *from* `largest_align`, so it must be known before the
+   callback runs. `c.align` must be the class constant
+   `side_event_alignof()` computes, never an accumulation — which is
+   now the case.
+3. **`side_type_alignof()` for a variant must change with it**, and
+   only with it, because of the nested-structure coupling above.
+4. **The new context fields must be gated on `ctx->struct_size`.**
+   `struct lttng_ust_ring_buffer_ctx` is declared uninitialized on the
+   probe's stack and filled by an inlined
+   `lttng_ust_ring_buffer_ctx_init()` compiled into the probe provider,
+   and nothing in the ring buffer checks `struct_size` today. Reading a
+   new field unconditionally would load uninitialized stack from an
+   older provider and call through it. The stack context in
+   `lib_ring_buffer_switch_slow()` needs zeroing for the same reason.
+5. **The callback runs before the sub-buffer ownership is taken**, not
+   after: ownership is requested on `subbuf_index(o_end - 1)` and
+   `o_end` needs the size. It runs with libside's RCU read side held,
+   with the ring buffer nesting count taken, and it runs **twice** per
+   slow path attempt when the sub-buffer is switched, once against each
+   base. In blocking mode it runs again after every `poll()`.
+6. **It is not free of side effects.** The libside argument visitor
+   prints to `stderr` and calls `abort()` on a malformed argument
+   vector, and it dereferences application memory, which for the gather
+   types it re-reads on every attempt.
+7. **Failure has to unwind.** The size pass can fail on an argument it
+   cannot serialize; today `tracer_call()` returns before reserving.
+   From within the reservation it has to produce a negative return, and
+   the size it returns must not be used in arithmetic: `o_end` is
+   `o_begin + slot_size` and a wrapped `o_end` feeds the ownership
+   call.
+
+#### Alternatives
+
+**Declare the base.** Keep the payload aligned on the maximum over all
+the options — a class constant — and emit it as the payload
+structure's `minimum-alignment`. CTF 2 allows it: the property is a
+minimum and the effective alignment may be greater. The transmission
+already exists and is already load-bearing for nested structures, so
+this needs no new protocol field and no ring buffer change; the session
+daemon has to compute it, or the tracer has to send it. It over-aligns
+the instances which select the least aligned option, which is what the
+tracer already does today.
+
+**Wrap the selector and the variant in a structure** whose alignment is
+the maximum over the options, reusing the nested-structure path which
+already works end to end. No ring buffer change and no session daemon
+change, and it over-aligns the variant rather than the whole payload.
+It changes the shape of the event as the user sees it, which is why it
+is not the first choice.
+
+**Record the options packed**, declared and written byte aligned.
+Nothing within a variant then exceeds the alignment of what contains
+it. Self consistent, no ring buffer and no metadata change, at the
+price of unaligned variant payloads.
+
+The callback is the only one of the four which gives the option the
+alignment CTF 2 gives it without declaring anything beyond what the
+spec derives. It is also the only one which puts work inside the
+reservation retry loop.
+
 ---
 
 ## 4. Required changes
@@ -1349,15 +1533,21 @@ lttng-ust:
    invariant; agent-progress wait rules; removal of ust_fork_mutex.
 7. DONE: the gather types, and the rules which keep the two
    serialization passes agreeing on the shape of an event (3.11).
-8. DONE: integers and floats of either byte order, recorded as
+8. DONE: the alignment of the payload of an event taken from its
+   description rather than from the fields an instance records, and
+   the alignment of the elements of an array or of a sequence applied
+   when it begins (3.12). FUTURE WORK in the same section: sizing the
+   payload against the sub-buffer offset so that a variant option gets
+   the alignment CTF 2 gives it.
+9. DONE: integers and floats of either byte order, recorded as
    emitted and described by their byte order, converted to the host's
    only where the filter and capture bytecode compares values (3.10).
-9. FUTURE WORK: type coverage (3.4). In ascending cost: the remaining
+10. FUTURE WORK: type coverage (3.4). In ascending cost: the remaining
    restrictions within the supported types are lttng-ust-only, as is
    filtering on a gather field; the dynamic types and variadic events need a
    mapping onto machinery which already exists end to end; null,
    optional and bitmap enumeration need the whole stack.
-10. FUTURE WORK: report the events dropped for unsupported field types
+11. FUTURE WORK: report the events dropped for unsupported field types
    through something other than a DBG line (3.4), so that an
    application does not silently lose an event.
 
@@ -1419,6 +1609,18 @@ lttng-ust:
    helper.
 
 ## 7. Review provenance
+
+Section 3.12 adversarially reviewed 2026-08-28 (Fable skeptic pass
+over the design draft and the source). It refuted four claims of the
+draft, which are now the numbered constraints of that section: the
+write pass accounting is payload-relative and would overrun the
+reservation; `largest_align` cannot be an output of the callback which
+the base is computed for; the new context fields are read from
+uninitialized probe stack unless gated on `struct_size`; and the
+callback runs before the sub-buffer ownership is taken, twice per slow
+path attempt, and can `abort()`. It also found the zero-length
+sequence defect, which was independent of the variant question and is
+now fixed.
 
 Adversarially reviewed 2026-08-27 (Fable skeptic pass over the source
 of both trees). Material corrections folded in: urcu registry-lock (not
