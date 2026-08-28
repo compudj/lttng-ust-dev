@@ -758,7 +758,26 @@ array or of a VLA, since `side_type_enum_bitmap()` was exposed
 together with `side_type_enum()`: the instrumentation side is ready,
 only the tracer refuses them.
 
-### 3.5 Attributes: migrating the special-cased metadata [DEFERRED]
+### 3.5 Loglevels: enabling side events by loglevel [FUTURE WORK]
+
+The translation maps the loglevel of a side event onto the loglevel of
+the LTTng event description, so the metadata describes it and the
+session daemon reports it. What is not verified is the other
+direction: enabling events by loglevel, `lttng enable-event
+--loglevel` and `--loglevel-only`, which matches the loglevel of the
+description in the enabler.
+
+The mapping itself deserves a look at the same time. It sends the
+eight side loglevels to the values of the LTTng-UST scale which look
+like them, EMERG to 0 up to INFO at 6, and DEBUG at 14, which is the
+most verbose of the debug levels of that scale. Those two scales do
+not have the same shape: LTTng-UST has several debug levels between
+`TRACE_DEBUG_SYSTEM` and `TRACE_DEBUG`, which side does not, so the
+range from 7 to 13 is unreachable from a side event. Whether that is
+the wanted behaviour of `--loglevel` on side events, which is a range
+comparison, is exactly what has to be decided.
+
+### 3.6 Attributes: migrating the special-cased metadata [DEFERRED]
 
 Events, fields and types carry generic attributes: a name and a value
 within a namespace, carried within the array of fields of the event
@@ -802,7 +821,7 @@ it, nothing depends on the migration, it changes metadata which
 existing consumers already read, and it requires wiring the CTF 1.8
 writer to recognize the migrated attributes.
 
-### 3.6 RCU domains: the tracer must synchronize against both
+### 3.7 RCU domains: the tracer must synchronize against both
 
 lttng-ust and libside each have their own RCU implementation and their
 own grace period domain. A tracepoint probe body runs inside a
