@@ -206,6 +206,43 @@ int side_gather_load_integer(const struct side_type_gather_integer *t,
 	return 0;
 }
 
+/*
+ * The fields of a structure, whether it is copied onto the argument
+ * vector or gathered from memory. NULL for anything else.
+ */
+static
+const struct side_type_struct *side_type_struct_fields(const struct side_type *side_type)
+{
+	switch (side_enum_get(side_type->type)) {
+	case SIDE_TYPE_STRUCT:
+		return side_ptr_get(side_type->u.side_struct);
+	case SIDE_TYPE_GATHER_STRUCT:
+		return side_ptr_get(side_type->u.side_gather.u.side_struct.type);
+	default:
+		return NULL;
+	}
+}
+
+/* The element type of an array or a sequence copied onto the arguments. */
+bool side_type_is_struct(const struct side_type *side_type)
+{
+	return side_type && side_type_struct_fields(side_type) != NULL;
+}
+
+const struct side_type *side_container_elem_type(const struct side_type *side_type)
+{
+	if (!side_type)
+		return NULL;
+	switch (side_enum_get(side_type->type)) {
+	case SIDE_TYPE_ARRAY:
+		return side_ptr_get(side_ptr_get(side_type->u.side_array)->elem_type);
+	case SIDE_TYPE_VLA:
+		return side_ptr_get(side_ptr_get(side_type->u.side_vla)->elem_type);
+	default:
+		return NULL;
+	}
+}
+
 bool side_type_is_gather_container(const struct side_type *side_type)
 {
 	switch (side_enum_get(side_type->type)) {
@@ -291,14 +328,15 @@ uint32_t side_gather_elem_stride(const struct side_type *elem_type)
 }
 
 int side_gather_container_elem(const struct side_type *container,
-		const struct side_arg *item, uint64_t index, const void **elem_base)
+		const void *value_base, const void *length_base,
+		uint64_t index, const void **elem_base)
 {
 	const struct side_type *elem_type = side_gather_container_elem_type(container);
 	const char *base;
 	uint32_t stride;
 	uint64_t length;
 
-	if (!elem_type)
+	if (!elem_type || !value_base)
 		return -EINVAL;
 	stride = side_gather_elem_stride(elem_type);
 	if (!stride)
@@ -311,8 +349,7 @@ int side_gather_container_elem(const struct side_type *container,
 
 		length = ga->type.length;
 		base = side_gather_access(side_enum_get(ga->access_mode),
-			(const char *) side_ptr_get(item->u.side_static.side_array_gather_ptr)
-				+ ga->offset);
+			(const char *) value_base + ga->offset);
 		break;
 	}
 	case SIDE_TYPE_GATHER_VLA:
@@ -324,19 +361,18 @@ int side_gather_container_elem(const struct side_type *container,
 		int64_t v;
 
 		/* The length of a gathered sequence is gathered as well. */
-		if (side_enum_get(length_type->type) != SIDE_TYPE_GATHER_INTEGER)
+		if (!length_base
+				|| side_enum_get(length_type->type) != SIDE_TYPE_GATHER_INTEGER)
 			return -EINVAL;
 		if (side_gather_load_integer(
 				&length_type->u.side_gather.u.side_integer,
-				side_ptr_get(item->u.side_static.side_vla_gather.length_ptr),
-				false, false, &v))
+				length_base, false, false, &v))
 			return -EINVAL;
 		if (v < 0)
 			return -EINVAL;
 		length = (uint64_t) v;
 		base = side_gather_access(side_enum_get(gv->access_mode),
-			(const char *) side_ptr_get(item->u.side_static.side_vla_gather.ptr)
-				+ gv->offset);
+			(const char *) value_base + gv->offset);
 		break;
 	}
 	default:
@@ -349,19 +385,23 @@ int side_gather_container_elem(const struct side_type *container,
 }
 
 /*
- * The fields of a structure, whether it is copied onto the argument
- * vector or gathered from memory. NULL for anything else.
+ * The two addresses a gathered container is reached from within an
+ * argument: the one of its elements, and the one of its length, which
+ * a sequence carries separately.
  */
-static
-const struct side_type_struct *side_type_struct_fields(const struct side_type *side_type)
+void side_gather_container_arg_base(const struct side_type *container,
+		const struct side_arg *item,
+		const void **value_base, const void **length_base)
 {
-	switch (side_enum_get(side_type->type)) {
-	case SIDE_TYPE_STRUCT:
-		return side_ptr_get(side_type->u.side_struct);
-	case SIDE_TYPE_GATHER_STRUCT:
-		return side_ptr_get(side_type->u.side_gather.u.side_struct.type);
+	switch (side_enum_get(container->type)) {
+	case SIDE_TYPE_GATHER_VLA:
+		*value_base = side_ptr_get(item->u.side_static.side_vla_gather.ptr);
+		*length_base = side_ptr_get(item->u.side_static.side_vla_gather.length_ptr);
+		break;
 	default:
-		return NULL;
+		*value_base = side_ptr_get(item->u.side_static.side_array_gather_ptr);
+		*length_base = *value_base;
+		break;
 	}
 }
 
@@ -382,6 +422,54 @@ int side_struct_member_lookup(const struct side_type_struct *side_struct,
 		}
 	}
 	return -1;
+}
+
+int side_struct_member_lookup_by_name(const struct side_type *side_type,
+		const char *name, uint64_t *idx, const struct side_type **member_type)
+{
+	const struct side_type_struct *side_struct = side_type_struct_fields(side_type);
+	int ret;
+
+	if (!side_struct)
+		return -1;
+	ret = side_struct_member_lookup(side_struct, name, strlen(name), member_type);
+	if (ret < 0)
+		return -1;
+	*idx = (uint64_t) ret;
+	return 0;
+}
+
+/* The type of the member at @idx of a structure, gathered or not. */
+const struct side_type *side_struct_member_type(const struct side_type *side_type,
+		uint64_t idx)
+{
+	const struct side_type_struct *side_struct = side_type_struct_fields(side_type);
+
+	if (!side_struct || idx >= side_array_length(&side_struct->fields))
+		return NULL;
+	return &((const struct side_event_field *)
+		side_array_at(&side_struct->fields, idx))->side_type;
+}
+
+/*
+ * The address the members of a gathered structure are read from, which
+ * each of them applies its own offset to.
+ */
+int side_gather_struct_base(const struct side_type *side_type,
+		const void *base, const void **member_base)
+{
+	const struct side_type_gather_struct *gs;
+	const char *ptr;
+
+	if (side_enum_get(side_type->type) != SIDE_TYPE_GATHER_STRUCT || !base)
+		return -EINVAL;
+	gs = &side_type->u.side_gather.u.side_struct;
+	ptr = side_gather_access(side_enum_get(gs->access_mode),
+			(const char *) base + gs->offset);
+	if (!ptr)
+		return -EINVAL;
+	*member_base = ptr;
+	return 0;
 }
 
 int lttng_bytecode_side_field_path(const struct side_event_description *side_desc,

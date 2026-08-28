@@ -925,6 +925,15 @@ static int dynamic_get_index(struct lttng_ust_ctx *ctx,
 	gid = (const struct bytecode_get_index_data *) &runtime->data[index];
 	switch (stack_top->u.ptr.type) {
 	case LOAD_OBJECT:
+		/*
+		 * What is descended into is what the specialize phase
+		 * resolved, rather than the type the value would be
+		 * loaded as: the element of a stack-copy container is
+		 * typed by its argument, and is a structure all the
+		 * same.
+		 */
+		if (side_type_is_struct(gid->side_type))
+			goto get_index_struct;
 		switch (stack_top->u.ptr.object_type) {
 		case OBJECT_TYPE_ARRAY:		/* Fall-through. */
 		case OBJECT_TYPE_SEQUENCE:
@@ -933,16 +942,31 @@ static int dynamic_get_index(struct lttng_ust_ctx *ctx,
 				(const struct side_arg *) stack_top->u.ptr.ptr;
 			const struct side_arg_vec *sav;
 
-			if (stack_top->u.ptr.field != &side_arg_field_marker) {
+			if (stack_top->u.ptr.field != &side_arg_field_marker
+					&& stack_top->u.ptr.field != &side_gather_base_marker) {
 				ret = -EINVAL;
 				goto end;
 			}
 			if (gid->side_type
 					&& side_type_is_gather_container(gid->side_type)) {
-				const void *elem_base;
+				const void *elem_base, *value_base, *length_base;
 
+				if (stack_top->u.ptr.field == &side_gather_base_marker) {
+					/*
+					 * Reached through the field of a
+					 * gathered structure: both the
+					 * elements and the length are
+					 * read from what it resolved to.
+					 */
+					value_base = stack_top->u.ptr.ptr;
+					length_base = value_base;
+				} else {
+					side_gather_container_arg_base(gid->side_type,
+						item, &value_base, &length_base);
+				}
 				ret = side_gather_container_elem(gid->side_type,
-					item, gid->offset, &elem_base);
+					value_base, length_base, gid->offset,
+					&elem_base);
 				if (ret)
 					goto end;
 				stack_top->u.ptr.ptr = elem_base;
@@ -974,15 +998,85 @@ static int dynamic_get_index(struct lttng_ust_ctx *ctx,
 				(const char *) &side_ptr_get(sav->sav)[gid->offset];
 			stack_top->u.ptr.object_type = gid->elem.type;
 			stack_top->u.ptr.rev_bo = gid->elem.rev_bo;
-			/* An element is typed by the argument. */
-			stack_top->u.ptr.side_type = NULL;
+			/*
+			 * The value of an element is typed by the
+			 * argument, but its type is what a symbol
+			 * resolved against it is looked up in.
+			 */
+			stack_top->u.ptr.side_type = gid->side_type;
 			/* The element is itself a side argument. */
 			break;
 		}
 		case OBJECT_TYPE_STRUCT:
-			ERR("Nested structures are not supported yet.");
-			ret = -EINVAL;
-			goto end;
+		get_index_struct:
+		{
+			const struct side_type *container = gid->side_type;
+			const struct side_type *member_type;
+
+			if (!container) {
+				ret = -EINVAL;
+				goto end;
+			}
+			member_type = side_struct_member_type(container, gid->offset);
+			if (!member_type) {
+				ret = -EINVAL;
+				goto end;
+			}
+			switch (side_enum_get(container->type)) {
+			case SIDE_TYPE_STRUCT:
+			{
+				const struct side_arg *item;
+				const struct side_arg_vec *sub;
+
+				/* Its members are arguments of their own. */
+				if (stack_top->u.ptr.field != &side_arg_field_marker) {
+					ret = -EINVAL;
+					goto end;
+				}
+				item = (const struct side_arg *) stack_top->u.ptr.ptr;
+				sub = side_ptr_get(item->u.side_static.side_struct);
+				if (gid->offset >= sub->len) {
+					ret = -EINVAL;
+					goto end;
+				}
+				stack_top->u.ptr.ptr =
+					(const char *) &side_ptr_get(sub->sav)[gid->offset];
+				break;
+			}
+			case SIDE_TYPE_GATHER_STRUCT:
+			{
+				const void *base;
+
+				/*
+				 * Its members are read from the memory
+				 * it resolves to, each applying its own
+				 * offset to it.
+				 */
+				if (stack_top->u.ptr.field == &side_arg_field_marker)
+					base = side_arg_gather_base_of(container,
+						(const struct side_arg *) stack_top->u.ptr.ptr);
+				else if (stack_top->u.ptr.field == &side_gather_base_marker)
+					base = stack_top->u.ptr.ptr;
+				else {
+					ret = -EINVAL;
+					goto end;
+				}
+				ret = side_gather_struct_base(container, base, &base);
+				if (ret)
+					goto end;
+				stack_top->u.ptr.ptr = base;
+				stack_top->u.ptr.field = &side_gather_base_marker;
+				break;
+			}
+			default:
+				ret = -EINVAL;
+				goto end;
+			}
+			stack_top->u.ptr.object_type = gid->elem.type;
+			stack_top->u.ptr.rev_bo = gid->elem.rev_bo;
+			stack_top->u.ptr.side_type = member_type;
+			break;
+		}
 		case OBJECT_TYPE_VARIANT:
 		default:
 			ERR("Unexpected get index type %d",

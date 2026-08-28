@@ -72,12 +72,36 @@ int side_gather_load_integer(const struct side_type_gather_integer *t,
  * length of the container or when the elements are not of a fixed
  * size.
  */
+bool side_type_is_struct(const struct side_type *side_type)
+	__attribute__((visibility("hidden")));
+const struct side_type *side_container_elem_type(const struct side_type *side_type)
+	__attribute__((visibility("hidden")));
 bool side_type_is_gather_container(const struct side_type *side_type)
 	__attribute__((visibility("hidden")));
 const struct side_type *side_gather_container_elem_type(const struct side_type *side_type)
 	__attribute__((visibility("hidden")));
 int side_gather_container_elem(const struct side_type *container,
-		const struct side_arg *item, uint64_t index, const void **elem_base)
+		const void *value_base, const void *length_base,
+		uint64_t index, const void **elem_base)
+	__attribute__((visibility("hidden")));
+void side_gather_container_arg_base(const struct side_type *container,
+		const struct side_arg *item,
+		const void **value_base, const void **length_base)
+	__attribute__((visibility("hidden")));
+
+/*
+ * Descending into a structure: the type of the member at an index,
+ * and, for a gathered structure, the address its members are read
+ * from.
+ */
+const struct side_type *side_struct_member_type(const struct side_type *side_type,
+		uint64_t idx)
+	__attribute__((visibility("hidden")));
+int side_struct_member_lookup_by_name(const struct side_type *side_type,
+		const char *name, uint64_t *idx, const struct side_type **member_type)
+	__attribute__((visibility("hidden")));
+int side_gather_struct_base(const struct side_type *side_type,
+		const void *base, const void **member_base)
 	__attribute__((visibility("hidden")));
 
 /*
