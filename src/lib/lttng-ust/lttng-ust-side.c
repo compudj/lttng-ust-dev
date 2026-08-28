@@ -2548,6 +2548,82 @@ size_t side_integer_alignof(uint16_t integer_size)
 	}
 }
 
+/*
+ * Alignment of a side type, in bytes, as used to serialize it into the
+ * ring buffer. A structure is aligned on the largest alignment of the
+ * fields it contains, which is the alignment a trace reader applies
+ * when the metadata does not state an explicit alignment. This is all
+ * a no-op on architectures with efficient unaligned accesses, where
+ * lttng_ust_rb_alignof() evaluates to 1.
+ *
+ * Note for when variants are eventually mapped: their alignment is a
+ * CTF special case, expressed with a padding field preceding the
+ * variant rather than by the alignment of its options.
+ *
+ * Returns 0 for the types which are not serialized.
+ */
+static
+size_t side_struct_alignof(const struct side_type_struct *side_struct);
+
+static
+size_t side_type_alignof(const struct side_type *type_desc)
+{
+	switch (side_enum_get(type_desc->type)) {
+	case SIDE_TYPE_BOOL:
+		return side_integer_alignof(type_desc->u.side_bool.bool_size);
+	case SIDE_TYPE_U8:		/* Fall-through. */
+	case SIDE_TYPE_U16:		/* Fall-through. */
+	case SIDE_TYPE_U32:		/* Fall-through. */
+	case SIDE_TYPE_U64:		/* Fall-through. */
+	case SIDE_TYPE_S8:		/* Fall-through. */
+	case SIDE_TYPE_S16:		/* Fall-through. */
+	case SIDE_TYPE_S32:		/* Fall-through. */
+	case SIDE_TYPE_S64:		/* Fall-through. */
+	case SIDE_TYPE_POINTER:
+		return side_integer_alignof(type_desc->u.side_integer.integer_size);
+	case SIDE_TYPE_BYTE:
+		return lttng_ust_rb_alignof(uint8_t);
+	case SIDE_TYPE_FLOAT_BINARY32:
+		return lttng_ust_rb_alignof(float);
+	case SIDE_TYPE_FLOAT_BINARY64:
+		return lttng_ust_rb_alignof(double);
+	case SIDE_TYPE_STRING_UTF8:
+		return lttng_ust_rb_alignof(char);
+	case SIDE_TYPE_ARRAY:
+		return side_type_alignof(side_ptr_get(
+			side_ptr_get(type_desc->u.side_array)->elem_type));
+	case SIDE_TYPE_VLA:
+	{
+		const struct side_type_vla *v = side_ptr_get(type_desc->u.side_vla);
+		size_t length_align, elem_align;
+
+		length_align = side_type_alignof(side_ptr_get(v->length_type));
+		elem_align = side_type_alignof(side_ptr_get(v->elem_type));
+		return length_align > elem_align ? length_align : elem_align;
+	}
+	case SIDE_TYPE_STRUCT:
+		return side_struct_alignof(side_ptr_get(type_desc->u.side_struct));
+	default:
+		return 0;
+	}
+}
+
+static
+size_t side_struct_alignof(const struct side_type_struct *side_struct)
+{
+	uint32_t i, nr_fields = side_array_length(&side_struct->fields);
+	size_t align = 1;
+
+	for (i = 0; i < nr_fields; i++) {
+		const struct side_event_field *f = side_array_at(&side_struct->fields, i);
+		size_t field_align = side_type_alignof(&f->side_type);
+
+		if (field_align > align)
+			align = field_align;
+	}
+	return align;
+}
+
 static
 const struct lttng_ust_type_common *side_integer_type_to_lttng(
 		uint16_t integer_size, uint16_t len_bits, bool signedness,
@@ -2604,6 +2680,21 @@ enum side_translate_state {
 	SIDE_TRANSLATE_IN_VLA_ELEM,
 };
 
+/*
+ * Structures nest field scopes: their fields are collected into their
+ * own array, which becomes the field array of the structure type. The
+ * enclosing field and state are saved by the scope, because the field
+ * and element callbacks of the members overwrite them.
+ */
+#define SIDE_TRANSLATE_MAX_NESTING	8
+
+struct side_translate_scope {
+	const struct lttng_ust_event_field **fields;
+	unsigned int nr_fields;
+	const struct side_event_field *field;
+	enum side_translate_state state;
+};
+
 struct side_translate_ctx {
 	struct lttng_ust_side_event *se;
 	const struct side_event_field *field;
@@ -2612,7 +2703,13 @@ struct side_translate_ctx {
 	const struct lttng_ust_type_common *vla_length_type;
 	uint32_t array_length;
 	bool fail;
+	struct side_translate_scope scopes[SIDE_TRANSLATE_MAX_NESTING];
+	unsigned int nesting;	/* 0: event payload, > 0: within structures. */
 };
+
+static
+void side_translate_fields_destroy(const struct lttng_ust_event_field **fields,
+		unsigned int nr_fields);
 
 static
 void side_translate_type_destroy(const struct lttng_ust_type_common *type)
@@ -2624,14 +2721,24 @@ void side_translate_type_destroy(const struct lttng_ust_type_common *type)
 	{
 		const struct lttng_ust_type_array *a =
 			caa_container_of(type, const struct lttng_ust_type_array, parent);
-		free((void *) a->elem_type);
+		side_translate_type_destroy(a->elem_type);
 		break;
 	}
 	case lttng_ust_type_sequence:
 	{
 		const struct lttng_ust_type_sequence *s =
 			caa_container_of(type, const struct lttng_ust_type_sequence, parent);
-		free((void *) s->elem_type);
+		side_translate_type_destroy(s->elem_type);
+		break;
+	}
+	case lttng_ust_type_struct:
+	{
+		const struct lttng_ust_type_struct *s =
+			caa_container_of(type, const struct lttng_ust_type_struct, parent);
+
+		side_translate_fields_destroy(
+			(const struct lttng_ust_event_field **) s->fields,
+			s->nr_fields);
 		break;
 	}
 	default:
@@ -2641,10 +2748,31 @@ void side_translate_type_destroy(const struct lttng_ust_type_common *type)
 }
 
 static
+void side_translate_fields_destroy(const struct lttng_ust_event_field **fields,
+		unsigned int nr_fields)
+{
+	unsigned int i;
+
+	if (!fields)
+		return;
+	for (i = 0; i < nr_fields; i++) {
+		const struct lttng_ust_event_field *f = fields[i];
+
+		if (!f)
+			continue;
+		side_translate_type_destroy(f->type);
+		free((void *) f->name);
+		free((void *) f);
+	}
+	free(fields);
+}
+
+static
 bool side_translate_append_field(struct side_translate_ctx *ctx,
 		const char *name, const struct lttng_ust_type_common *type,
 		bool nofilter)
 {
+	struct side_translate_scope *scope = &ctx->scopes[ctx->nesting];
 	const struct lttng_ust_event_field **new_fields;
 	struct lttng_ust_event_field *f;
 	char *name_copy;
@@ -2657,17 +2785,17 @@ bool side_translate_append_field(struct side_translate_ctx *ctx,
 	f = zmalloc(sizeof(struct lttng_ust_event_field));
 	if (!f)
 		goto fail_free_name;
-	new_fields = realloc(ctx->se->fields,
-		(ctx->se->nr_fields + 1) * sizeof(*new_fields));
+	new_fields = realloc(scope->fields,
+		(scope->nr_fields + 1) * sizeof(*new_fields));
 	if (!new_fields)
 		goto fail_free_field;
-	ctx->se->fields = new_fields;
+	scope->fields = new_fields;
 	f->struct_size = sizeof(struct lttng_ust_event_field);
 	f->name = name_copy;
 	f->type = type;
 	f->nowrite = 0;
 	f->nofilter = nofilter;
-	ctx->se->fields[ctx->se->nr_fields++] = f;
+	scope->fields[scope->nr_fields++] = f;
 	return true;
 
 fail_free_field:
@@ -2688,9 +2816,15 @@ void side_translate_set_fail(struct side_translate_ctx *ctx)
 	ctx->fail = true;
 }
 
+/*
+ * Add a translated type to the enclosing context: a field of the
+ * current field scope, or the element or length type of the array or
+ * VLA being translated.
+ */
 static
-void side_translate_integer_common(struct side_translate_ctx *ctx,
-		const struct lttng_ust_type_common *type)
+void side_translate_commit_type(struct side_translate_ctx *ctx,
+		const struct lttng_ust_type_common *type,
+		const struct side_event_field *field)
 {
 	if (ctx->fail) {
 		side_translate_type_destroy(type);
@@ -2698,8 +2832,13 @@ void side_translate_integer_common(struct side_translate_ctx *ctx,
 	}
 	switch (ctx->state) {
 	case SIDE_TRANSLATE_TOPLEVEL:
+		if (!field) {
+			side_translate_type_destroy(type);
+			ctx->fail = true;
+			break;
+		}
 		(void) side_translate_append_field(ctx,
-			side_ptr_get(ctx->field->field_name), type, false);
+			side_ptr_get(field->field_name), type, false);
 		break;
 	case SIDE_TRANSLATE_IN_ARRAY:
 	case SIDE_TRANSLATE_IN_VLA_ELEM:
@@ -2727,6 +2866,13 @@ void side_translate_integer_common(struct side_translate_ctx *ctx,
 		ctx->vla_length_type = type;
 		break;
 	}
+}
+
+static
+void side_translate_integer_common(struct side_translate_ctx *ctx,
+		const struct lttng_ust_type_common *type)
+{
+	side_translate_commit_type(ctx, type, ctx->field);
 }
 
 static
@@ -2883,6 +3029,74 @@ void side_translate_after_field(const struct side_event_field *item_desc __attri
 }
 
 static
+void side_translate_before_struct(const struct side_type_struct *side_struct __attribute__((unused)),
+		void *priv)
+{
+	struct side_translate_ctx *ctx = (struct side_translate_ctx *) priv;
+	struct side_translate_scope *scope;
+
+	if (ctx->fail)
+		return;
+	if (ctx->nesting + 1 >= SIDE_TRANSLATE_MAX_NESTING) {
+		ctx->fail = true;
+		return;
+	}
+	scope = &ctx->scopes[++ctx->nesting];
+	memset(scope, 0, sizeof(*scope));
+	/*
+	 * The members overwrite the current field and use the field
+	 * scope states: save them for after_struct.
+	 */
+	scope->field = ctx->field;
+	scope->state = ctx->state;
+	ctx->state = SIDE_TRANSLATE_TOPLEVEL;
+}
+
+static
+void side_translate_after_struct(const struct side_type_struct *side_struct, void *priv)
+{
+	struct side_translate_ctx *ctx = (struct side_translate_ctx *) priv;
+	const struct lttng_ust_event_field **fields;
+	const struct side_event_field *field;
+	struct side_translate_scope *scope;
+	struct lttng_ust_type_struct *type;
+	unsigned int nr_fields;
+	size_t align;
+
+	if (!ctx->nesting) {
+		ctx->fail = true;
+		return;
+	}
+	scope = &ctx->scopes[ctx->nesting--];
+	fields = scope->fields;
+	nr_fields = scope->nr_fields;
+	field = scope->field;
+	/* Restore the enclosing context, overwritten by the members. */
+	ctx->state = scope->state;
+	ctx->field = field;
+	memset(scope, 0, sizeof(*scope));
+	if (ctx->fail)
+		goto fail;
+	align = side_struct_alignof(side_struct);
+	if (!align)
+		goto fail;
+	type = zmalloc(sizeof(struct lttng_ust_type_struct));
+	if (!type)
+		goto fail;
+	type->parent.type = lttng_ust_type_struct;
+	type->struct_size = sizeof(struct lttng_ust_type_struct);
+	type->nr_fields = nr_fields;
+	type->fields = fields;
+	type->alignment = align * CHAR_BIT;
+	side_translate_commit_type(ctx, &type->parent, field);
+	return;
+
+fail:
+	side_translate_fields_destroy(fields, nr_fields);
+	ctx->fail = true;
+}
+
+static
 void side_translate_before_array(const struct side_type_array *a, void *priv)
 {
 	struct side_translate_ctx *ctx = (struct side_translate_ctx *) priv;
@@ -3028,7 +3242,6 @@ void side_translate_unsupported_##_name(_type *t __attribute__((unused)),	\
 	side_translate_set_fail((struct side_translate_ctx *) priv);		\
 }
 
-SIDE_TRANSLATE_UNSUPPORTED(struct, const struct side_type_struct)
 SIDE_TRANSLATE_UNSUPPORTED(variant, const struct side_type_variant)
 SIDE_TRANSLATE_UNSUPPORTED(variant_sel, const struct side_type)
 SIDE_TRANSLATE_UNSUPPORTED(option, const struct side_variant_option)
@@ -3058,7 +3271,8 @@ const struct side_description_visitor_callbacks side_translate_visitor_callbacks
 	.float_type_func = side_translate_float_type,
 	.string_type_func = side_translate_string_type,
 
-	.before_struct_type_func = side_translate_unsupported_struct,
+	.before_struct_type_func = side_translate_before_struct,
+	.after_struct_type_func = side_translate_after_struct,
 	.before_variant_type_func = side_translate_unsupported_variant,
 	.after_variant_selector_type_func = side_translate_unsupported_variant_sel,
 	.before_option_func = side_translate_unsupported_option,
@@ -3089,19 +3303,30 @@ const struct side_description_visitor_callbacks side_translate_visitor_callbacks
 static
 void lttng_ust_side_event_destroy(struct lttng_ust_side_event *se)
 {
-	uint32_t i;
-
 	if (!se)
 		return;
-	for (i = 0; i < se->nr_fields; i++) {
-		const struct lttng_ust_event_field *f = se->fields[i];
-
-		side_translate_type_destroy(f->type);
-		free((void *) f->name);
-		free((void *) f);
-	}
-	free(se->fields);
+	side_translate_fields_destroy(
+		(const struct lttng_ust_event_field **) se->fields,
+		se->nr_fields);
 	free(se);
+}
+
+/* Release what a failed translation left behind. */
+static
+void side_translate_ctx_destroy(struct side_translate_ctx *ctx)
+{
+	unsigned int i;
+
+	for (i = 0; i <= ctx->nesting && i < SIDE_TRANSLATE_MAX_NESTING; i++) {
+		side_translate_fields_destroy(ctx->scopes[i].fields,
+			ctx->scopes[i].nr_fields);
+		ctx->scopes[i].fields = NULL;
+		ctx->scopes[i].nr_fields = 0;
+	}
+	side_translate_type_destroy(ctx->elem_type);
+	ctx->elem_type = NULL;
+	side_translate_type_destroy(ctx->vla_length_type);
+	ctx->vla_length_type = NULL;
 }
 
 static
@@ -3127,12 +3352,17 @@ struct lttng_ust_side_event *lttng_ust_side_event_create(struct side_event_descr
 	visitor.callbacks = &side_translate_visitor_callbacks;
 	visitor.priv = &ctx;
 	visit_event_description(&visitor, sdesc);
-	if (ctx.fail) {
+	if (ctx.fail || ctx.nesting) {
 		DBG("Skipping side event %s:%s: unsupported field types",
 			side_ptr_get(sdesc->provider_name),
 			side_ptr_get(sdesc->event_name));
 		goto error;
 	}
+	/* The event payload is the outermost field scope. */
+	se->fields = ctx.scopes[0].fields;
+	se->nr_fields = ctx.scopes[0].nr_fields;
+	ctx.scopes[0].fields = NULL;
+	ctx.scopes[0].nr_fields = 0;
 	se->side_desc = sdesc;
 	loglevel = side_enum_get(sdesc->loglevel);
 	if (loglevel <= SIDE_LOGLEVEL_DEBUG)
@@ -3167,6 +3397,7 @@ struct lttng_ust_side_event *lttng_ust_side_event_create(struct side_event_descr
 	return se;
 
 error:
+	side_translate_ctx_destroy(&ctx);
 	lttng_ust_side_event_destroy(se);
 	return NULL;
 }
@@ -3205,6 +3436,25 @@ void side_serialize_record(struct side_serialize_ctx *c, const void *src,
 			c->align = align;
 	} else {
 		c->chan->ops->event_write(c->bufctx, src, size, align);
+	}
+}
+
+/* Skip to the next position with the given alignment. */
+static
+void side_serialize_align(struct side_serialize_ctx *c, size_t align)
+{
+	if (c->fail)
+		return;
+	if (!align) {
+		c->fail = true;
+		return;
+	}
+	if (!c->write_pass) {
+		c->len += lttng_ust_ring_buffer_align(c->len, align);
+		if (align > c->align)
+			c->align = align;
+	} else {
+		c->chan->ops->event_write(c->bufctx, "", 0, align);
 	}
 }
 
@@ -3392,6 +3642,27 @@ void side_serialize_string(const struct side_type *type_desc,
 }
 
 static
+void side_serialize_before_struct(const struct side_type_struct *side_struct,
+		const struct side_arg_vec *side_arg_vec, void *priv)
+{
+	struct side_serialize_ctx *c = (struct side_serialize_ctx *) priv;
+
+	if (c->fail)
+		return;
+	if (side_arg_vec->len != side_array_length(&side_struct->fields)) {
+		c->fail = true;
+		return;
+	}
+	/*
+	 * A structure is aligned on the largest alignment of the fields
+	 * it contains: this is the alignment a trace reader applies,
+	 * since the metadata does not state an explicit alignment.
+	 */
+	side_serialize_align(c, side_struct_alignof(side_struct));
+	/* Members are serialized through the field callbacks. */
+}
+
+static
 void side_serialize_before_array(const struct side_type_array *side_array,
 		const struct side_arg_vec *side_arg_vec, void *priv)
 {
@@ -3458,13 +3729,6 @@ void side_serialize_fail_arg(const struct side_type *type_desc __attribute__((un
 }
 
 static
-void side_serialize_fail_struct(const struct side_type_struct *side_struct __attribute__((unused)),
-		const struct side_arg_vec *side_arg_vec __attribute__((unused)), void *priv)
-{
-	((struct side_serialize_ctx *) priv)->fail = true;
-}
-
-static
 void side_serialize_fail_dynamic(const struct side_arg *item __attribute__((unused)),
 		void *priv)
 {
@@ -3483,7 +3747,7 @@ const struct side_type_visitor side_serialize_type_visitor = {
 	.float_type_func = side_serialize_float,
 	.string_type_func = side_serialize_string,
 
-	.before_struct_type_func = side_serialize_fail_struct,
+	.before_struct_type_func = side_serialize_before_struct,
 	.before_array_type_func = side_serialize_before_array,
 	.before_vla_type_func = side_serialize_before_vla,
 
