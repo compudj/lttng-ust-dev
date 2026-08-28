@@ -17,10 +17,70 @@
 #ifndef _LTTNG_BYTECODE_SIDE_H
 #define _LTTNG_BYTECODE_SIDE_H
 
+#include <side/trace.h>
+
 #include "lttng-bytecode.h"
 
 struct side_event_description;
 struct side_type;
+
+/*
+ * A filter names a payload field by a path: the session daemon emits a
+ * chain of symbols as one dotted name, so "a.b" reaches the linker as
+ * a single reloc symbol. The operand of a field reference is a 16-bit
+ * index, which cannot hold a path, so the linker resolves the path
+ * into the data area of the bytecode and the operand carries the
+ * offset of that resolution instead.
+ */
+#define SIDE_FIELD_PATH_MAX	8
+
+struct side_field_path {
+	uint16_t nr;
+	uint16_t idx[SIDE_FIELD_PATH_MAX];
+};
+
+/*
+ * Resolve a dotted field name to a path of side argument indices, and
+ * to the type of the field it reaches. Returns -1 when the name does
+ * not name a field, or names one through something which is not a
+ * structure.
+ */
+int lttng_bytecode_side_field_path(const struct side_event_description *side_desc,
+		const char *name, struct side_field_path *path,
+		const struct side_type **type)
+	__attribute__((visibility("hidden")));
+
+/*
+ * Resolve the address a gather type reads its value from, and whether
+ * a type is one.
+ */
+const char *side_gather_access(enum side_type_gather_access_mode access_mode,
+		const char *ptr)
+	__attribute__((visibility("hidden")));
+bool side_arg_is_gather(const struct side_type *side_type)
+	__attribute__((visibility("hidden")));
+
+/*
+ * The type and the value the @path of a payload field reaches, within
+ * @sav. A gathered field reads its value from @gather_base rather than
+ * from @arg, which is then NULL.
+ */
+struct side_field_ref {
+	const struct side_arg *arg;
+	const void *gather_base;
+	const struct side_type *type;
+};
+
+/* Append to the data area of a linked bytecode. */
+ssize_t lttng_bytecode_side_push_data(struct bytecode_runtime *runtime,
+		const void *p, size_t align, size_t len)
+	__attribute__((visibility("hidden")));
+
+int lttng_bytecode_side_field_ref(const struct side_event_description *side_desc,
+		const struct side_field_path *path,
+		const struct side_arg_vec *sav,
+		struct side_field_ref *ref)
+	__attribute__((visibility("hidden")));
 
 /*
  * Lookup a payload field by name in a side event description,

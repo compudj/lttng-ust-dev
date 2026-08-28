@@ -103,6 +103,223 @@ bool lttng_bytecode_side_field_rev_bo(const struct side_event_description *side_
 	return lttng_bytecode_side_type_rev_bo(&field->side_type);
 }
 
+/*
+ * A gather type reads its value from an address rather than carrying
+ * it in the argument, which holds the address instead. The access mode
+ * says whether that address is the value's own or a pointer to it.
+ */
+const char *side_gather_access(enum side_type_gather_access_mode access_mode,
+		const char *ptr)
+{
+	switch (access_mode) {
+	case SIDE_TYPE_GATHER_ACCESS_DIRECT:
+		return ptr;
+	case SIDE_TYPE_GATHER_ACCESS_POINTER:
+		/* Dereference pointer */
+		memcpy(&ptr, ptr, sizeof(const char *));
+		return ptr;
+	default:
+		return NULL;
+	}
+}
+
+bool side_arg_is_gather(const struct side_type *side_type)
+{
+	switch (side_enum_get(side_type->type)) {
+	case SIDE_TYPE_GATHER_BOOL:	/* Fall-through. */
+	case SIDE_TYPE_GATHER_BYTE:	/* Fall-through. */
+	case SIDE_TYPE_GATHER_INTEGER:	/* Fall-through. */
+	case SIDE_TYPE_GATHER_POINTER:	/* Fall-through. */
+	case SIDE_TYPE_GATHER_FLOAT:	/* Fall-through. */
+	case SIDE_TYPE_GATHER_STRING:	/* Fall-through. */
+	case SIDE_TYPE_GATHER_ENUM:	/* Fall-through. */
+	case SIDE_TYPE_GATHER_STRUCT:	/* Fall-through. */
+	case SIDE_TYPE_GATHER_ARRAY:	/* Fall-through. */
+	case SIDE_TYPE_GATHER_VLA:
+		return true;
+	default:
+		return false;
+	}
+}
+
+/*
+ * The fields of a structure, whether it is copied onto the argument
+ * vector or gathered from memory. NULL for anything else.
+ */
+static
+const struct side_type_struct *side_type_struct_fields(const struct side_type *side_type)
+{
+	switch (side_enum_get(side_type->type)) {
+	case SIDE_TYPE_STRUCT:
+		return side_ptr_get(side_type->u.side_struct);
+	case SIDE_TYPE_GATHER_STRUCT:
+		return side_ptr_get(side_type->u.side_gather.u.side_struct.type);
+	default:
+		return NULL;
+	}
+}
+
+static
+int side_struct_member_lookup(const struct side_type_struct *side_struct,
+		const char *name, size_t len, const struct side_type **type)
+{
+	uint32_t i, nr_fields = side_array_length(&side_struct->fields);
+
+	for (i = 0; i < nr_fields; i++) {
+		const struct side_event_field *field =
+			side_array_at(&side_struct->fields, i);
+		const char *field_name = side_ptr_get(field->field_name);
+
+		if (strlen(field_name) == len && !strncmp(field_name, name, len)) {
+			*type = &field->side_type;
+			return (int) i;
+		}
+	}
+	return -1;
+}
+
+int lttng_bytecode_side_field_path(const struct side_event_description *side_desc,
+		const char *name, struct side_field_path *path,
+		const struct side_type **type)
+{
+	const struct side_type *current = NULL;
+	uint32_t i, nr_fields;
+
+	if (!side_desc)
+		return -1;
+	path->nr = 0;
+	for (;;) {
+		const char *dot = strchr(name, '.');
+		size_t len = dot ? (size_t) (dot - name) : strlen(name);
+		int idx;
+
+		if (!len || path->nr >= SIDE_FIELD_PATH_MAX)
+			return -1;
+		if (!current) {
+			/* A field of the event. */
+			nr_fields = side_array_length(&side_desc->fields);
+			idx = -1;
+			for (i = 0; i < nr_fields; i++) {
+				const struct side_event_field *field =
+					side_array_at(&side_desc->fields, i);
+				const char *field_name = side_ptr_get(field->field_name);
+
+				if (strlen(field_name) == len
+						&& !strncmp(field_name, name, len)) {
+					current = &field->side_type;
+					idx = (int) i;
+					break;
+				}
+			}
+		} else {
+			/* A member of the structure reached so far. */
+			const struct side_type_struct *side_struct =
+				side_type_struct_fields(current);
+
+			if (!side_struct)
+				return -1;
+			idx = side_struct_member_lookup(side_struct, name, len, &current);
+		}
+		if (idx < 0)
+			return -1;
+		path->idx[path->nr++] = (uint16_t) idx;
+		if (!dot)
+			break;
+		name = dot + 1;
+	}
+	*type = current;
+	return 0;
+}
+
+/* The address a gather type applies its own offset and access to. */
+static
+const void *side_arg_gather_base(const struct side_arg *item)
+{
+	/*
+	 * The pointer of every gather type is the same member of the
+	 * argument union, under a name per type.
+	 */
+	return side_ptr_get(item->u.side_static.side_integer_gather_ptr);
+}
+
+int lttng_bytecode_side_field_ref(const struct side_event_description *side_desc,
+		const struct side_field_path *path,
+		const struct side_arg_vec *sav,
+		struct side_field_ref *ref)
+{
+	const struct side_type *type;
+	const struct side_arg *arg;
+	const void *base = NULL;
+	uint16_t i;
+
+	if (!side_desc || !path->nr)
+		return -EINVAL;
+	if (path->idx[0] >= sav->len
+			|| path->idx[0] >= side_array_length(&side_desc->fields))
+		return -EINVAL;
+	type = &((const struct side_event_field *)
+		side_array_at(&side_desc->fields, path->idx[0]))->side_type;
+	arg = &side_ptr_get(sav->sav)[path->idx[0]];
+	for (i = 1; i < path->nr; i++) {
+		const struct side_type_struct *side_struct;
+
+		switch (side_enum_get(type->type)) {
+		case SIDE_TYPE_STRUCT:
+		{
+			const struct side_arg_vec *sub =
+				side_ptr_get(arg->u.side_static.side_struct);
+
+			side_struct = side_ptr_get(type->u.side_struct);
+			if (path->idx[i] >= sub->len
+					|| path->idx[i] >= side_array_length(&side_struct->fields))
+				return -EINVAL;
+			arg = &side_ptr_get(sub->sav)[path->idx[i]];
+			type = &((const struct side_event_field *)
+				side_array_at(&side_struct->fields, path->idx[i]))->side_type;
+			break;
+		}
+		case SIDE_TYPE_GATHER_STRUCT:
+		{
+			const struct side_type_gather_struct *gs =
+				&type->u.side_gather.u.side_struct;
+			const char *ptr;
+
+			/*
+			 * The members of a gathered structure are not
+			 * arguments of their own: they are read from the
+			 * memory the structure resolves to, each member
+			 * applying its own offset to it.
+			 */
+			if (!base)
+				base = side_arg_gather_base(arg);
+			ptr = side_gather_access(side_enum_get(gs->access_mode),
+					(const char *) base + gs->offset);
+			if (!ptr)
+				return -EINVAL;
+			base = ptr;
+			side_struct = side_ptr_get(gs->type);
+			if (path->idx[i] >= side_array_length(&side_struct->fields))
+				return -EINVAL;
+			type = &((const struct side_event_field *)
+				side_array_at(&side_struct->fields, path->idx[i]))->side_type;
+			break;
+		}
+		default:
+			return -EINVAL;
+		}
+	}
+	ref->type = type;
+	if (base) {
+		ref->arg = NULL;
+		ref->gather_base = base;
+	} else {
+		ref->arg = arg;
+		ref->gather_base = side_arg_is_gather(type) ?
+			side_arg_gather_base(arg) : NULL;
+	}
+	return 0;
+}
+
 int lttng_bytecode_side_field_lookup(const struct side_event_description *side_desc,
 		const char *name, const struct side_type **type)
 {
@@ -131,8 +348,9 @@ int apply_field_reloc_side(const struct lttng_ust_event_desc *event_desc,
 {
 	const struct side_event_description *side_desc;
 	const struct side_type *side_type;
+	struct side_field_path path;
+	ssize_t data_offset;
 	struct load_op *op;
-	int idx;
 
 	dbg_printf("Apply side field reloc: %u %s\n", reloc_offset, field_name);
 
@@ -141,12 +359,18 @@ int apply_field_reloc_side(const struct lttng_ust_event_desc *event_desc,
 	side_desc = lttng_ust_side_get_side_desc(event_desc);
 	if (!side_desc)
 		return -EINVAL;
-	idx = lttng_bytecode_side_field_lookup(side_desc, field_name, &side_type);
-	if (idx < 0)
+	/*
+	 * The session daemon emits a chain of symbols as one dotted
+	 * name, so a field of a structure arrives here as "a.b".
+	 */
+	if (lttng_bytecode_side_field_path(side_desc, field_name, &path, &side_type))
 		return -EINVAL;
-
-	/* Check if index is too large for 16-bit offset */
-	if (idx > LTTNG_UST_ABI_FILTER_BYTECODE_MAX_LEN - 1)
+	data_offset = lttng_bytecode_side_push_data(runtime, &path,
+			__alignof__(path), sizeof(path));
+	if (data_offset < 0)
+		return -EINVAL;
+	/* The operand of a field reference is 16-bit. */
+	if (data_offset > UINT16_MAX)
 		return -EINVAL;
 
 	/* set type */
@@ -216,8 +440,8 @@ int apply_field_reloc_side(const struct lttng_ust_event_desc *event_desc,
 			 */
 			return -EINVAL;
 		}
-		/* set side argument index */
-		field_ref->offset = (uint16_t) idx;
+		/* The operand is where the path was resolved. */
+		field_ref->offset = (uint16_t) data_offset;
 		break;
 	}
 	default:

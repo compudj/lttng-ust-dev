@@ -63,7 +63,7 @@ static ssize_t bytecode_reserve_data(struct bytecode_runtime *runtime,
 	return ret;
 }
 
-static ssize_t bytecode_push_data(struct bytecode_runtime *runtime,
+ssize_t lttng_bytecode_side_push_data(struct bytecode_runtime *runtime,
 		const void *p, size_t align, size_t len)
 {
 	ssize_t offset;
@@ -223,7 +223,7 @@ static int specialize_get_index(struct bytecode_runtime *runtime,
 		ret = -EINVAL;
 		goto end;
 	}
-	data_offset = bytecode_push_data(runtime, &gid,
+	data_offset = lttng_bytecode_side_push_data(runtime, &gid,
 		__alignof__(gid), sizeof(gid));
 	if (data_offset < 0) {
 		ret = -EINVAL;
@@ -368,7 +368,7 @@ static int specialize_context_lookup(struct lttng_ust_ctx *ctx,
 	gid.elem.type = load->object_type;
 	gid.elem.rev_bo = load->rev_bo;
 	gid.field = field;
-	data_offset = bytecode_push_data(runtime, &gid,
+	data_offset = lttng_bytecode_side_push_data(runtime, &gid,
 		__alignof__(gid), sizeof(gid));
 	if (data_offset < 0) {
 		return -EINVAL;
@@ -423,7 +423,7 @@ static int specialize_app_context_lookup(struct lttng_ust_ctx **pctx,
 	gid.elem.type = load->object_type;
 	gid.elem.rev_bo = load->rev_bo;
 	gid.field = field;
-	data_offset = bytecode_push_data(runtime, &gid,
+	data_offset = lttng_bytecode_side_push_data(runtime, &gid,
 		__alignof__(gid), sizeof(gid));
 	if (data_offset < 0) {
 		ret = -EINVAL;
@@ -655,7 +655,7 @@ static int specialize_payload_lookup(const struct side_event_description *side_d
 	 * its type describes, so the interpreter needs the type.
 	 */
 	gid.side_type = side_type;
-	data_offset = bytecode_push_data(runtime, &gid,
+	data_offset = lttng_bytecode_side_push_data(runtime, &gid,
 		__alignof__(gid), sizeof(gid));
 	if (data_offset < 0) {
 		ret = -EINVAL;

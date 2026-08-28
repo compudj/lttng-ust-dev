@@ -387,19 +387,20 @@ static const struct lttng_ust_event_field side_arg_field_marker;
  * access mode says whether the address is the value's own or a pointer
  * to it, and the offset is applied before the access.
  */
-static const char *side_gather_access(enum side_type_gather_access_mode access_mode,
-		const char *ptr)
+/*
+ * The address the argument of a gather field carries, NULL when the
+ * field is not a gathered one.
+ */
+static const void *side_arg_gather_base_of(const struct side_type *side_type,
+		const struct side_arg *item)
 {
-	switch (access_mode) {
-	case SIDE_TYPE_GATHER_ACCESS_DIRECT:
-		return ptr;
-	case SIDE_TYPE_GATHER_ACCESS_POINTER:
-		/* Dereference pointer */
-		memcpy(&ptr, ptr, sizeof(const char *));
-		return ptr;
-	default:
+	if (!side_type || !side_arg_is_gather(side_type))
 		return NULL;
-	}
+	/*
+	 * The pointer of every gather type is the same member of the
+	 * argument union, under a name per type.
+	 */
+	return side_ptr_get(item->u.side_static.side_integer_gather_ptr);
 }
 
 /*
@@ -472,22 +473,21 @@ static int side_gather_load_integer(const struct side_type_gather_integer *t,
  * them, which leaves the caller with the argument to load from.
  */
 static int side_gather_load_field_integer(const struct side_type *side_type,
-		const struct side_arg *item, bool rev_bo, int64_t *v)
+		const void *gather_base, bool rev_bo, int64_t *v)
 {
 	const struct side_type_gather *gather;
 
-	if (!side_type)
+	if (!side_type || !gather_base)
 		return -ENOENT;
 	gather = &side_type->u.side_gather;
 	switch (side_enum_get(side_type->type)) {
 	case SIDE_TYPE_GATHER_INTEGER:
 		return side_gather_load_integer(&gather->u.side_integer,
-			side_ptr_get(item->u.side_static.side_integer_gather_ptr),
+			gather_base,
 			gather->u.side_integer.type.signedness, rev_bo, v);
 	case SIDE_TYPE_GATHER_POINTER:
 		return side_gather_load_integer(&gather->u.side_integer,
-			side_ptr_get(item->u.side_static.side_integer_gather_ptr),
-			false, rev_bo, v);
+			gather_base, false, rev_bo, v);
 	case SIDE_TYPE_GATHER_ENUM:
 	{
 		const struct side_type *container =
@@ -497,8 +497,7 @@ static int side_gather_load_field_integer(const struct side_type *side_type,
 		if (side_enum_get(container->type) != SIDE_TYPE_GATHER_INTEGER)
 			return -EINVAL;
 		t = &container->u.side_gather.u.side_integer;
-		return side_gather_load_integer(t,
-			side_ptr_get(item->u.side_static.side_integer_gather_ptr),
+		return side_gather_load_integer(t, gather_base,
 			t->type.signedness, rev_bo, v);
 	}
 	case SIDE_TYPE_GATHER_BOOL:
@@ -510,8 +509,7 @@ static int side_gather_load_field_integer(const struct side_type *side_type,
 		if (t->offset_bits)
 			return -EINVAL;
 		ptr = side_gather_access(side_enum_get(t->access_mode),
-			(const char *) side_ptr_get(item->u.side_static.side_bool_gather_ptr)
-				+ t->offset);
+			(const char *) gather_base + t->offset);
 		if (!ptr)
 			return -EINVAL;
 		switch (t->type.bool_size) {
@@ -543,8 +541,7 @@ static int side_gather_load_field_integer(const struct side_type *side_type,
 		uint8_t byte;
 
 		ptr = side_gather_access(side_enum_get(t->access_mode),
-			(const char *) side_ptr_get(item->u.side_static.side_byte_gather_ptr)
-				+ t->offset);
+			(const char *) gather_base + t->offset);
 		if (!ptr)
 			return -EINVAL;
 		memcpy(&byte, ptr, 1);
@@ -562,19 +559,19 @@ static int side_gather_load_field_integer(const struct side_type *side_type,
  * string itself, at the address the access resolves to.
  */
 static int side_gather_load_field_string(const struct side_type *side_type,
-		const struct side_arg *item, const char **str)
+		const void *gather_base, const char **str)
 {
 	const struct side_type_gather_string *t;
 	const char *ptr;
 
-	if (!side_type || side_enum_get(side_type->type) != SIDE_TYPE_GATHER_STRING)
+	if (!side_type || !gather_base
+			|| side_enum_get(side_type->type) != SIDE_TYPE_GATHER_STRING)
 		return -ENOENT;
 	t = &side_type->u.side_gather.u.side_string;
 	if (t->type.unit_size != 1)
 		return -EINVAL;
 	ptr = side_gather_access(side_enum_get(t->access_mode),
-		(const char *) side_ptr_get(item->u.side_static.side_string_gather_ptr)
-			+ t->offset);
+		(const char *) gather_base + t->offset);
 	if (!ptr)
 		return -EINVAL;
 	*str = ptr;
@@ -583,18 +580,18 @@ static int side_gather_load_field_string(const struct side_type *side_type,
 
 /* Same, for the types which compare as a double. */
 static int side_gather_load_field_double(const struct side_type *side_type,
-		const struct side_arg *item, bool rev_bo, double *d)
+		const void *gather_base, bool rev_bo, double *d)
 {
 	const struct side_type_gather_float *t;
 	union side_float_value value;
 	const char *ptr;
 
-	if (!side_type || side_enum_get(side_type->type) != SIDE_TYPE_GATHER_FLOAT)
+	if (!side_type || !gather_base
+			|| side_enum_get(side_type->type) != SIDE_TYPE_GATHER_FLOAT)
 		return -ENOENT;
 	t = &side_type->u.side_gather.u.side_float;
 	ptr = side_gather_access(side_enum_get(t->access_mode),
-		(const char *) side_ptr_get(item->u.side_static.side_float_gather_ptr)
-			+ t->offset);
+		(const char *) gather_base + t->offset);
 	if (!ptr)
 		return -EINVAL;
 	switch (t->type.float_size) {
@@ -851,7 +848,8 @@ static int side_arg_dynamic_load_field(struct estack_entry *stack_top)
 		int64_t v;
 
 		ret = side_gather_load_field_integer(stack_top->u.ptr.side_type,
-				item, stack_top->u.ptr.rev_bo, &v);
+				side_arg_gather_base_of(stack_top->u.ptr.side_type, item),
+				stack_top->u.ptr.rev_bo, &v);
 		if (ret == -ENOENT)
 			ret = side_arg_load_integer(item, stack_top->u.ptr.rev_bo, &v);
 		if (ret)
@@ -865,7 +863,8 @@ static int side_arg_dynamic_load_field(struct estack_entry *stack_top)
 		int64_t v;
 
 		ret = side_gather_load_field_integer(stack_top->u.ptr.side_type,
-				item, stack_top->u.ptr.rev_bo, &v);
+				side_arg_gather_base_of(stack_top->u.ptr.side_type, item),
+				stack_top->u.ptr.rev_bo, &v);
 		if (ret == -ENOENT)
 			ret = side_arg_load_integer(item, stack_top->u.ptr.rev_bo, &v);
 		if (ret)
@@ -879,7 +878,8 @@ static int side_arg_dynamic_load_field(struct estack_entry *stack_top)
 		double d;
 
 		ret = side_gather_load_field_double(stack_top->u.ptr.side_type,
-				item, stack_top->u.ptr.rev_bo, &d);
+				side_arg_gather_base_of(stack_top->u.ptr.side_type, item),
+				stack_top->u.ptr.rev_bo, &d);
 		if (ret == -ENOENT)
 			ret = side_arg_load_double(item, stack_top->u.ptr.rev_bo, &d);
 		if (ret)
@@ -893,7 +893,8 @@ static int side_arg_dynamic_load_field(struct estack_entry *stack_top)
 		const char *str;
 
 		ret = side_gather_load_field_string(stack_top->u.ptr.side_type,
-				item, &str);
+				side_arg_gather_base_of(stack_top->u.ptr.side_type, item),
+				&str);
 		if (ret == -ENOENT)
 			ret = side_arg_load_string(item, &str);
 		if (ret)
@@ -2552,20 +2553,28 @@ int lttng_bytecode_interpret_side(struct lttng_ust_bytecode_runtime *ust_bytecod
 				(const struct side_arg_vec *) interpreter_stack_data;
 			const char *str;
 
-			dbg_printf("load field ref index %u type string\n",
+			dbg_printf("load field ref path at %u type string\n",
 				ref->offset);
-			if (unlikely(ref->offset >= sav->len)) {
-				ret = -EINVAL;
-				goto end;
-			}
 			estack_push(stack, top, ax, bx, ax_t, bx_t);
-			ret = side_gather_load_field_string(
-				lttng_bytecode_side_field_type(bytecode->side_desc,
-					ref->offset),
-				&side_ptr_get(sav->sav)[ref->offset], &str);
-			if (ret == -ENOENT)
-				ret = side_arg_load_string(
-					&side_ptr_get(sav->sav)[ref->offset], &str);
+			{
+				struct side_field_ref fref;
+
+				ret = lttng_bytecode_side_field_ref(bytecode->side_desc,
+					(const struct side_field_path *)
+						&bytecode->data[ref->offset],
+					sav, &fref);
+				if (unlikely(ret))
+					goto end;
+				ret = side_gather_load_field_string(fref.type,
+					fref.gather_base, &str);
+				if (ret == -ENOENT) {
+					if (unlikely(!fref.arg)) {
+						ret = -EINVAL;
+						goto end;
+					}
+					ret = side_arg_load_string(fref.arg, &str);
+				}
+			}
 			if (unlikely(ret))
 				goto end;
 			if (unlikely(!str)) {
@@ -2602,33 +2611,35 @@ int lttng_bytecode_interpret_side(struct lttng_ust_bytecode_runtime *ust_bytecod
 				(const struct side_arg_vec *) interpreter_stack_data;
 			int64_t v;
 
-			dbg_printf("load field ref index %u type s64\n",
+			dbg_printf("load field ref path at %u type s64\n",
 				ref->offset);
-			if (unlikely(ref->offset >= sav->len)) {
-				ret = -EINVAL;
-				goto end;
-			}
 			estack_push(stack, top, ax, bx, ax_t, bx_t);
 			/*
-			 * The legacy field reference carries an index
-			 * and no type, so both the byte order and the
-			 * address a gather field reads its value from
-			 * come from the description this bytecode is
-			 * linked against.
+			 * The operand of a legacy field reference is
+			 * where the linker resolved the path of the
+			 * field, which the description this bytecode is
+			 * linked against turns into a value.
 			 */
 			{
-				const struct side_type *side_type =
-					lttng_bytecode_side_field_type(bytecode->side_desc,
-						ref->offset);
-				bool rev_bo = lttng_bytecode_side_field_rev_bo(
-						bytecode->side_desc, ref->offset);
+				struct side_field_ref fref;
+				bool rev_bo;
 
-				ret = side_gather_load_field_integer(side_type,
-					&side_ptr_get(sav->sav)[ref->offset], rev_bo, &v);
-				if (ret == -ENOENT)
-					ret = side_arg_load_integer(
-						&side_ptr_get(sav->sav)[ref->offset],
-						rev_bo, &v);
+				ret = lttng_bytecode_side_field_ref(bytecode->side_desc,
+					(const struct side_field_path *)
+						&bytecode->data[ref->offset],
+					sav, &fref);
+				if (unlikely(ret))
+					goto end;
+				rev_bo = lttng_bytecode_side_type_rev_bo(fref.type);
+				ret = side_gather_load_field_integer(fref.type,
+					fref.gather_base, rev_bo, &v);
+				if (ret == -ENOENT) {
+					if (unlikely(!fref.arg)) {
+						ret = -EINVAL;
+						goto end;
+					}
+					ret = side_arg_load_integer(fref.arg, rev_bo, &v);
+				}
 			}
 			if (unlikely(ret))
 				goto end;
@@ -2647,26 +2658,29 @@ int lttng_bytecode_interpret_side(struct lttng_ust_bytecode_runtime *ust_bytecod
 				(const struct side_arg_vec *) interpreter_stack_data;
 			double d;
 
-			dbg_printf("load field ref index %u type double\n",
+			dbg_printf("load field ref path at %u type double\n",
 				ref->offset);
-			if (unlikely(ref->offset >= sav->len)) {
-				ret = -EINVAL;
-				goto end;
-			}
 			estack_push(stack, top, ax, bx, ax_t, bx_t);
 			{
-				const struct side_type *side_type =
-					lttng_bytecode_side_field_type(bytecode->side_desc,
-						ref->offset);
-				bool rev_bo = lttng_bytecode_side_field_rev_bo(
-						bytecode->side_desc, ref->offset);
+				struct side_field_ref fref;
+				bool rev_bo;
 
-				ret = side_gather_load_field_double(side_type,
-					&side_ptr_get(sav->sav)[ref->offset], rev_bo, &d);
-				if (ret == -ENOENT)
-					ret = side_arg_load_double(
-						&side_ptr_get(sav->sav)[ref->offset],
-						rev_bo, &d);
+				ret = lttng_bytecode_side_field_ref(bytecode->side_desc,
+					(const struct side_field_path *)
+						&bytecode->data[ref->offset],
+					sav, &fref);
+				if (unlikely(ret))
+					goto end;
+				rev_bo = lttng_bytecode_side_type_rev_bo(fref.type);
+				ret = side_gather_load_field_double(fref.type,
+					fref.gather_base, rev_bo, &d);
+				if (ret == -ENOENT) {
+					if (unlikely(!fref.arg)) {
+						ret = -EINVAL;
+						goto end;
+					}
+					ret = side_arg_load_double(fref.arg, rev_bo, &d);
+				}
 			}
 			if (unlikely(ret))
 				goto end;
