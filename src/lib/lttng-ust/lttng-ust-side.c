@@ -2548,6 +2548,46 @@ size_t side_integer_alignof(uint16_t integer_size)
 	}
 }
 
+/* A blob is an array or a VLA of bytes. */
+static
+bool side_type_is_byte(const struct side_type *type_desc)
+{
+	return side_enum_get(type_desc->type) == SIDE_TYPE_BYTE;
+}
+
+/*
+ * Media type of a blob, described by the standard "std.blob.media-type"
+ * attribute of its array or VLA type. Returns NULL if the attribute is
+ * absent, which describes a blob without media type.
+ */
+static
+char *side_attr_media_type(const struct side_attr *_attr, uint32_t nr_attr)
+{
+	uint32_t i;
+
+	for (i = 0; i < nr_attr; i++) {
+		const struct side_attr *attr = &_attr[i];
+		char *utf8_str = NULL, *media_type = NULL;
+		bool cmp;
+
+		tracer_convert_string_to_utf8(side_ptr_get(attr->key.p), attr->key.unit_size,
+			side_enum_get(attr->key.byte_order), NULL, &utf8_str);
+		cmp = strcmp(utf8_str, "std.blob.media-type");
+		if (utf8_str != side_ptr_get(attr->key.p))
+			free(utf8_str);
+		if (cmp)
+			continue;
+		if (side_enum_get(attr->value.type) != SIDE_ATTR_TYPE_STRING)
+			return NULL;
+		if (attr->value.u.string_value.unit_size != 1)
+			return NULL;
+		media_type = strdup((const char *)
+			side_ptr_get(attr->value.u.string_value.p));
+		return media_type;
+	}
+	return NULL;
+}
+
 /*
  * Alignment of a side type, in bytes, as used to serialize it into the
  * ring buffer. A structure is aligned on the largest alignment of the
@@ -2751,6 +2791,22 @@ void side_translate_type_destroy(const struct lttng_ust_type_common *type)
 		side_translate_fields_destroy(
 			(const struct lttng_ust_event_field **) s->fields,
 			s->nr_fields);
+		break;
+	}
+	case lttng_ust_type_fixed_length_blob:
+	{
+		const struct lttng_ust_type_fixed_length_blob *b =
+			caa_container_of(type, const struct lttng_ust_type_fixed_length_blob, parent);
+
+		free((void *) b->media_type);
+		break;
+	}
+	case lttng_ust_type_variable_length_blob:
+	{
+		const struct lttng_ust_type_variable_length_blob *b =
+			caa_container_of(type, const struct lttng_ust_type_variable_length_blob, parent);
+
+		free((void *) b->media_type);
 		break;
 	}
 	case lttng_ust_type_enum:
@@ -3320,7 +3376,7 @@ void side_translate_before_array(const struct side_type_array *a, void *priv)
 }
 
 static
-void side_translate_after_array(const struct side_type_array *a __attribute__((unused)),
+void side_translate_after_array(const struct side_type_array *a,
 		void *priv)
 {
 	struct side_translate_ctx *ctx = (struct side_translate_ctx *) priv;
@@ -3333,6 +3389,25 @@ void side_translate_after_array(const struct side_type_array *a __attribute__((u
 		goto fail;
 	if (!ctx->elem_type)
 		goto fail;
+	if (side_type_is_byte(side_ptr_get(a->elem_type))) {
+		struct lttng_ust_type_fixed_length_blob *blob;
+
+		/* An array of bytes is a blob. */
+		blob = zmalloc(sizeof(struct lttng_ust_type_fixed_length_blob));
+		if (!blob)
+			goto fail;
+		blob->parent.type = lttng_ust_type_fixed_length_blob;
+		blob->struct_size = sizeof(struct lttng_ust_type_fixed_length_blob);
+		blob->length = ctx->array_length;
+		blob->media_type = side_attr_media_type(
+			side_array_elements(&a->attributes),
+			side_array_length(&a->attributes));
+		side_translate_type_destroy(ctx->elem_type);
+		ctx->elem_type = NULL;
+		(void) side_translate_append_field(ctx,
+			side_ptr_get(ctx->field->field_name), &blob->parent, false);
+		return;
+	}
 	type = zmalloc(sizeof(struct lttng_ust_type_array));
 	if (!type)
 		goto fail;
@@ -3382,7 +3457,7 @@ void side_translate_after_length_vla(const struct side_type_vla *v __attribute__
 }
 
 static
-void side_translate_after_element_vla(const struct side_type_vla *v __attribute__((unused)),
+void side_translate_after_element_vla(const struct side_type_vla *v,
 		void *priv)
 {
 	struct side_translate_ctx *ctx = (struct side_translate_ctx *) priv;
@@ -3406,6 +3481,25 @@ void side_translate_after_element_vla(const struct side_type_vla *v __attribute_
 		goto fail;
 	}
 	ctx->vla_length_type = NULL;
+	if (side_type_is_byte(side_ptr_get(v->elem_type))) {
+		struct lttng_ust_type_variable_length_blob *blob;
+
+		/* A VLA of bytes is a blob. */
+		blob = zmalloc(sizeof(struct lttng_ust_type_variable_length_blob));
+		if (!blob)
+			goto fail;
+		blob->parent.type = lttng_ust_type_variable_length_blob;
+		blob->struct_size = sizeof(struct lttng_ust_type_variable_length_blob);
+		blob->length_name = NULL;	/* Use previous field. */
+		blob->media_type = side_attr_media_type(
+			side_array_elements(&v->attributes),
+			side_array_length(&v->attributes));
+		side_translate_type_destroy(ctx->elem_type);
+		ctx->elem_type = NULL;
+		(void) side_translate_append_field(ctx,
+			side_ptr_get(ctx->field->field_name), &blob->parent, false);
+		return;
+	}
 	type = zmalloc(sizeof(struct lttng_ust_type_sequence));
 	if (!type)
 		goto fail;
