@@ -2842,6 +2842,22 @@ size_t side_type_alignof(const struct side_type *type_desc)
 	case SIDE_TYPE_ENUM:
 		/* An enumeration is aligned like its container. */
 		return side_type_alignof(side_ptr_get(type_desc->u.side_enum.elem_type));
+	case SIDE_TYPE_VARIANT:
+	{
+		const struct side_type_variant *v = side_ptr_get(type_desc->u.side_variant);
+		uint32_t i, nr_options = side_array_length(&v->options);
+		size_t align = side_type_alignof(&v->selector);
+
+		for (i = 0; i < nr_options; i++) {
+			const struct side_variant_option *option =
+				side_array_at(&v->options, i);
+			size_t option_align = side_type_alignof(&option->side_type);
+
+			if (option_align > align)
+				align = option_align;
+		}
+		return align;
+	}
 	default:
 		return 0;
 	}
@@ -2919,6 +2935,8 @@ enum side_translate_state {
 	SIDE_TRANSLATE_IN_VLA_LENGTH,
 	SIDE_TRANSLATE_IN_VLA_ELEM,
 	SIDE_TRANSLATE_IN_ENUM,
+	SIDE_TRANSLATE_IN_VARIANT_SELECTOR,
+	SIDE_TRANSLATE_IN_VARIANT_OPTION,
 };
 
 /*
@@ -2954,6 +2972,14 @@ struct side_translate_ctx {
 	const struct lttng_ust_type_common *enum_container_type;
 	const struct side_event_field *enum_field;
 	enum side_translate_state enum_state;
+	/*
+	 * Variant being translated: the selector type it describes, and
+	 * the name of the option being translated. Variants do not nest
+	 * within their own selector or options, so a single one is
+	 * enough.
+	 */
+	const struct lttng_ust_type_common *variant_selector_type;
+	char variant_option_name[LTTNG_UST_ABI_SYM_NAME_LEN];
 };
 
 static
@@ -3005,6 +3031,16 @@ void side_translate_type_destroy(const struct lttng_ust_type_common *type)
 			caa_container_of(type, const struct lttng_ust_type_variable_length_blob, parent);
 
 		free((void *) b->media_type);
+		break;
+	}
+	case lttng_ust_type_variant:
+	{
+		const struct lttng_ust_type_variant *v =
+			caa_container_of(type, const struct lttng_ust_type_variant, parent);
+
+		side_translate_fields_destroy(
+			(const struct lttng_ust_event_field **) v->choices,
+			v->nr_choices);
 		break;
 	}
 	case lttng_ust_type_enum:
@@ -3167,6 +3203,23 @@ void side_translate_commit_type(struct side_translate_ctx *ctx,
 		}
 		ctx->enum_container_type = type;
 		break;
+	case SIDE_TRANSLATE_IN_VARIANT_SELECTOR:
+		if (ctx->variant_selector_type) {
+			side_translate_type_destroy(type);
+			ctx->fail = true;
+			break;
+		}
+		if (!type) {
+			ctx->fail = true;
+			break;
+		}
+		ctx->variant_selector_type = type;
+		break;
+	case SIDE_TRANSLATE_IN_VARIANT_OPTION:
+		/* An option is a choice of the variant, named after its label. */
+		(void) side_translate_append_field(ctx, ctx->variant_option_name,
+			type, false);
+		break;
 	}
 }
 
@@ -3231,8 +3284,7 @@ void side_translate_bool_type(const struct side_type_bool *t, void *priv)
 
 	if (ctx->fail)
 		return;
-	if (ctx->state != SIDE_TRANSLATE_TOPLEVEL
-			|| side_enum_get(t->byte_order) != SIDE_TYPE_BYTE_ORDER_HOST) {
+	if (side_enum_get(t->byte_order) != SIDE_TYPE_BYTE_ORDER_HOST) {
 		ctx->fail = true;
 		return;
 	}
@@ -3240,8 +3292,7 @@ void side_translate_bool_type(const struct side_type_bool *t, void *priv)
 		side_array_elements(&t->attributes),
 		side_array_length(&t->attributes),
 		TRACER_DISPLAY_BASE_10);
-	(void) side_translate_append_field(ctx,
-		side_ptr_get(ctx->field->field_name), type, false);
+	side_translate_commit_type(ctx, type, ctx->field);
 }
 
 static
@@ -3254,8 +3305,7 @@ void side_translate_float_type(const struct side_type_float *t, void *priv)
 
 	if (ctx->fail)
 		return;
-	if (ctx->state != SIDE_TRANSLATE_TOPLEVEL
-			|| side_enum_get(t->byte_order) != SIDE_TYPE_BYTE_ORDER_HOST) {
+	if (side_enum_get(t->byte_order) != SIDE_TYPE_BYTE_ORDER_HOST) {
 		ctx->fail = true;
 		return;
 	}
@@ -3288,8 +3338,7 @@ void side_translate_float_type(const struct side_type_float *t, void *priv)
 	type->attributes = side_translate_attributes(
 		side_array_elements(&t->attributes),
 		side_array_length(&t->attributes), NULL);
-	(void) side_translate_append_field(ctx,
-		side_ptr_get(ctx->field->field_name), &type->parent, false);
+	side_translate_commit_type(ctx, &type->parent, ctx->field);
 }
 
 static
@@ -3300,7 +3349,7 @@ void side_translate_string_type(const struct side_type_string *t, void *priv)
 
 	if (ctx->fail)
 		return;
-	if (ctx->state != SIDE_TRANSLATE_TOPLEVEL || t->unit_size != 1) {
+	if (t->unit_size != 1) {
 		ctx->fail = true;
 		return;
 	}
@@ -3315,8 +3364,7 @@ void side_translate_string_type(const struct side_type_string *t, void *priv)
 	type->attributes = side_translate_attributes(
 		side_array_elements(&t->attributes),
 		side_array_length(&t->attributes), NULL);
-	(void) side_translate_append_field(ctx,
-		side_ptr_get(ctx->field->field_name), &type->parent, false);
+	side_translate_commit_type(ctx, &type->parent, ctx->field);
 }
 
 static
@@ -3495,6 +3543,227 @@ fail:
 	free(desc);
 	free(name);
 	side_translate_type_destroy(container);
+	ctx->fail = true;
+}
+
+/*
+ * A side variant carries its own selector: its value travels with the
+ * variant argument, and its options select on integer ranges. CTF
+ * describes a variant by another field, which has to be an
+ * enumeration, and names each choice after one of its labels.
+ *
+ * Translate the options into an enumeration, one label per option,
+ * emit it as a hidden field preceding the variant, and name the
+ * choices of the variant after those labels. The selector value is
+ * written into that hidden field when the event is emitted.
+ */
+static
+int side_variant_option_name(char *name, size_t len, uint32_t option_index)
+{
+	int ret;
+
+	ret = snprintf(name, len, "option_%u", option_index);
+	if (ret < 0 || ret >= (int) len)
+		return -1;
+	return 0;
+}
+
+static
+const struct lttng_ust_type_common *side_variant_selector_enum(
+		struct side_translate_ctx *ctx,
+		const struct side_type_variant *v,
+		const struct lttng_ust_type_common *container)
+{
+	const struct lttng_ust_enum_entry **entries = NULL;
+	uint32_t i, nr_options = side_array_length(&v->options);
+	struct lttng_ust_enum_desc *desc = NULL;
+	struct lttng_ust_type_enum *type = NULL;
+	char *name = NULL;
+	bool signedness;
+
+	if (!container || container->type != lttng_ust_type_integer)
+		goto error;
+	signedness = caa_container_of(container,
+		const struct lttng_ust_type_integer, parent)->signedness;
+	name = side_translate_enum_name(ctx, ctx->field);
+	if (!name)
+		goto error;
+	entries = zmalloc(nr_options * sizeof(*entries));
+	if (nr_options && !entries)
+		goto error;
+	for (i = 0; i < nr_options; i++) {
+		const struct side_variant_option *option = side_array_at(&v->options, i);
+		char label[LTTNG_UST_ABI_SYM_NAME_LEN];
+		struct lttng_ust_enum_entry *entry;
+		char *label_copy;
+
+		if (side_variant_option_name(label, sizeof(label), i))
+			goto error;
+		label_copy = strdup(label);
+		if (!label_copy)
+			goto error;
+		entry = zmalloc(sizeof(struct lttng_ust_enum_entry));
+		if (!entry) {
+			free(label_copy);
+			goto error;
+		}
+		entry->struct_size = sizeof(struct lttng_ust_enum_entry);
+		entry->start.value = (unsigned long long) option->range_begin;
+		entry->start.signedness = signedness;
+		entry->end.value = (unsigned long long) option->range_end;
+		entry->end.signedness = signedness;
+		entry->string = label_copy;
+		entries[i] = entry;
+	}
+	desc = zmalloc(sizeof(struct lttng_ust_enum_desc));
+	if (!desc)
+		goto error;
+	desc->struct_size = sizeof(struct lttng_ust_enum_desc);
+	desc->name = name;
+	desc->entries = entries;
+	desc->nr_entries = nr_options;
+	desc->probe_desc = &ctx->se->probe_desc;
+	type = zmalloc(sizeof(struct lttng_ust_type_enum));
+	if (!type)
+		goto error;
+	type->parent.type = lttng_ust_type_enum;
+	type->struct_size = sizeof(struct lttng_ust_type_enum);
+	type->desc = desc;
+	type->container_type = container;
+	return &type->parent;
+
+error:
+	if (entries) {
+		for (i = 0; i < nr_options; i++) {
+			if (!entries[i])
+				continue;
+			free((void *) entries[i]->string);
+			free((void *) entries[i]);
+		}
+		free(entries);
+	}
+	free(desc);
+	free(name);
+	return NULL;
+}
+
+static
+void side_translate_before_variant(const struct side_type_variant *v __attribute__((unused)),
+		void *priv)
+{
+	struct side_translate_ctx *ctx = (struct side_translate_ctx *) priv;
+	struct side_translate_scope *scope;
+
+	if (ctx->fail)
+		return;
+	if (ctx->state != SIDE_TRANSLATE_TOPLEVEL || !ctx->field) {
+		/* Only a field of an event or of a structure. */
+		ctx->fail = true;
+		return;
+	}
+	if (ctx->nesting + 1 >= SIDE_TRANSLATE_MAX_NESTING) {
+		ctx->fail = true;
+		return;
+	}
+	scope = &ctx->scopes[++ctx->nesting];
+	memset(scope, 0, sizeof(*scope));
+	scope->field = ctx->field;
+	scope->state = ctx->state;
+	ctx->variant_selector_type = NULL;
+	ctx->state = SIDE_TRANSLATE_IN_VARIANT_SELECTOR;
+}
+
+static
+void side_translate_after_variant_selector(const struct side_type *selector __attribute__((unused)),
+		void *priv)
+{
+	struct side_translate_ctx *ctx = (struct side_translate_ctx *) priv;
+
+	if (ctx->state != SIDE_TRANSLATE_IN_VARIANT_SELECTOR)
+		ctx->fail = true;
+	ctx->state = SIDE_TRANSLATE_IN_VARIANT_OPTION;
+}
+
+static
+void side_translate_before_option(const struct side_variant_option *option __attribute__((unused)),
+		void *priv)
+{
+	struct side_translate_ctx *ctx = (struct side_translate_ctx *) priv;
+	struct side_translate_scope *scope;
+
+	if (ctx->fail)
+		return;
+	if (ctx->state != SIDE_TRANSLATE_IN_VARIANT_OPTION || !ctx->nesting) {
+		ctx->fail = true;
+		return;
+	}
+	scope = &ctx->scopes[ctx->nesting];
+	if (side_variant_option_name(ctx->variant_option_name,
+			sizeof(ctx->variant_option_name), scope->nr_fields))
+		ctx->fail = true;
+}
+
+static
+void side_translate_after_variant(const struct side_type_variant *v, void *priv)
+{
+	struct side_translate_ctx *ctx = (struct side_translate_ctx *) priv;
+	const struct lttng_ust_event_field **choices;
+	const struct lttng_ust_type_common *selector_enum = NULL;
+	const struct side_event_field *field;
+	struct side_translate_scope *scope;
+	struct lttng_ust_type_variant *type;
+	char selector_name[LTTNG_UST_ABI_SYM_NAME_LEN];
+	unsigned int nr_choices;
+
+	if (!ctx->nesting) {
+		ctx->fail = true;
+		return;
+	}
+	scope = &ctx->scopes[ctx->nesting--];
+	choices = scope->fields;
+	nr_choices = scope->nr_fields;
+	field = scope->field;
+	ctx->state = scope->state;
+	ctx->field = field;
+	memset(scope, 0, sizeof(*scope));
+	if (ctx->fail)
+		goto fail;
+	if (!nr_choices || nr_choices != side_array_length(&v->options))
+		goto fail;
+	selector_enum = side_variant_selector_enum(ctx, v, ctx->variant_selector_type);
+	if (!selector_enum)
+		goto fail;
+	/* The selector type belongs to the enumeration from now on. */
+	ctx->variant_selector_type = NULL;
+	/* Hidden selector field, followed by the variant itself. */
+	if (snprintf(selector_name, sizeof(selector_name), "_%s_selector",
+			side_ptr_get(field->field_name)) >= (int) sizeof(selector_name))
+		goto fail;
+	if (!side_translate_append_field(ctx, selector_name, selector_enum, true)) {
+		selector_enum = NULL;
+		goto fail;
+	}
+	selector_enum = NULL;
+	type = zmalloc(sizeof(struct lttng_ust_type_variant));
+	if (!type)
+		goto fail;
+	type->parent.type = lttng_ust_type_variant;
+	type->struct_size = sizeof(struct lttng_ust_type_variant);
+	type->tag_name = NULL;		/* Use previous field. */
+	type->nr_choices = nr_choices;
+	type->choices = choices;
+	type->alignment = 0;
+	type->attributes = side_translate_attributes(
+		side_array_elements(&v->attributes),
+		side_array_length(&v->attributes), NULL);
+	side_translate_commit_type(ctx, &type->parent, field);
+	return;
+
+fail:
+	side_translate_type_destroy(selector_enum);
+	side_translate_type_destroy(ctx->variant_selector_type);
+	ctx->variant_selector_type = NULL;
+	side_translate_fields_destroy(choices, nr_choices);
 	ctx->fail = true;
 }
 
@@ -3767,9 +4036,6 @@ void side_translate_unsupported_##_name(_type *t __attribute__((unused)),	\
 	side_translate_set_fail((struct side_translate_ctx *) priv);		\
 }
 
-SIDE_TRANSLATE_UNSUPPORTED(variant, const struct side_type_variant)
-SIDE_TRANSLATE_UNSUPPORTED(variant_sel, const struct side_type)
-SIDE_TRANSLATE_UNSUPPORTED(option, const struct side_variant_option)
 SIDE_TRANSLATE_UNSUPPORTED(optional, const struct side_type_optional)
 SIDE_TRANSLATE_UNSUPPORTED(enum_bitmap, const struct side_type_enum_bitmap)
 SIDE_TRANSLATE_UNSUPPORTED(gather_bool, const struct side_type_gather_bool)
@@ -3797,9 +4063,10 @@ const struct side_description_visitor_callbacks side_translate_visitor_callbacks
 
 	.before_struct_type_func = side_translate_before_struct,
 	.after_struct_type_func = side_translate_after_struct,
-	.before_variant_type_func = side_translate_unsupported_variant,
-	.after_variant_selector_type_func = side_translate_unsupported_variant_sel,
-	.before_option_func = side_translate_unsupported_option,
+	.before_variant_type_func = side_translate_before_variant,
+	.after_variant_selector_type_func = side_translate_after_variant_selector,
+	.after_variant_type_func = side_translate_after_variant,
+	.before_option_func = side_translate_before_option,
 	.before_array_type_func = side_translate_before_array,
 	.after_array_type_func = side_translate_after_array,
 	.before_vla_type_func = side_translate_before_vla,
@@ -4202,6 +4469,38 @@ void side_serialize_enum(const struct side_type *type_desc,
 	side_serialize_integer(container, item, priv);
 }
 
+/*
+ * The selector of a side variant travels with its argument: write it
+ * into the hidden field which precedes the variant, which is what the
+ * trace describes the variant by. The selected option is serialized
+ * next, by the visitor.
+ */
+static
+void side_serialize_before_variant(const struct side_type_variant *side_type_variant,
+		const struct side_arg_variant *side_arg_variant, void *priv)
+{
+	struct side_serialize_ctx *c = (struct side_serialize_ctx *) priv;
+	const struct side_type *selector_type = &side_type_variant->selector;
+
+	if (c->fail)
+		return;
+	switch (side_enum_get(selector_type->type)) {
+	case SIDE_TYPE_U8:		/* Fall-through. */
+	case SIDE_TYPE_U16:		/* Fall-through. */
+	case SIDE_TYPE_U32:		/* Fall-through. */
+	case SIDE_TYPE_U64:		/* Fall-through. */
+	case SIDE_TYPE_S8:		/* Fall-through. */
+	case SIDE_TYPE_S16:		/* Fall-through. */
+	case SIDE_TYPE_S32:		/* Fall-through. */
+	case SIDE_TYPE_S64:
+		break;
+	default:
+		c->fail = true;
+		return;
+	}
+	side_serialize_integer(selector_type, &side_arg_variant->selector, priv);
+}
+
 static
 void side_serialize_before_struct(const struct side_type_struct *side_struct,
 		const struct side_arg_vec *side_arg_vec, void *priv)
@@ -4309,6 +4608,7 @@ const struct side_type_visitor side_serialize_type_visitor = {
 	.string_type_func = side_serialize_string,
 
 	.before_struct_type_func = side_serialize_before_struct,
+	.before_variant_type_func = side_serialize_before_variant,
 	.before_array_type_func = side_serialize_before_array,
 	.before_vla_type_func = side_serialize_before_vla,
 

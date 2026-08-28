@@ -543,6 +543,22 @@ int lttng_create_enum_check(const struct lttng_ust_type_common *type,
 		}
 		break;
 	}
+	case lttng_ust_type_variant:
+	{
+		const struct lttng_ust_type_variant *variant_type =
+			lttng_ust_get_type_variant(type);
+		unsigned int i;
+
+		for (i = 0; i < variant_type->nr_choices; i++) {
+			int ret;
+
+			ret = lttng_create_enum_check(variant_type->choices[i]->type,
+					session);
+			if (ret)
+				return ret;
+		}
+		break;
+	}
 	default:
 		break;
 	}

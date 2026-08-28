@@ -64,6 +64,7 @@ enum lttng_ust_type {
 	lttng_ust_type_struct,
 	lttng_ust_type_fixed_length_blob,
 	lttng_ust_type_variable_length_blob,
+	lttng_ust_type_variant,
 	NR_LTTNG_UST_TYPE,
 };
 
@@ -288,6 +289,25 @@ struct lttng_ust_type_struct {
 	uint32_t struct_size;
 	unsigned int nr_fields;
 	const struct lttng_ust_event_field * const *fields;	/* Array of pointers to fields. */
+	unsigned int alignment;					/* Minimum alignment for this type. */
+	/*
+	 * Attributes of the type, NULL if none. Only valid when
+	 * struct_size is large enough to hold this field.
+	 */
+	const struct lttng_ust_attributes *attributes;
+};
+
+/*
+ * A variant is described by a selector field, which is an enumeration,
+ * and by one choice per enumeration label: the name of a choice is the
+ * label which selects it.
+ */
+struct lttng_ust_type_variant {
+	struct lttng_ust_type_common parent;
+	uint32_t struct_size;
+	const char *tag_name;		/* Selector field name. If NULL, use previous field. */
+	unsigned int nr_choices;
+	const struct lttng_ust_event_field * const *choices;	/* Array of pointers to fields. */
 	unsigned int alignment;					/* Minimum alignment for this type. */
 	/*
 	 * Attributes of the type, NULL if none. Only valid when

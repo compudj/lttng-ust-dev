@@ -113,6 +113,17 @@ bool check_type_provider(const struct lttng_ust_type_common *type)
 		}
 		return true;
 	}
+	case lttng_ust_type_variant:
+	{
+		const struct lttng_ust_type_variant *variant_type = caa_container_of(type, const struct lttng_ust_type_variant, parent);
+		size_t i;
+
+		for (i = 0; i < variant_type->nr_choices; i++) {
+			if (!check_type_provider(variant_type->choices[i]->type))
+				return false;
+		}
+		return true;
+	}
 	case lttng_ust_type_fixed_length_blob:
 		return true;
 	case lttng_ust_type_variable_length_blob:

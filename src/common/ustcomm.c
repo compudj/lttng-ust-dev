@@ -807,6 +807,9 @@ ssize_t count_one_type(const struct lttng_ust_type_common *lt)
 	case lttng_ust_type_struct:
 		return count_fields_recursive(lttng_ust_get_type_struct(lt)->nr_fields,
 				lttng_ust_get_type_struct(lt)->fields) + 1 + nr_type_attr;
+	case lttng_ust_type_variant:
+		return count_fields_recursive(lttng_ust_get_type_variant(lt)->nr_choices,
+				lttng_ust_get_type_variant(lt)->choices) + 1 + nr_type_attr;
 
 	case lttng_ust_type_dynamic:
 	{
@@ -1205,6 +1208,42 @@ int serialize_one_type(struct lttng_ust_session *session,
 		ret = serialize_fields(session, fields, iter_output,
 				lttng_ust_get_type_struct(lt)->nr_fields,
 				lttng_ust_get_type_struct(lt)->fields);
+		if (ret)
+			return -EINVAL;
+		break;
+	}
+	case lttng_ust_type_variant:
+	{
+		const struct lttng_ust_type_variant *variant = lttng_ust_get_type_variant(lt);
+		struct lttng_ust_ctl_field *uf = &fields[*iter_output];
+		struct lttng_ust_ctl_type *ut = &uf->type;
+		const char *tag_name = variant->tag_name;
+
+		if (field_name) {
+			strncpy(uf->name, field_name, LTTNG_UST_ABI_SYM_NAME_LEN);
+			uf->name[LTTNG_UST_ABI_SYM_NAME_LEN - 1] = '\0';
+		} else {
+			uf->name[0] = '\0';
+		}
+		/*
+		 * If tag_name is NULL, the selector is the previous
+		 * field.
+		 */
+		if (!tag_name)
+			tag_name = prev_field_name;
+		if (!tag_name)
+			return -EINVAL;
+		ut->atype = lttng_ust_ctl_atype_variant_nestable;
+		ut->u.variant_nestable.nr_choices = variant->nr_choices;
+		strncpy(ut->u.variant_nestable.tag_name, tag_name,
+			LTTNG_UST_ABI_SYM_NAME_LEN);
+		ut->u.variant_nestable.tag_name[LTTNG_UST_ABI_SYM_NAME_LEN - 1] = '\0';
+		ut->u.variant_nestable.alignment = variant->alignment;
+		(*iter_output)++;
+
+		/* The choices follow the variant. */
+		ret = serialize_fields(session, fields, iter_output,
+				variant->nr_choices, variant->choices);
 		if (ret)
 			return -EINVAL;
 		break;

@@ -594,6 +594,14 @@ const struct lttng_ust_type_variable_length_blob *lttng_ust_get_type_variable_le
 	return caa_container_of(type, const struct lttng_ust_type_variable_length_blob, parent);
 }
 
+static inline
+const struct lttng_ust_type_variant *lttng_ust_get_type_variant(const struct lttng_ust_type_common *type)
+{
+	if (type->type != lttng_ust_type_variant)
+		return NULL;
+	return caa_container_of(type, const struct lttng_ust_type_variant, parent);
+}
+
 /*
  * Attributes are only present in the descriptions which are large
  * enough to hold them: a probe built against an older ABI has none.
@@ -672,6 +680,14 @@ const struct lttng_ust_attributes *lttng_ust_type_attributes(
 	{
 		const struct lttng_ust_type_variable_length_blob *t =
 			lttng_ust_get_type_variable_length_blob(lt);
+
+		if (t->struct_size < sizeof(*t))
+			return NULL;
+		return t->attributes;
+	}
+	case lttng_ust_type_variant:
+	{
+		const struct lttng_ust_type_variant *t = lttng_ust_get_type_variant(lt);
 
 		if (t->struct_size < sizeof(*t))
 			return NULL;
