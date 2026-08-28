@@ -696,7 +696,36 @@ about the statedump itself.
   registered with it. Regular events are emitted with a key matching
   them all, so they keep reaching every session.
 
-### 3.4 Attributes: migrating the special-cased metadata [DEFERRED]
+### 3.4 The optional type: unsupported everywhere [FUTURE WORK]
+
+Side describes an optional value with `SIDE_TYPE_OPTIONAL`: a value
+which is either present or absent. Nothing in the stack can express
+it today, at any layer:
+
+- LTTng-UST has no optional type: `enum lttng_ust_type` has integers,
+  strings, floats, the dynamic type, enumerations, arrays, sequences,
+  structures, the two blobs, and the variant added for side.
+- The protocol has no optional either: `enum
+  lttng_ust_ctl_abstract_types` has no such abstract type, so an
+  application has no way to describe one to the session daemon.
+- The session daemon has no optional field class, and neither writer
+  emits one. CTF 2 does specify an optional field class, but nothing
+  in lttng-tools implements it, for any domain. CTF 1.8 cannot express
+  it at all.
+
+Unlike the variant, where the abstract type and the decoding already
+existed because the dynamic type uses them, there is nothing to reuse
+here: supporting it means the whole stack again, plus a decision about
+what CTF 1.8 does.
+
+There is a cheaper mapping, if optionals are wanted before that work
+is done: an optional is a variant of two options, present and absent,
+and variants are supported end to end. Translating an optional into a
+variant whose selector is the presence of the value reuses everything
+and needs nothing from the protocol, at the price of describing it in
+the trace as a variant rather than as the optional of CTF 2.
+
+### 3.5 Attributes: migrating the special-cased metadata [DEFERRED]
 
 Events, fields and types carry generic attributes: a name and a value
 within a namespace, carried within the array of fields of the event
@@ -740,7 +769,7 @@ it, nothing depends on the migration, it changes metadata which
 existing consumers already read, and it requires wiring the CTF 1.8
 writer to recognize the migrated attributes.
 
-### 3.5 RCU domains: the tracer must synchronize against both
+### 3.6 RCU domains: the tracer must synchronize against both
 
 lttng-ust and libside each have their own RCU implementation and their
 own grace period domain. A tracepoint probe body runs inside a
