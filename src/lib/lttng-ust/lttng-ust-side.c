@@ -2603,6 +2603,9 @@ size_t side_type_alignof(const struct side_type *type_desc)
 	}
 	case SIDE_TYPE_STRUCT:
 		return side_struct_alignof(side_ptr_get(type_desc->u.side_struct));
+	case SIDE_TYPE_ENUM:
+		/* An enumeration is aligned like its container. */
+		return side_type_alignof(side_ptr_get(type_desc->u.side_enum.elem_type));
 	default:
 		return 0;
 	}
@@ -2678,6 +2681,7 @@ enum side_translate_state {
 	SIDE_TRANSLATE_IN_ARRAY,
 	SIDE_TRANSLATE_IN_VLA_LENGTH,
 	SIDE_TRANSLATE_IN_VLA_ELEM,
+	SIDE_TRANSLATE_IN_ENUM,
 };
 
 /*
@@ -2697,6 +2701,7 @@ struct side_translate_scope {
 
 struct side_translate_ctx {
 	struct lttng_ust_side_event *se;
+	const struct side_event_description *sdesc;
 	const struct side_event_field *field;
 	enum side_translate_state state;
 	const struct lttng_ust_type_common *elem_type;
@@ -2705,6 +2710,13 @@ struct side_translate_ctx {
 	bool fail;
 	struct side_translate_scope scopes[SIDE_TRANSLATE_MAX_NESTING];
 	unsigned int nesting;	/* 0: event payload, > 0: within structures. */
+	/*
+	 * Enumeration being translated: its container type is the only
+	 * type it holds, so a single saved context is enough.
+	 */
+	const struct lttng_ust_type_common *enum_container_type;
+	const struct side_event_field *enum_field;
+	enum side_translate_state enum_state;
 };
 
 static
@@ -2739,6 +2751,30 @@ void side_translate_type_destroy(const struct lttng_ust_type_common *type)
 		side_translate_fields_destroy(
 			(const struct lttng_ust_event_field **) s->fields,
 			s->nr_fields);
+		break;
+	}
+	case lttng_ust_type_enum:
+	{
+		const struct lttng_ust_type_enum *e =
+			caa_container_of(type, const struct lttng_ust_type_enum, parent);
+		const struct lttng_ust_enum_desc *desc = e->desc;
+
+		side_translate_type_destroy(e->container_type);
+		if (desc) {
+			unsigned int i;
+
+			for (i = 0; i < desc->nr_entries; i++) {
+				const struct lttng_ust_enum_entry *entry = desc->entries[i];
+
+				if (!entry)
+					continue;
+				free((void *) entry->string);
+				free((void *) entry);
+			}
+			free((void *) desc->entries);
+			free((void *) desc->name);
+			free((void *) desc);
+		}
 		break;
 	}
 	default:
@@ -2864,6 +2900,18 @@ void side_translate_commit_type(struct side_translate_ctx *ctx,
 			break;
 		}
 		ctx->vla_length_type = type;
+		break;
+	case SIDE_TRANSLATE_IN_ENUM:
+		if (ctx->enum_container_type) {
+			side_translate_type_destroy(type);
+			ctx->fail = true;
+			break;
+		}
+		if (!type) {
+			ctx->fail = true;
+			break;
+		}
+		ctx->enum_container_type = type;
 		break;
 	}
 }
@@ -3026,6 +3074,165 @@ void side_translate_after_field(const struct side_event_field *item_desc __attri
 	struct side_translate_ctx *ctx = (struct side_translate_ctx *) priv;
 
 	ctx->field = NULL;
+}
+
+/*
+ * Side enumerations are anonymous: name them after the path of the
+ * field they describe, which is unique within an event, prefixed by
+ * the provider and event names. Characters which are not valid in an
+ * identifier are replaced.
+ */
+static
+char *side_translate_enum_name(struct side_translate_ctx *ctx,
+		const struct side_event_field *field)
+{
+	char name[LTTNG_UST_ABI_SYM_NAME_LEN];
+	unsigned int i;
+	size_t len;
+	int ret;
+
+	ret = snprintf(name, sizeof(name), "%s_%s",
+		side_ptr_get(ctx->sdesc->provider_name),
+		side_ptr_get(ctx->sdesc->event_name));
+	if (ret < 0 || ret >= (int) sizeof(name))
+		return NULL;
+	/* Enclosing structures, outermost first. */
+	for (i = 1; i <= ctx->nesting && i < SIDE_TRANSLATE_MAX_NESTING; i++) {
+		const struct side_event_field *enclosing = ctx->scopes[i].field;
+
+		if (!enclosing)
+			continue;
+		len = strlen(name);
+		ret = snprintf(name + len, sizeof(name) - len, "_%s",
+			side_ptr_get(enclosing->field_name));
+		if (ret < 0 || ret >= (int) (sizeof(name) - len))
+			return NULL;
+	}
+	if (field) {
+		len = strlen(name);
+		ret = snprintf(name + len, sizeof(name) - len, "_%s",
+			side_ptr_get(field->field_name));
+		if (ret < 0 || ret >= (int) (sizeof(name) - len))
+			return NULL;
+	}
+	for (i = 0; name[i]; i++) {
+		char c = name[i];
+
+		if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+				|| (c >= '0' && c <= '9') || c == '_'))
+			name[i] = '_';
+	}
+	return strdup(name);
+}
+
+static
+void side_translate_before_enum(const struct side_type_enum *t __attribute__((unused)),
+		void *priv)
+{
+	struct side_translate_ctx *ctx = (struct side_translate_ctx *) priv;
+
+	if (ctx->fail)
+		return;
+	if (ctx->state == SIDE_TRANSLATE_IN_ENUM || ctx->enum_container_type) {
+		/* Enumerations do not nest. */
+		ctx->fail = true;
+		return;
+	}
+	ctx->enum_field = ctx->field;
+	ctx->enum_state = ctx->state;
+	ctx->state = SIDE_TRANSLATE_IN_ENUM;
+}
+
+static
+void side_translate_after_enum(const struct side_type_enum *t, void *priv)
+{
+	struct side_translate_ctx *ctx = (struct side_translate_ctx *) priv;
+	const struct lttng_ust_enum_entry **entries = NULL;
+	const struct side_enum_mappings *mappings;
+	const struct lttng_ust_type_common *container;
+	struct lttng_ust_enum_desc *desc = NULL;
+	const struct side_event_field *field;
+	struct lttng_ust_type_enum *type;
+	uint32_t i, nr_mappings = 0;
+	char *name = NULL;
+	bool signedness;
+
+	container = ctx->enum_container_type;
+	field = ctx->enum_field;
+	ctx->enum_container_type = NULL;
+	ctx->enum_field = NULL;
+	ctx->state = ctx->enum_state;
+	ctx->field = field;
+	if (ctx->fail)
+		goto fail;
+	/* The container of an enumeration is an integer. */
+	if (!container || container->type != lttng_ust_type_integer)
+		goto fail;
+	signedness = caa_container_of(container,
+		const struct lttng_ust_type_integer, parent)->signedness;
+	mappings = side_ptr_get(t->mappings);
+	nr_mappings = side_array_length(&mappings->mappings);
+	name = side_translate_enum_name(ctx, field);
+	if (!name)
+		goto fail;
+	entries = zmalloc(nr_mappings * sizeof(*entries));
+	if (nr_mappings && !entries)
+		goto fail;
+	for (i = 0; i < nr_mappings; i++) {
+		const struct side_enum_mapping *m = side_array_at(&mappings->mappings, i);
+		struct lttng_ust_enum_entry *entry;
+		char *label;
+
+		if (m->label.unit_size != 1)
+			goto fail;
+		label = strdup((const char *) side_ptr_get(m->label.p));
+		if (!label)
+			goto fail;
+		entry = zmalloc(sizeof(struct lttng_ust_enum_entry));
+		if (!entry) {
+			free(label);
+			goto fail;
+		}
+		entry->struct_size = sizeof(struct lttng_ust_enum_entry);
+		entry->start.value = (unsigned long long) m->range_begin;
+		entry->start.signedness = signedness;
+		entry->end.value = (unsigned long long) m->range_end;
+		entry->end.signedness = signedness;
+		entry->string = label;
+		entries[i] = entry;
+	}
+	desc = zmalloc(sizeof(struct lttng_ust_enum_desc));
+	if (!desc)
+		goto fail;
+	desc->struct_size = sizeof(struct lttng_ust_enum_desc);
+	desc->name = name;
+	desc->entries = entries;
+	desc->nr_entries = nr_mappings;
+	desc->probe_desc = &ctx->se->probe_desc;
+	type = zmalloc(sizeof(struct lttng_ust_type_enum));
+	if (!type)
+		goto fail;
+	type->parent.type = lttng_ust_type_enum;
+	type->struct_size = sizeof(struct lttng_ust_type_enum);
+	type->desc = desc;
+	type->container_type = container;
+	side_translate_commit_type(ctx, &type->parent, field);
+	return;
+
+fail:
+	if (entries) {
+		for (i = 0; i < nr_mappings; i++) {
+			if (!entries[i])
+				continue;
+			free((void *) entries[i]->string);
+			free((void *) entries[i]);
+		}
+		free(entries);
+	}
+	free(desc);
+	free(name);
+	side_translate_type_destroy(container);
+	ctx->fail = true;
 }
 
 static
@@ -3246,7 +3453,6 @@ SIDE_TRANSLATE_UNSUPPORTED(variant, const struct side_type_variant)
 SIDE_TRANSLATE_UNSUPPORTED(variant_sel, const struct side_type)
 SIDE_TRANSLATE_UNSUPPORTED(option, const struct side_variant_option)
 SIDE_TRANSLATE_UNSUPPORTED(optional, const struct side_type_optional)
-SIDE_TRANSLATE_UNSUPPORTED(enum, const struct side_type_enum)
 SIDE_TRANSLATE_UNSUPPORTED(enum_bitmap, const struct side_type_enum_bitmap)
 SIDE_TRANSLATE_UNSUPPORTED(gather_bool, const struct side_type_gather_bool)
 SIDE_TRANSLATE_UNSUPPORTED(gather_byte, const struct side_type_gather_byte)
@@ -3283,7 +3489,8 @@ const struct side_description_visitor_callbacks side_translate_visitor_callbacks
 	.after_element_vla_type_func = side_translate_after_element_vla,
 	.before_optional_type_func = side_translate_unsupported_optional,
 
-	.before_enum_type_func = side_translate_unsupported_enum,
+	.before_enum_type_func = side_translate_before_enum,
+	.after_enum_type_func = side_translate_after_enum,
 	.before_enum_bitmap_type_func = side_translate_unsupported_enum_bitmap,
 
 	.gather_bool_type_func = side_translate_unsupported_gather_bool,
@@ -3348,6 +3555,7 @@ struct lttng_ust_side_event *lttng_ust_side_event_create(struct side_event_descr
 		return NULL;
 	CDS_INIT_LIST_HEAD(&se->node);
 	ctx.se = se;
+	ctx.sdesc = sdesc;
 	ctx.state = SIDE_TRANSLATE_TOPLEVEL;
 	visitor.callbacks = &side_translate_visitor_callbacks;
 	visitor.priv = &ctx;
@@ -3641,6 +3849,37 @@ void side_serialize_string(const struct side_type *type_desc,
 	side_serialize_record(c, p, len, 1);
 }
 
+/*
+ * The argument of an enumeration field holds the value of its
+ * container, which is what is written into the ring buffer.
+ */
+static
+void side_serialize_enum(const struct side_type *type_desc,
+		const struct side_arg *item, void *priv)
+{
+	struct side_serialize_ctx *c = (struct side_serialize_ctx *) priv;
+	const struct side_type *container;
+
+	if (c->fail)
+		return;
+	container = side_ptr_get(type_desc->u.side_enum.elem_type);
+	switch (side_enum_get(container->type)) {
+	case SIDE_TYPE_U8:		/* Fall-through. */
+	case SIDE_TYPE_U16:		/* Fall-through. */
+	case SIDE_TYPE_U32:		/* Fall-through. */
+	case SIDE_TYPE_U64:		/* Fall-through. */
+	case SIDE_TYPE_S8:		/* Fall-through. */
+	case SIDE_TYPE_S16:		/* Fall-through. */
+	case SIDE_TYPE_S32:		/* Fall-through. */
+	case SIDE_TYPE_S64:
+		break;
+	default:
+		c->fail = true;
+		return;
+	}
+	side_serialize_integer(container, item, priv);
+}
+
 static
 void side_serialize_before_struct(const struct side_type_struct *side_struct,
 		const struct side_arg_vec *side_arg_vec, void *priv)
@@ -3751,7 +3990,7 @@ const struct side_type_visitor side_serialize_type_visitor = {
 	.before_array_type_func = side_serialize_before_array,
 	.before_vla_type_func = side_serialize_before_vla,
 
-	.enum_type_func = side_serialize_fail_arg,
+	.enum_type_func = side_serialize_enum,
 	.enum_bitmap_type_func = side_serialize_fail_arg,
 
 	.dynamic_null_func = side_serialize_fail_dynamic,

@@ -521,8 +521,29 @@ int lttng_create_enum_check(const struct lttng_ust_type_common *type,
 		}
 		break;
 	}
+	case lttng_ust_type_array:
+		return lttng_create_enum_check(
+			lttng_ust_get_type_array(type)->elem_type, session);
+	case lttng_ust_type_sequence:
+		return lttng_create_enum_check(
+			lttng_ust_get_type_sequence(type)->elem_type, session);
+	case lttng_ust_type_struct:
+	{
+		const struct lttng_ust_type_struct *struct_type =
+			lttng_ust_get_type_struct(type);
+		unsigned int i;
+
+		for (i = 0; i < struct_type->nr_fields; i++) {
+			int ret;
+
+			ret = lttng_create_enum_check(struct_type->fields[i]->type,
+					session);
+			if (ret)
+				return ret;
+		}
+		break;
+	}
 	default:
-		/* TODO: nested types when they become supported. */
 		break;
 	}
 	return 0;

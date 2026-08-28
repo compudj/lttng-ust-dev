@@ -476,6 +476,33 @@ static int specialize_side_load_object(const struct side_type *side_type,
 	case SIDE_TYPE_VLA:
 		load->object_type = OBJECT_TYPE_SEQUENCE;
 		break;
+	case SIDE_TYPE_ENUM:
+	{
+		const struct side_type *container =
+			side_ptr_get(side_type->u.side_enum.elem_type);
+
+		/*
+		 * An enumeration is loaded as the integer value of its
+		 * container.
+		 */
+		switch (side_enum_get(container->type)) {
+		case SIDE_TYPE_S8:	/* Fall-through. */
+		case SIDE_TYPE_S16:	/* Fall-through. */
+		case SIDE_TYPE_S32:	/* Fall-through. */
+		case SIDE_TYPE_S64:
+			load->object_type = OBJECT_TYPE_S64;
+			break;
+		case SIDE_TYPE_U8:	/* Fall-through. */
+		case SIDE_TYPE_U16:	/* Fall-through. */
+		case SIDE_TYPE_U32:	/* Fall-through. */
+		case SIDE_TYPE_U64:
+			load->object_type = OBJECT_TYPE_U64;
+			break;
+		default:
+			return -EINVAL;
+		}
+		break;
+	}
 	default:
 		/* Other side types: not filterable yet. */
 		return -EINVAL;

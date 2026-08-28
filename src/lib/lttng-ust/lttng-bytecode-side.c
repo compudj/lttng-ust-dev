@@ -105,6 +105,14 @@ int apply_field_reloc_side(const struct lttng_ust_event_desc *event_desc,
 		case SIDE_TYPE_STRING_UTF8:
 			op->op = BYTECODE_OP_LOAD_FIELD_REF_STRING;
 			break;
+		case SIDE_TYPE_ENUM:
+			/*
+			 * An enumeration compares as the integer value
+			 * of its container: the argument of an
+			 * enumeration field is that integer.
+			 */
+			op->op = BYTECODE_OP_LOAD_FIELD_REF_S64;
+			break;
 		default:
 			/*
 			 * Compound types cannot be loaded as a value.
