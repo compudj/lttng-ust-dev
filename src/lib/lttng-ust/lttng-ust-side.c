@@ -2845,18 +2845,16 @@ size_t side_type_alignof(const struct side_type *type_desc)
 	case SIDE_TYPE_VARIANT:
 	{
 		const struct side_type_variant *v = side_ptr_get(type_desc->u.side_variant);
-		uint32_t i, nr_options = side_array_length(&v->options);
-		size_t align = side_type_alignof(&v->selector);
 
-		for (i = 0; i < nr_options; i++) {
-			const struct side_variant_option *option =
-				side_array_at(&v->options, i);
-			size_t option_align = side_type_alignof(&option->side_type);
-
-			if (option_align > align)
-				align = option_align;
-		}
-		return align;
+		/*
+		 * CTF 2 gives a variant an alignment requirement of
+		 * one, so it does not raise the alignment of what
+		 * contains it, and its selected option is aligned by
+		 * its own type against the offset it is recorded at.
+		 * What this field does contribute is its selector,
+		 * which precedes it as a field of its own.
+		 */
+		return side_type_alignof(&v->selector);
 	}
 
 	/*
@@ -4470,6 +4468,17 @@ struct side_serialize_ctx {
 	size_t written;		/* Write pass only. */
 	size_t align;
 	/*
+	 * Offset within the sub-buffer at which the payload is
+	 * recorded. Alignment is relative to the beginning of the
+	 * sub-buffer, so it is applied to this offset plus the position
+	 * within the payload. It is zero while the layout of the event
+	 * is known statically, which is the case as long as no field is
+	 * more aligned than the payload itself: the reservation aligns
+	 * the payload on the alignment of the event description, so the
+	 * two are then congruent.
+	 */
+	unsigned long base;
+	/*
 	 * Elements of the gathered sequence being serialized: where
 	 * they begin, and where they end in the write pass, which is
 	 * where the size pass ended them.
@@ -4481,6 +4490,16 @@ struct side_serialize_ctx {
 	unsigned int dyn_idx;
 	struct lttng_ust_ring_buffer_ctx *bufctx;
 	struct lttng_ust_channel_buffer *chan;
+	/* Input of the passes, for the size pass to be run again. */
+	const struct side_event_description *desc;
+	const struct side_arg_vec *side_arg_vec;
+	void *caller_addr;
+	/*
+	 * Whether the layout is laid out against the offset the payload
+	 * is recorded at, which a variant requires, rather than against
+	 * the payload itself.
+	 */
+	bool dynamic_layout;
 };
 
 static
@@ -4490,7 +4509,7 @@ void side_serialize_record(struct side_serialize_ctx *c, const void *src,
 	if (c->fail)
 		return;
 	if (!c->write_pass) {
-		c->len += lttng_ust_ring_buffer_align(c->len, align);
+		c->len += lttng_ust_ring_buffer_align(c->base + c->len, align);
 		c->len += size;
 		if (align > c->align)
 			c->align = align;
@@ -4504,7 +4523,7 @@ void side_serialize_record(struct side_serialize_ctx *c, const void *src,
 		 * a gathered sequence is not necessarily the one the
 		 * reservation was sized with. Never write past it.
 		 */
-		offset += lttng_ust_ring_buffer_align(offset, align);
+		offset += lttng_ust_ring_buffer_align(c->base + offset, align);
 		/*
 		 * Drop the elements a gathered sequence grew by: the
 		 * length recorded is the one of the size pass, so the
@@ -4532,7 +4551,7 @@ void side_serialize_align(struct side_serialize_ctx *c, size_t align)
 		return;
 	}
 	if (!c->write_pass) {
-		c->len += lttng_ust_ring_buffer_align(c->len, align);
+		c->len += lttng_ust_ring_buffer_align(c->base + c->len, align);
 		if (align > c->align)
 			c->align = align;
 	} else {
@@ -4543,7 +4562,7 @@ void side_serialize_align(struct side_serialize_ctx *c, size_t align)
 		 * so the write pass accounts for it the same way it
 		 * accounts for what it records.
 		 */
-		offset += lttng_ust_ring_buffer_align(offset, align);
+		offset += lttng_ust_ring_buffer_align(c->base + offset, align);
 		if (c->seq_open && offset > c->seq_end)
 			return;
 		if (offset > c->len) {
@@ -5297,6 +5316,109 @@ const struct side_type_visitor side_serialize_type_visitor = {
 };
 
 /*
+ * Whether a field of this event is aligned against the offset it is
+ * recorded at rather than against the payload. A variant is: CTF 2
+ * gives it an alignment of one, so it does not raise the alignment of
+ * the payload, while its selected option keeps the alignment of its
+ * own type.
+ */
+static
+bool side_type_layout_is_dynamic(const struct side_type *type_desc)
+{
+	switch (side_enum_get(type_desc->type)) {
+	case SIDE_TYPE_VARIANT:
+		return true;
+	case SIDE_TYPE_STRUCT:
+	{
+		const struct side_type_struct *side_struct =
+			side_ptr_get(type_desc->u.side_struct);
+		uint32_t i, nr_fields = side_array_length(&side_struct->fields);
+
+		for (i = 0; i < nr_fields; i++) {
+			const struct side_event_field *f =
+				side_array_at(&side_struct->fields, i);
+
+			if (side_type_layout_is_dynamic(&f->side_type))
+				return true;
+		}
+		return false;
+	}
+	case SIDE_TYPE_ARRAY:
+		return side_type_layout_is_dynamic(side_ptr_get(
+			side_ptr_get(type_desc->u.side_array)->elem_type));
+	case SIDE_TYPE_VLA:
+		return side_type_layout_is_dynamic(side_ptr_get(
+			side_ptr_get(type_desc->u.side_vla)->elem_type));
+	default:
+		return false;
+	}
+}
+
+static
+bool side_event_layout_is_dynamic(const struct side_event_description *desc)
+{
+	uint32_t i, nr_fields = side_array_length(&desc->fields);
+
+	for (i = 0; i < nr_fields; i++) {
+		const struct side_event_field *f = side_array_at(&desc->fields, i);
+
+		if (side_type_layout_is_dynamic(&f->side_type))
+			return true;
+	}
+	return false;
+}
+
+/*
+ * Lay the payload out at @base, the offset within the sub-buffer it is
+ * recorded at, and answer its size. Returns -1 if it cannot be laid
+ * out. Every state the pass produces is reset here: it runs once per
+ * reservation attempt, and the attempt which takes the reservation is
+ * the last one to have run.
+ */
+static
+ssize_t side_serialize_size_pass(struct side_serialize_ctx *c, unsigned long base)
+{
+	c->write_pass = false;
+	c->fail = false;
+	c->len = 0;
+	c->written = 0;
+	c->dyn_idx = 0;
+	c->seq_open = false;
+	c->base = base;
+	c->align = side_event_alignof(c->desc);
+	type_visitor_event(&side_serialize_type_visitor, c->desc,
+		c->side_arg_vec, NULL, c->caller_addr, c);
+	if (caa_unlikely(c->fail))
+		return -1;
+	/*
+	 * The payload is aligned on the alignment of the event
+	 * description, which is what the reader of the trace derives.
+	 * A statically laid out event which records a field more
+	 * aligned than that would place it where the reader does not
+	 * expect it, so refuse it rather than write it: the alignment
+	 * of one of its types is missing from side_type_alignof(). An
+	 * event laid out against the offset it is recorded at may
+	 * record a field more aligned than its payload, which is what a
+	 * variant option does.
+	 */
+	if (caa_unlikely(!c->dynamic_layout && c->align != side_event_alignof(c->desc))) {
+		DBG("Side event %s:%s records a field more aligned than its description",
+			side_ptr_get(c->desc->provider_name),
+			side_ptr_get(c->desc->event_name));
+		return -1;
+	}
+	return (ssize_t) c->len;
+}
+
+/* Size callback of the reservation, for a dynamic layout. */
+static
+ssize_t side_serialize_get_data_size(void *priv, unsigned long payload_offset)
+{
+	return side_serialize_size_pass((struct side_serialize_ctx *) priv,
+					payload_offset);
+}
+
+/*
  * Called by side with the side RCU read-side held: the LTTng event
  * (priv) is protected against teardown by the synchronous callback
  * unregistration grace period in unregister_event().
@@ -5309,7 +5431,11 @@ void tracer_call(const struct side_event_description *desc,
 	struct lttng_ust_event_common *event = (struct lttng_ust_event_common *) priv;
 	struct lttng_ust_channel_common *chan_common;
 	struct lttng_ust_probe_ctx probe_ctx;
-	struct side_serialize_ctx c = {};
+	struct side_serialize_ctx c = {
+		.desc = desc,
+		.side_arg_vec = side_arg_vec,
+		.caller_addr = caller_addr,
+	};
 
 	if (caa_unlikely(!CMM_ACCESS_ONCE(event->enabled)))
 		return;
@@ -5336,34 +5462,32 @@ void tracer_call(const struct side_event_description *desc,
 		struct lttng_ust_channel_buffer *chan = event_recorder->chan;
 		struct lttng_ust_ring_buffer_ctx bufctx;
 
-		/* Size/alignment pass. */
-		c.write_pass = false;
-		c.len = 0;
-		c.align = side_event_alignof(desc);
 		c.chan = chan;
-		type_visitor_event(&side_serialize_type_visitor, desc,
-			side_arg_vec, NULL, caller_addr, &c);
-		if (caa_unlikely(c.fail))
-			return;
-		/*
-		 * The payload is aligned on the alignment of the event
-		 * description, which is what the reader of the trace
-		 * derives. Recording a field more aligned than that
-		 * would place it where the reader does not expect it,
-		 * so drop the event rather than write it: the
-		 * description alignment is incomplete for one of its
-		 * types.
-		 */
-		if (caa_unlikely(c.align != side_event_alignof(desc))) {
-			DBG("Side event %s:%s records a field more aligned than its description",
-				side_ptr_get(desc->provider_name),
-				side_ptr_get(desc->event_name));
-			return;
+		c.align = side_event_alignof(desc);
+		c.dynamic_layout = side_event_layout_is_dynamic(desc);
+		if (c.dynamic_layout) {
+			/*
+			 * A field of this event is aligned against the
+			 * offset it is recorded at rather than against
+			 * the payload, so its size is only known once
+			 * the reservation has that offset. The
+			 * reservation computes it, and computes it
+			 * again if it has to be retried.
+			 */
+			lttng_ust_ring_buffer_ctx_init(&bufctx, event_recorder,
+				0, c.align, &probe_ctx);
+			if (chan->ops->event_reserve_dyn(&bufctx,
+					side_serialize_get_data_size, &c) < 0)
+				return;
+		} else {
+			/* Size/alignment pass. */
+			if (side_serialize_size_pass(&c, 0) < 0)
+				return;
+			lttng_ust_ring_buffer_ctx_init(&bufctx, event_recorder,
+				c.len, c.align, &probe_ctx);
+			if (chan->ops->event_reserve(&bufctx) < 0)
+				return;
 		}
-		lttng_ust_ring_buffer_ctx_init(&bufctx, event_recorder,
-			c.len, c.align, &probe_ctx);
-		if (chan->ops->event_reserve(&bufctx) < 0)
-			return;
 		/* Write pass. c.len is now the size reserved. */
 		c.write_pass = true;
 		c.written = 0;

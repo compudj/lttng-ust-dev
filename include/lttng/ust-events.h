@@ -681,6 +681,18 @@ struct lttng_ust_channel_buffer_ops {
 			const char *src, size_t len);
 
 	/* End of base ABI. Fields below should be used after checking struct_size. */
+
+	/*
+	 * Reserve for an event whose layout is not known statically:
+	 * the size of the payload is computed by @get_data_size against
+	 * the offset the payload is recorded at, which is only known
+	 * once the reservation has taken place, and which changes if it
+	 * has to be retried. @get_data_size returns a negative value to
+	 * refuse the reservation.
+	 */
+	int (*event_reserve_dyn)(struct lttng_ust_ring_buffer_ctx *ctx,
+			ssize_t (*get_data_size)(void *priv, unsigned long payload_offset),
+			void *get_data_size_priv);
 };
 
 enum lttng_ust_channel_type {

@@ -108,7 +108,24 @@ int lib_ring_buffer_try_reserve(const struct lttng_ust_ring_buffer_config *confi
 					    before_hdr_pad, ctx, client_ctx);
 	ctx_private->slot_size +=
 		lttng_ust_ring_buffer_align(*o_begin + ctx_private->slot_size,
-				      ctx->largest_align) + ctx->data_size;
+				      ctx->largest_align);
+	if (caa_unlikely(ctx_private->get_data_size)) {
+		/*
+		 * The payload is laid out against the offset it is
+		 * recorded at, which is known now and which changes if
+		 * the reservation below has to be retried. Leave the
+		 * refusal of the reservation to the slow path.
+		 */
+		ssize_t data_size = ctx_private->get_data_size(
+			ctx_private->get_data_size_priv,
+			*o_begin + ctx_private->slot_size);
+
+		if (caa_unlikely(data_size < 0))
+			return 1;
+		ctx_private->slot_size += data_size;
+	} else {
+		ctx_private->slot_size += ctx->data_size;
+	}
 	if (caa_unlikely((subbuf_offset(*o_begin, chan) + ctx_private->slot_size)
 		     > chan->backend.subbuf_size))
 		return 1;

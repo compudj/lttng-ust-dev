@@ -843,7 +843,9 @@ void lttng_channel_destroy(struct lttng_ust_channel_buffer *lttng_chan_buf)
 }
 
 static
-int lttng_event_reserve(struct lttng_ust_ring_buffer_ctx *ctx)
+int _lttng_event_reserve(struct lttng_ust_ring_buffer_ctx *ctx,
+		ssize_t (*get_data_size)(void *priv, unsigned long payload_offset),
+		void *get_data_size_priv)
 {
 	struct lttng_ust_event_recorder *event_recorder = ctx->client_priv;
 	struct lttng_ust_channel_buffer *lttng_chan = event_recorder->chan;
@@ -865,6 +867,8 @@ int lttng_event_reserve(struct lttng_ust_ring_buffer_ctx *ctx)
 	memset(private_ctx, 0, sizeof(*private_ctx));
 	private_ctx->pub = ctx;
 	private_ctx->chan = lttng_chan->priv->rb_chan;
+	private_ctx->get_data_size = get_data_size;
+	private_ctx->get_data_size_priv = get_data_size_priv;
 
 	ctx->priv = private_ctx;
 
@@ -894,6 +898,20 @@ int lttng_event_reserve(struct lttng_ust_ring_buffer_ctx *ctx)
 put:
 	lib_ring_buffer_nesting_dec(&client_config);
 	return ret;
+}
+
+static
+int lttng_event_reserve(struct lttng_ust_ring_buffer_ctx *ctx)
+{
+	return _lttng_event_reserve(ctx, NULL, NULL);
+}
+
+static
+int lttng_event_reserve_dyn(struct lttng_ust_ring_buffer_ctx *ctx,
+		ssize_t (*get_data_size)(void *priv, unsigned long payload_offset),
+		void *get_data_size_priv)
+{
+	return _lttng_event_reserve(ctx, get_data_size, get_data_size_priv);
 }
 
 static
@@ -990,6 +1008,7 @@ static struct lttng_transport lttng_relay_transport = {
 		.event_commit = lttng_event_commit,
 		.event_write = lttng_event_write,
 		.event_strcpy = lttng_event_strcpy,
+		.event_reserve_dyn = lttng_event_reserve_dyn,
 		.event_pstrcpy_pad = lttng_event_pstrcpy_pad,
 	},
 	.client_config = &client_config,

@@ -2274,6 +2274,24 @@ bool handle_blocking_retry(int *timeout_left_ms, int step_ms)
  * -ENOBUFS if there is currently not enough space in buffer for the event.
  * -EIO if data cannot be written into the buffer for any other reason.
  */
+/*
+ * Size of the payload of the record about to be reserved, laid out
+ * against @payload_offset, the offset it is recorded at. Returns a
+ * negative value if the payload cannot be laid out, which refuses the
+ * reservation.
+ */
+static
+ssize_t lib_ring_buffer_data_size(struct lttng_ust_ring_buffer_ctx *ctx,
+		unsigned long payload_offset)
+{
+	struct lttng_ust_ring_buffer_ctx_private *ctx_private = ctx->priv;
+
+	if (caa_likely(!ctx_private->get_data_size))
+		return (ssize_t) ctx->data_size;
+	return ctx_private->get_data_size(ctx_private->get_data_size_priv,
+					payload_offset);
+}
+
 static
 int lib_ring_buffer_try_reserve_slow(struct lttng_ust_ring_buffer *buf,
 				     struct lttng_ust_ring_buffer_channel *chan,
@@ -2306,14 +2324,20 @@ retry:
 	if (caa_unlikely(subbuf_offset(offsets->begin, chan) == 0)) {
 		offsets->switch_new_start = 1;		/* For offsets->begin */
 	} else {
+		ssize_t data_size;
+
 		offsets->size = config->cb.record_header_size(config, chan,
 						offsets->begin,
 						&offsets->pre_header_padding,
 						ctx, client_ctx);
 		offsets->size +=
 			lttng_ust_ring_buffer_align(offsets->begin + offsets->size,
-					     ctx->largest_align)
-			+ ctx->data_size;
+					     ctx->largest_align);
+		data_size = lib_ring_buffer_data_size(ctx,
+					offsets->begin + offsets->size);
+		if (caa_unlikely(data_size < 0))
+			return -EINVAL;
+		offsets->size += data_size;
 		if (caa_unlikely(subbuf_offset(offsets->begin, chan) +
 			     offsets->size > chan->backend.subbuf_size)) {
 			offsets->switch_old_end = 1;	/* For offsets->old */
@@ -2419,6 +2443,8 @@ retry:
 			}
 			return -EIO;
 		}
+		ssize_t data_size;
+
 		offsets->size =
 			config->cb.record_header_size(config, chan,
 						offsets->begin,
@@ -2426,8 +2452,12 @@ retry:
 						ctx, client_ctx);
 		offsets->size +=
 			lttng_ust_ring_buffer_align(offsets->begin + offsets->size,
-					      ctx->largest_align)
-			+ ctx->data_size;
+					      ctx->largest_align);
+		data_size = lib_ring_buffer_data_size(ctx,
+					offsets->begin + offsets->size);
+		if (caa_unlikely(data_size < 0))
+			return -EINVAL;
+		offsets->size += data_size;
 		if (caa_unlikely(subbuf_offset(offsets->begin, chan)
 			     + offsets->size > chan->backend.subbuf_size)) {
 			unsigned long nr_lost;

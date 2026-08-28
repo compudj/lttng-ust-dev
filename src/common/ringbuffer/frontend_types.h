@@ -258,6 +258,22 @@ struct lttng_ust_ring_buffer_ctx_private {
 						 */
 	uint64_t timestamp;			/* time-stamp counter value */
 	unsigned int rflags;			/* reservation flags */
+	/*
+	 * Size of the payload, computed against the offset at which the
+	 * payload is about to be recorded, for an event whose layout is
+	 * not known statically. NULL for every other event, which
+	 * carries its size in the public context. Returns a negative
+	 * value to refuse the reservation.
+	 *
+	 * This lives in the private context rather than in the public
+	 * one because the public context is allocated by the probe,
+	 * which may have been built against an older version of
+	 * lttng-ust: a field added to it can only be read after
+	 * checking its struct_size. The private context is allocated by
+	 * the client, within lttng-ust, so it has no such constraint.
+	 */
+	ssize_t (*get_data_size)(void *priv, unsigned long payload_offset);
+	void *get_data_size_priv;
 	struct lttng_ust_ring_buffer *buf;	/*
 						 * buffer corresponding to processor id
 						 * for this channel
