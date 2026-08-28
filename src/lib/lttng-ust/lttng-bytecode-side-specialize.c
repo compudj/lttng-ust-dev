@@ -567,6 +567,9 @@ static int specialize_side_load_object(const struct side_type *side_type,
 		load->object_type = OBJECT_TYPE_DOUBLE;
 		load->rev_bo = side_float_rev_bo(&side_type->u.side_gather.u.side_float.type);
 		break;
+	case SIDE_TYPE_GATHER_STRING:
+		load->object_type = OBJECT_TYPE_STRING;
+		break;
 	case SIDE_TYPE_GATHER_ENUM:
 	{
 		const struct side_type *container =

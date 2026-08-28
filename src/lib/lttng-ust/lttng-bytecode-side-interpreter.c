@@ -557,6 +557,30 @@ static int side_gather_load_field_integer(const struct side_type *side_type,
 	return 0;
 }
 
+/*
+ * Same, for a string: what a gathered string reads from memory is the
+ * string itself, at the address the access resolves to.
+ */
+static int side_gather_load_field_string(const struct side_type *side_type,
+		const struct side_arg *item, const char **str)
+{
+	const struct side_type_gather_string *t;
+	const char *ptr;
+
+	if (!side_type || side_enum_get(side_type->type) != SIDE_TYPE_GATHER_STRING)
+		return -ENOENT;
+	t = &side_type->u.side_gather.u.side_string;
+	if (t->type.unit_size != 1)
+		return -EINVAL;
+	ptr = side_gather_access(side_enum_get(t->access_mode),
+		(const char *) side_ptr_get(item->u.side_static.side_string_gather_ptr)
+			+ t->offset);
+	if (!ptr)
+		return -EINVAL;
+	*str = ptr;
+	return 0;
+}
+
 /* Same, for the types which compare as a double. */
 static int side_gather_load_field_double(const struct side_type *side_type,
 		const struct side_arg *item, bool rev_bo, double *d)
@@ -868,7 +892,10 @@ static int side_arg_dynamic_load_field(struct estack_entry *stack_top)
 	{
 		const char *str;
 
-		ret = side_arg_load_string(item, &str);
+		ret = side_gather_load_field_string(stack_top->u.ptr.side_type,
+				item, &str);
+		if (ret == -ENOENT)
+			ret = side_arg_load_string(item, &str);
 		if (ret)
 			return ret;
 		if (unlikely(!str)) {
@@ -2532,8 +2559,13 @@ int lttng_bytecode_interpret_side(struct lttng_ust_bytecode_runtime *ust_bytecod
 				goto end;
 			}
 			estack_push(stack, top, ax, bx, ax_t, bx_t);
-			ret = side_arg_load_string(
+			ret = side_gather_load_field_string(
+				lttng_bytecode_side_field_type(bytecode->side_desc,
+					ref->offset),
 				&side_ptr_get(sav->sav)[ref->offset], &str);
+			if (ret == -ENOENT)
+				ret = side_arg_load_string(
+					&side_ptr_get(sav->sav)[ref->offset], &str);
 			if (unlikely(ret))
 				goto end;
 			if (unlikely(!str)) {

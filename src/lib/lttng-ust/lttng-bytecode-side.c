@@ -203,6 +203,9 @@ int apply_field_reloc_side(const struct lttng_ust_event_desc *event_desc,
 		case SIDE_TYPE_GATHER_FLOAT:
 			op->op = BYTECODE_OP_LOAD_FIELD_REF_DOUBLE;
 			break;
+		case SIDE_TYPE_GATHER_STRING:
+			op->op = BYTECODE_OP_LOAD_FIELD_REF_STRING;
+			break;
 		default:
 			/*
 			 * Compound types cannot be loaded as a value.
