@@ -784,24 +784,29 @@ int ustcomm_send_reg_msg(const struct ustcomm_sock *sock,
 }
 
 static
+ssize_t count_one_type(const struct lttng_ust_type_common *lt);
+
+static
 ssize_t count_one_type(const struct lttng_ust_type_common *lt)
 {
+	unsigned int nr_type_attr = lttng_ust_nr_attributes(lttng_ust_type_attributes(lt));
+
 	switch (lt->type) {
 	case lttng_ust_type_integer:
 	case lttng_ust_type_float:
 	case lttng_ust_type_string:
 	case lttng_ust_type_fixed_length_blob:
 	case lttng_ust_type_variable_length_blob:
-		return 1;
+		return 1 + nr_type_attr;
 	case lttng_ust_type_enum:
-		return count_one_type(lttng_ust_get_type_enum(lt)->container_type) + 1;
+		return count_one_type(lttng_ust_get_type_enum(lt)->container_type) + 1 + nr_type_attr;
 	case lttng_ust_type_array:
-		return count_one_type(lttng_ust_get_type_array(lt)->elem_type) + 1;
+		return count_one_type(lttng_ust_get_type_array(lt)->elem_type) + 1 + nr_type_attr;
 	case lttng_ust_type_sequence:
-		return count_one_type(lttng_ust_get_type_sequence(lt)->elem_type) + 1;
+		return count_one_type(lttng_ust_get_type_sequence(lt)->elem_type) + 1 + nr_type_attr;
 	case lttng_ust_type_struct:
 		return count_fields_recursive(lttng_ust_get_type_struct(lt)->nr_fields,
-				lttng_ust_get_type_struct(lt)->fields) + 1;
+				lttng_ust_get_type_struct(lt)->fields) + 1 + nr_type_attr;
 
 	case lttng_ust_type_dynamic:
 	{
@@ -843,7 +848,7 @@ ssize_t count_fields_recursive(size_t nr_fields,
 		ret = count_one_type(lf->type);
 		if (ret < 0)
 			return ret;	/* error */
-		count += ret;
+		count += ret + lttng_ust_nr_attributes(lttng_ust_field_attributes(lf));
 	}
 	return count;
 }
@@ -968,12 +973,85 @@ int serialize_dynamic_type(struct lttng_ust_session *session,
 }
 
 static
+int serialize_one_attribute(struct lttng_ust_ctl_field *fields, size_t *iter_output,
+		const struct lttng_ust_attribute *attr)
+{
+	struct lttng_ust_ctl_field *uf;
+	struct lttng_ust_ctl_type *ut;
+
+	if (!attr || attr->struct_size < sizeof(*attr) || !attr->name)
+		return -EINVAL;
+	uf = &fields[*iter_output];
+	ut = &uf->type;
+	strncpy(uf->name, attr->name, LTTNG_UST_ABI_SYM_NAME_LEN);
+	uf->name[LTTNG_UST_ABI_SYM_NAME_LEN - 1] = '\0';
+	ut->atype = lttng_ust_ctl_atype_attribute;
+	if (attr->ns) {
+		strncpy(ut->u.attribute.ns, attr->ns, LTTNG_UST_ABI_SYM_NAME_LEN);
+		ut->u.attribute.ns[LTTNG_UST_ABI_SYM_NAME_LEN - 1] = '\0';
+	} else {
+		ut->u.attribute.ns[0] = '\0';
+	}
+	switch (attr->type) {
+	case LTTNG_UST_ATTRIBUTE_TYPE_BOOL:
+		ut->u.attribute.value_type = lttng_ust_ctl_attribute_value_bool;
+		ut->u.attribute.value.bool_value = attr->u.bool_value;
+		break;
+	case LTTNG_UST_ATTRIBUTE_TYPE_S64:
+		ut->u.attribute.value_type = lttng_ust_ctl_attribute_value_s64;
+		ut->u.attribute.value.s64_value = attr->u.s64_value;
+		break;
+	case LTTNG_UST_ATTRIBUTE_TYPE_U64:
+		ut->u.attribute.value_type = lttng_ust_ctl_attribute_value_u64;
+		ut->u.attribute.value.u64_value = attr->u.u64_value;
+		break;
+	case LTTNG_UST_ATTRIBUTE_TYPE_DOUBLE:
+		ut->u.attribute.value_type = lttng_ust_ctl_attribute_value_double;
+		ut->u.attribute.value.double_value = attr->u.double_value;
+		break;
+	case LTTNG_UST_ATTRIBUTE_TYPE_STRING:
+		if (!attr->u.string_value)
+			return -EINVAL;
+		ut->u.attribute.value_type = lttng_ust_ctl_attribute_value_string;
+		strncpy(ut->u.attribute.value.string_value, attr->u.string_value,
+			LTTNG_UST_ABI_SYM_NAME_LEN);
+		ut->u.attribute.value.string_value[LTTNG_UST_ABI_SYM_NAME_LEN - 1] = '\0';
+		break;
+	default:
+		return -EINVAL;
+	}
+	(*iter_output)++;
+	return 0;
+}
+
+static
+int serialize_attributes(struct lttng_ust_ctl_field *fields, size_t *iter_output,
+		const struct lttng_ust_attributes *attributes)
+{
+	unsigned int i;
+
+	if (!attributes)
+		return 0;
+	for (i = 0; i < attributes->nr_attributes; i++) {
+		int ret;
+
+		ret = serialize_one_attribute(fields, iter_output,
+				attributes->attributes[i]);
+		if (ret)
+			return ret;
+	}
+	return 0;
+}
+
+static
 int serialize_one_type(struct lttng_ust_session *session,
 		struct lttng_ust_ctl_field *fields, size_t *iter_output,
 		const char *field_name, const struct lttng_ust_type_common *lt,
 		enum lttng_ust_string_encoding parent_encoding,
 		const char *prev_field_name)
 {
+	const struct lttng_ust_attributes *type_attributes = lttng_ust_type_attributes(lt);
+	size_t entry_index = *iter_output;
 	int ret;
 
 	/*
@@ -1227,6 +1305,14 @@ int serialize_one_type(struct lttng_ust_session *session,
 	default:
 		return -EINVAL;
 	}
+	/*
+	 * The attributes of the type follow the type and the types
+	 * nested within it.
+	 */
+	fields[entry_index].nr_type_attributes = lttng_ust_nr_attributes(type_attributes);
+	ret = serialize_attributes(fields, iter_output, type_attributes);
+	if (ret)
+		return ret;
 	return 0;
 }
 
@@ -1236,7 +1322,9 @@ int serialize_one_field(struct lttng_ust_session *session,
 		const struct lttng_ust_event_field *lf,
 		const char **prev_field_name_p)
 {
+	const struct lttng_ust_attributes *field_attributes;
 	const char *prev_field_name = NULL;
+	size_t entry_index;
 	int ret;
 
 	/* skip 'nowrite' fields */
@@ -1245,11 +1333,20 @@ int serialize_one_field(struct lttng_ust_session *session,
 
 	if (prev_field_name_p)
 		prev_field_name = *prev_field_name_p;
+	entry_index = *iter_output;
 	ret = serialize_one_type(session, fields, iter_output, lf->name, lf->type,
 			lttng_ust_string_encoding_none, prev_field_name);
 	if (prev_field_name_p)
 		*prev_field_name_p = lf->name;
-	return ret;
+	if (ret)
+		return ret;
+	/*
+	 * The attributes of the field follow the attributes of its
+	 * type.
+	 */
+	field_attributes = lttng_ust_field_attributes(lf);
+	fields[entry_index].nr_field_attributes = lttng_ust_nr_attributes(field_attributes);
+	return serialize_attributes(fields, iter_output, field_attributes);
 }
 
 static
@@ -1277,7 +1374,8 @@ int alloc_serialize_fields(struct lttng_ust_session *session,
 		size_t *_nr_write_fields,
 		struct lttng_ust_ctl_field **lttng_ust_ctl_fields,
 		size_t nr_fields,
-		const struct lttng_ust_event_field * const *lttng_fields)
+		const struct lttng_ust_event_field * const *lttng_fields,
+		const struct lttng_ust_attributes *event_attributes)
 {
 	struct lttng_ust_ctl_field *fields;
 	int ret;
@@ -1288,6 +1386,7 @@ int alloc_serialize_fields(struct lttng_ust_session *session,
 	if (nr_write_fields < 0) {
 		return (int) nr_write_fields;
 	}
+	nr_write_fields += lttng_ust_nr_attributes(event_attributes);
 
 	fields = zmalloc(nr_write_fields * sizeof(*fields));
 	if (!fields)
@@ -1295,6 +1394,10 @@ int alloc_serialize_fields(struct lttng_ust_session *session,
 
 	ret = serialize_fields(session, fields, &iter_output, nr_fields,
 			lttng_fields);
+	if (ret)
+		goto error_type;
+	/* The attributes of the event follow its fields. */
+	ret = serialize_attributes(fields, &iter_output, event_attributes);
 	if (ret)
 		goto error_type;
 
@@ -1394,6 +1497,7 @@ int ustcomm_register_event(const struct ustcomm_sock *sock,
 	size_t nr_fields,		/* fields */
 	const struct lttng_ust_event_field * const *lttng_fields,
 	const char *model_emf_uri,
+	const struct lttng_ust_attributes *event_attributes,
 	uint64_t user_token,
 	uint32_t *id)			/* event id (output) */
 {
@@ -1422,10 +1526,12 @@ int ustcomm_register_event(const struct ustcomm_sock *sock,
 	signature_len = strlen(signature) + 1;
 	msg.m.signature_len = signature_len;
 
+	msg.m.nr_event_attributes = lttng_ust_nr_attributes(event_attributes);
+
 	/* Calculate fields len, serialize fields. */
-	if (nr_fields > 0) {
+	if (nr_fields > 0 || msg.m.nr_event_attributes) {
 		ret = alloc_serialize_fields(session, &nr_write_fields, &fields,
-				nr_fields, lttng_fields);
+				nr_fields, lttng_fields, event_attributes);
 		if (ret)
 			return ret;
 	}

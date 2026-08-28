@@ -106,6 +106,53 @@ struct lttng_ust_enum_entry {
 };
 
 /*
+ * Attribute of an event, of a field, or of a type.
+ *
+ * An attribute is a name/value pair within a namespace. It carries
+ * information which is not needed to decode the trace: it is exported
+ * as-is to the trace metadata. The namespace is an empty string when
+ * the attribute does not belong to one.
+ *
+ * IMPORTANT: this structure is part of the ABI between the probe and
+ * UST. Fields need to be only added at the end, never reordered, never
+ * removed.
+ */
+
+enum lttng_ust_attribute_type {
+	LTTNG_UST_ATTRIBUTE_TYPE_BOOL,
+	LTTNG_UST_ATTRIBUTE_TYPE_S64,
+	LTTNG_UST_ATTRIBUTE_TYPE_U64,
+	LTTNG_UST_ATTRIBUTE_TYPE_DOUBLE,
+	LTTNG_UST_ATTRIBUTE_TYPE_STRING,
+};
+
+struct lttng_ust_attribute {
+	uint32_t struct_size;
+
+	const char *ns;			/* Namespace, empty string if none. */
+	const char *name;
+	enum lttng_ust_attribute_type type;
+	union {
+		uint8_t bool_value;
+		int64_t s64_value;
+		uint64_t u64_value;
+		double double_value;
+		const char *string_value;
+	} u;
+
+	/* End of base ABI. Fields below should be used after checking struct_size. */
+};
+
+/*
+ * Set of attributes, embedded by the descriptions which can carry
+ * attributes.
+ */
+struct lttng_ust_attributes {
+	unsigned int nr_attributes;
+	const struct lttng_ust_attribute * const *attributes;
+};
+
+/*
  * struct lttng_ust_type_common is fixed-size. Its children inherits
  * from it by embedding struct lttng_ust_type_common as its first field.
  */
@@ -121,6 +168,11 @@ struct lttng_ust_type_integer {
 	unsigned int signedness:1;
 	unsigned int reverse_byte_order:1;
 	unsigned int base;		/* 2, 8, 10, 16, for pretty print */
+	/*
+	 * Attributes of the type, NULL if none. Only valid when
+	 * struct_size is large enough to hold this field.
+	 */
+	const struct lttng_ust_attributes *attributes;
 };
 
 #define lttng_ust_type_integer_define(_type, _byte_order, _base)	\
@@ -143,6 +195,11 @@ struct lttng_ust_type_float {
 	unsigned int mant_dig;		/* mantissa digits, in bits */
 	unsigned short alignment;	/* in bits */
 	unsigned int reverse_byte_order:1;
+	/*
+	 * Attributes of the type, NULL if none. Only valid when
+	 * struct_size is large enough to hold this field.
+	 */
+	const struct lttng_ust_attributes *attributes;
 };
 
 /*
@@ -172,6 +229,11 @@ struct lttng_ust_type_string {
 	struct lttng_ust_type_common parent;
 	uint32_t struct_size;
 	enum lttng_ust_string_encoding encoding;
+	/*
+	 * Attributes of the type, NULL if none. Only valid when
+	 * struct_size is large enough to hold this field.
+	 */
+	const struct lttng_ust_attributes *attributes;
 };
 
 struct lttng_ust_type_enum {
@@ -179,6 +241,11 @@ struct lttng_ust_type_enum {
 	uint32_t struct_size;
 	const struct lttng_ust_enum_desc *desc;	/* Enumeration mapping */
 	const struct lttng_ust_type_common *container_type;
+	/*
+	 * Attributes of the type, NULL if none. Only valid when
+	 * struct_size is large enough to hold this field.
+	 */
+	const struct lttng_ust_attributes *attributes;
 };
 
 /*
@@ -195,6 +262,11 @@ struct lttng_ust_type_array {
 	unsigned int length;		/* Num. elems. */
 	unsigned int alignment;		/* Minimum alignment for this type. */
 	enum lttng_ust_string_encoding encoding;
+	/*
+	 * Attributes of the type, NULL if none. Only valid when
+	 * struct_size is large enough to hold this field.
+	 */
+	const struct lttng_ust_attributes *attributes;
 };
 
 struct lttng_ust_type_sequence {
@@ -204,6 +276,11 @@ struct lttng_ust_type_sequence {
 	const struct lttng_ust_type_common *elem_type;
 	unsigned int alignment;		/* Minimum alignment before elements. */
 	enum lttng_ust_string_encoding encoding;
+	/*
+	 * Attributes of the type, NULL if none. Only valid when
+	 * struct_size is large enough to hold this field.
+	 */
+	const struct lttng_ust_attributes *attributes;
 };
 
 struct lttng_ust_type_struct {
@@ -212,6 +289,11 @@ struct lttng_ust_type_struct {
 	unsigned int nr_fields;
 	const struct lttng_ust_event_field * const *fields;	/* Array of pointers to fields. */
 	unsigned int alignment;					/* Minimum alignment for this type. */
+	/*
+	 * Attributes of the type, NULL if none. Only valid when
+	 * struct_size is large enough to hold this field.
+	 */
+	const struct lttng_ust_attributes *attributes;
 };
 
 struct lttng_ust_type_fixed_length_blob {
@@ -219,6 +301,11 @@ struct lttng_ust_type_fixed_length_blob {
 	uint32_t struct_size;
 	unsigned long length;		/* Num. elems. */
 	const char *media_type;		/* Media type, NULL if none. */
+	/*
+	 * Attributes of the type, NULL if none. Only valid when
+	 * struct_size is large enough to hold this field.
+	 */
+	const struct lttng_ust_attributes *attributes;
 };
 
 struct lttng_ust_type_variable_length_blob {
@@ -226,6 +313,11 @@ struct lttng_ust_type_variable_length_blob {
 	uint32_t struct_size;
 	const char *length_name;	/* Length field name. If NULL, use previous field. */
 	const char *media_type;		/* Media type, NULL if none. */
+	/*
+	 * Attributes of the type, NULL if none. Only valid when
+	 * struct_size is large enough to hold this field.
+	 */
+	const struct lttng_ust_attributes *attributes;
 };
 
 /*
@@ -272,6 +364,8 @@ struct lttng_ust_event_field {
 		nofilter:1;		/* do not consider for filter */
 
 	/* End of base ABI. Fields below should be used after checking struct_size. */
+
+	const struct lttng_ust_attributes *attributes;	/* NULL if none. */
 };
 
 /*
@@ -317,6 +411,8 @@ struct lttng_ust_event_desc {
 	const char **model_emf_uri;
 
 	/* End of base ABI. Fields below should be used after checking struct_size. */
+
+	const struct lttng_ust_attributes *attributes;	/* NULL if none. */
 };
 
 /*

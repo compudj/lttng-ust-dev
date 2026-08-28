@@ -594,6 +594,124 @@ const struct lttng_ust_type_variable_length_blob *lttng_ust_get_type_variable_le
 	return caa_container_of(type, const struct lttng_ust_type_variable_length_blob, parent);
 }
 
+/*
+ * Attributes are only present in the descriptions which are large
+ * enough to hold them: a probe built against an older ABI has none.
+ */
+static inline
+const struct lttng_ust_attributes *lttng_ust_type_attributes(
+		const struct lttng_ust_type_common *lt)
+{
+	switch (lt->type) {
+	case lttng_ust_type_integer:
+	{
+		const struct lttng_ust_type_integer *t = lttng_ust_get_type_integer(lt);
+
+		if (t->struct_size < sizeof(*t))
+			return NULL;
+		return t->attributes;
+	}
+	case lttng_ust_type_float:
+	{
+		const struct lttng_ust_type_float *t = lttng_ust_get_type_float(lt);
+
+		if (t->struct_size < sizeof(*t))
+			return NULL;
+		return t->attributes;
+	}
+	case lttng_ust_type_string:
+	{
+		const struct lttng_ust_type_string *t = lttng_ust_get_type_string(lt);
+
+		if (t->struct_size < sizeof(*t))
+			return NULL;
+		return t->attributes;
+	}
+	case lttng_ust_type_enum:
+	{
+		const struct lttng_ust_type_enum *t = lttng_ust_get_type_enum(lt);
+
+		if (t->struct_size < sizeof(*t))
+			return NULL;
+		return t->attributes;
+	}
+	case lttng_ust_type_array:
+	{
+		const struct lttng_ust_type_array *t = lttng_ust_get_type_array(lt);
+
+		if (t->struct_size < sizeof(*t))
+			return NULL;
+		return t->attributes;
+	}
+	case lttng_ust_type_sequence:
+	{
+		const struct lttng_ust_type_sequence *t = lttng_ust_get_type_sequence(lt);
+
+		if (t->struct_size < sizeof(*t))
+			return NULL;
+		return t->attributes;
+	}
+	case lttng_ust_type_struct:
+	{
+		const struct lttng_ust_type_struct *t = lttng_ust_get_type_struct(lt);
+
+		if (t->struct_size < sizeof(*t))
+			return NULL;
+		return t->attributes;
+	}
+	case lttng_ust_type_fixed_length_blob:
+	{
+		const struct lttng_ust_type_fixed_length_blob *t =
+			lttng_ust_get_type_fixed_length_blob(lt);
+
+		if (t->struct_size < sizeof(*t))
+			return NULL;
+		return t->attributes;
+	}
+	case lttng_ust_type_variable_length_blob:
+	{
+		const struct lttng_ust_type_variable_length_blob *t =
+			lttng_ust_get_type_variable_length_blob(lt);
+
+		if (t->struct_size < sizeof(*t))
+			return NULL;
+		return t->attributes;
+	}
+	default:
+		return NULL;
+	}
+}
+
+static inline
+const struct lttng_ust_attributes *lttng_ust_field_attributes(
+		const struct lttng_ust_event_field *lf)
+{
+	if (lf->struct_size < sizeof(*lf))
+		return NULL;
+	return lf->attributes;
+}
+
+static inline
+unsigned int lttng_ust_nr_attributes(const struct lttng_ust_attributes *attributes)
+{
+	if (!attributes)
+		return 0;
+	return attributes->nr_attributes;
+}
+
+/*
+ * Attributes of an event description, NULL if none. A probe built
+ * against an older ABI does not have any.
+ */
+static inline
+const struct lttng_ust_attributes *lttng_ust_event_desc_attributes(
+		const struct lttng_ust_event_desc *desc)
+{
+	if (desc->struct_size < sizeof(*desc))
+		return NULL;
+	return desc->attributes;
+}
+
 #define lttng_ust_static_type_integer(_size, _alignment, _signedness, _byte_order, _base)		\
 	((const struct lttng_ust_type_common *) LTTNG_UST_COMPOUND_LITERAL(const struct lttng_ust_type_integer, { \
 		.parent = {										\

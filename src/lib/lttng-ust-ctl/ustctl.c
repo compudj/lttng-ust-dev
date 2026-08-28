@@ -3931,6 +3931,7 @@ int lttng_ust_ctl_recv_register_event(int sock,
 	size_t *nr_fields,
 	struct lttng_ust_ctl_field **fields,
 	char **model_emf_uri,
+	size_t *nr_event_attributes,
 	uint64_t *user_token)
 {
 	const struct ustcomm_sock usock = {
@@ -4034,6 +4035,11 @@ int lttng_ust_ctl_recv_register_event(int sock,
 	*nr_fields = fields_len / sizeof(*a_fields);
 	*fields = a_fields;
 	*model_emf_uri = a_model_emf_uri;
+	*nr_event_attributes = msg.nr_event_attributes;
+	if (*nr_event_attributes > *nr_fields) {
+		len = -EINVAL;
+		goto model_error;
+	}
 
 	return 0;
 

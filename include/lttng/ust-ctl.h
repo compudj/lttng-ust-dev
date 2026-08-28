@@ -558,7 +558,17 @@ enum lttng_ust_ctl_abstract_types {
 	lttng_ust_ctl_atype_variant_nestable,
 	lttng_ust_ctl_atype_fixed_length_blob,
 	lttng_ust_ctl_atype_variable_length_blob,
+	lttng_ust_ctl_atype_attribute,
 	NR_LTTNG_UST_CTL_ABSTRACT_TYPES,
+};
+
+/* Value type of an attribute. */
+enum lttng_ust_ctl_attribute_value_type {
+	lttng_ust_ctl_attribute_value_bool,
+	lttng_ust_ctl_attribute_value_s64,
+	lttng_ust_ctl_attribute_value_u64,
+	lttng_ust_ctl_attribute_value_double,
+	lttng_ust_ctl_attribute_value_string,
 };
 
 enum lttng_ust_ctl_string_encodings {
@@ -682,6 +692,21 @@ struct lttng_ust_ctl_type {
 			char length_name[LTTNG_UST_ABI_SYM_NAME_LEN];
 			char media_type[LTTNG_UST_ABI_SYM_NAME_LEN];
 		} variable_length_blob;
+		/*
+		 * The name of the attribute is the name of the enclosing
+		 * struct lttng_ust_ctl_field.
+		 */
+		struct {
+			char ns[LTTNG_UST_ABI_SYM_NAME_LEN];	/* Empty if none. */
+			uint32_t value_type;	/* enum lttng_ust_ctl_attribute_value_type */
+			union {
+				uint8_t bool_value;
+				int64_t s64_value;
+				uint64_t u64_value;
+				double double_value;
+				char string_value[LTTNG_UST_ABI_SYM_NAME_LEN];
+			} value;
+		} attribute;
 
 		/* Legacy ABI */
 		union {
@@ -708,10 +733,18 @@ struct lttng_ust_ctl_type {
 	} u;
 } __attribute__((packed));
 
-#define LTTNG_UST_CTL_UST_FIELD_PADDING	28
+#define LTTNG_UST_CTL_UST_FIELD_PADDING	20
 struct lttng_ust_ctl_field {
 	char name[LTTNG_UST_ABI_SYM_NAME_LEN];
 	struct lttng_ust_ctl_type type;
+	/*
+	 * Attributes of this field and of its type are the
+	 * lttng_ust_ctl_atype_attribute fields which follow this field,
+	 * the attributes of the field first. They precede the fields
+	 * which describe nested types.
+	 */
+	uint32_t nr_field_attributes;
+	uint32_t nr_type_attributes;
 	char padding[LTTNG_UST_CTL_UST_FIELD_PADDING];
 } __attribute__((packed));
 
@@ -767,6 +800,11 @@ int lttng_ust_ctl_recv_register_event(int sock,
 	size_t *nr_fields,
 	struct lttng_ust_ctl_field **fields,
 	char **model_emf_uri,
+	size_t *nr_event_attributes,	/*
+					 * Number of trailing fields which
+					 * are the attributes of the event
+					 * rather than its payload (output).
+					 */
 	uint64_t *user_token);
 
 /*

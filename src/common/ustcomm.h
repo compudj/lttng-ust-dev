@@ -22,6 +22,8 @@
 #include <lttng/ust-compiler.h>
 #include <lttng/ust-ctl.h>
 
+struct lttng_ust_attributes;
+
 /*
  * Default timeout the application waits for the sessiond to send its
  * "register done" command. Can be overridden with the environment
@@ -140,6 +142,12 @@ struct ustcomm_notify_event_msg {
 			uint32_t fields_len;
 			uint32_t model_emf_uri_len;
 			uint64_t user_token;
+			/*
+			 * Number of lttng_ust_ctl_atype_attribute fields, at
+			 * the end of the fields, which are the attributes of
+			 * the event rather than its payload.
+			 */
+			uint32_t nr_event_attributes;
 		} __attribute__((packed));
 	};
 	/* followed by signature, fields, and model_emf_uri */
@@ -394,6 +402,7 @@ int ustcomm_register_event(const struct ustcomm_sock *sock,
 	size_t nr_fields,		/* fields */
 	const struct lttng_ust_event_field * const *fields,
 	const char *model_emf_uri,
+	const struct lttng_ust_attributes *event_attributes,
 	uint64_t user_token,
 	uint32_t *id)			/* (output) */
 	__attribute__((visibility("hidden")));

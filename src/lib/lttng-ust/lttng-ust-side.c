@@ -26,6 +26,7 @@
 #include <urcu/compiler.h>
 #include <lttng/urcu/urcu-ust.h>
 
+#include "common/events.h"
 #include "common/macros.h"
 #include "common/logging.h"
 #include "lttng-tracer-core.h"
@@ -2548,6 +2549,201 @@ size_t side_integer_alignof(uint16_t integer_size)
 	}
 }
 
+/*
+ * Translate the attributes of a side event or type into LTTng
+ * attributes. A side attribute key is a namespaced name: the namespace
+ * is what precedes its last separator, and is empty when the key does
+ * not have one. The attribute named @skip_key, if any, is left out: it
+ * is described by the type itself rather than as an attribute.
+ */
+static
+void side_translate_attributes_destroy(const struct lttng_ust_attributes *attributes)
+{
+	unsigned int i;
+
+	if (!attributes)
+		return;
+	for (i = 0; i < attributes->nr_attributes; i++) {
+		const struct lttng_ust_attribute *attr = attributes->attributes[i];
+
+		if (!attr)
+			continue;
+		free((void *) attr->ns);
+		free((void *) attr->name);
+		if (attr->type == LTTNG_UST_ATTRIBUTE_TYPE_STRING)
+			free((void *) attr->u.string_value);
+		free((void *) attr);
+	}
+	free((void *) attributes->attributes);
+	free((void *) attributes);
+}
+
+static
+int side_translate_attribute_value(struct lttng_ust_attribute *attr,
+		const struct side_attr_value *value)
+{
+	switch (side_enum_get(value->type)) {
+	case SIDE_ATTR_TYPE_BOOL:
+		attr->type = LTTNG_UST_ATTRIBUTE_TYPE_BOOL;
+		attr->u.bool_value = !!value->u.bool_value;
+		break;
+	case SIDE_ATTR_TYPE_U8:
+		attr->type = LTTNG_UST_ATTRIBUTE_TYPE_U64;
+		attr->u.u64_value = value->u.integer_value.side_u8;
+		break;
+	case SIDE_ATTR_TYPE_U16:
+		attr->type = LTTNG_UST_ATTRIBUTE_TYPE_U64;
+		attr->u.u64_value = value->u.integer_value.side_u16;
+		break;
+	case SIDE_ATTR_TYPE_U32:
+		attr->type = LTTNG_UST_ATTRIBUTE_TYPE_U64;
+		attr->u.u64_value = value->u.integer_value.side_u32;
+		break;
+	case SIDE_ATTR_TYPE_U64:
+		attr->type = LTTNG_UST_ATTRIBUTE_TYPE_U64;
+		attr->u.u64_value = value->u.integer_value.side_u64;
+		break;
+	case SIDE_ATTR_TYPE_S8:
+		attr->type = LTTNG_UST_ATTRIBUTE_TYPE_S64;
+		attr->u.s64_value = value->u.integer_value.side_s8;
+		break;
+	case SIDE_ATTR_TYPE_S16:
+		attr->type = LTTNG_UST_ATTRIBUTE_TYPE_S64;
+		attr->u.s64_value = value->u.integer_value.side_s16;
+		break;
+	case SIDE_ATTR_TYPE_S32:
+		attr->type = LTTNG_UST_ATTRIBUTE_TYPE_S64;
+		attr->u.s64_value = value->u.integer_value.side_s32;
+		break;
+	case SIDE_ATTR_TYPE_S64:
+		attr->type = LTTNG_UST_ATTRIBUTE_TYPE_S64;
+		attr->u.s64_value = value->u.integer_value.side_s64;
+		break;
+#if __HAVE_FLOAT32
+	case SIDE_ATTR_TYPE_FLOAT_BINARY32:
+		attr->type = LTTNG_UST_ATTRIBUTE_TYPE_DOUBLE;
+		attr->u.double_value = value->u.float_value.side_float_binary32;
+		break;
+#endif
+#if __HAVE_FLOAT64
+	case SIDE_ATTR_TYPE_FLOAT_BINARY64:
+		attr->type = LTTNG_UST_ATTRIBUTE_TYPE_DOUBLE;
+		attr->u.double_value = value->u.float_value.side_float_binary64;
+		break;
+#endif
+	case SIDE_ATTR_TYPE_STRING:
+	{
+		char *str;
+
+		if (value->u.string_value.unit_size != 1)
+			return -1;
+		str = strdup((const char *) side_ptr_get(value->u.string_value.p));
+		if (!str)
+			return -1;
+		attr->type = LTTNG_UST_ATTRIBUTE_TYPE_STRING;
+		attr->u.string_value = str;
+		break;
+	}
+	default:
+		return -1;
+	}
+	return 0;
+}
+
+static
+const struct lttng_ust_attributes *side_translate_attributes(
+		const struct side_attr *_attr, uint32_t nr_attr,
+		const char *skip_key)
+{
+	const struct lttng_ust_attribute **entries = NULL;
+	struct lttng_ust_attributes *attributes = NULL;
+	unsigned int nr_entries = 0;
+	uint32_t i;
+
+	if (!nr_attr)
+		return NULL;
+	entries = zmalloc(nr_attr * sizeof(*entries));
+	if (!entries)
+		return NULL;
+	for (i = 0; i < nr_attr; i++) {
+		const struct side_attr *sattr = &_attr[i];
+		struct lttng_ust_attribute *attr;
+		char *utf8_key = NULL, *ns, *name;
+		const char *sep;
+
+		tracer_convert_string_to_utf8(side_ptr_get(sattr->key.p),
+			sattr->key.unit_size, side_enum_get(sattr->key.byte_order),
+			NULL, &utf8_key);
+		if (!utf8_key)
+			goto error;
+		if (skip_key && !strcmp(utf8_key, skip_key)) {
+			if (utf8_key != side_ptr_get(sattr->key.p))
+				free(utf8_key);
+			continue;
+		}
+		/* The namespace is what precedes the last separator. */
+		sep = strrchr(utf8_key, '.');
+		if (sep) {
+			ns = strndup(utf8_key, sep - utf8_key);
+			name = strdup(sep + 1);
+		} else {
+			ns = strdup("");
+			name = strdup(utf8_key);
+		}
+		if (utf8_key != side_ptr_get(sattr->key.p))
+			free(utf8_key);
+		if (!ns || !name) {
+			free(ns);
+			free(name);
+			goto error;
+		}
+		attr = zmalloc(sizeof(struct lttng_ust_attribute));
+		if (!attr) {
+			free(ns);
+			free(name);
+			goto error;
+		}
+		attr->struct_size = sizeof(struct lttng_ust_attribute);
+		attr->ns = ns;
+		attr->name = name;
+		if (side_translate_attribute_value(attr, &sattr->value)) {
+			free(ns);
+			free(name);
+			free(attr);
+			goto error;
+		}
+		entries[nr_entries++] = attr;
+	}
+	if (!nr_entries) {
+		free(entries);
+		return NULL;
+	}
+	attributes = zmalloc(sizeof(struct lttng_ust_attributes));
+	if (!attributes)
+		goto error;
+	attributes->nr_attributes = nr_entries;
+	attributes->attributes = entries;
+	return attributes;
+
+error:
+	if (entries) {
+		unsigned int j;
+
+		for (j = 0; j < nr_entries; j++) {
+			const struct lttng_ust_attribute *a = entries[j];
+
+			free((void *) a->ns);
+			free((void *) a->name);
+			if (a->type == LTTNG_UST_ATTRIBUTE_TYPE_STRING)
+				free((void *) a->u.string_value);
+			free((void *) a);
+		}
+		free(entries);
+	}
+	free(attributes);
+	return NULL;
+}
+
 /* A blob is an array or a VLA of bytes. */
 static
 bool side_type_is_byte(const struct side_type *type_desc)
@@ -2706,6 +2902,7 @@ const struct lttng_ust_type_common *side_integer_type_to_lttng(
 	t->struct_size = sizeof(struct lttng_ust_type_integer);
 	t->size = integer_size * CHAR_BIT;
 	t->alignment = align * CHAR_BIT;
+	t->attributes = side_translate_attributes(attr, nr_attr, NULL);
 	t->signedness = signedness;
 	/* Values are normalized to host byte order when serialized. */
 	t->reverse_byte_order = 0;
@@ -2768,6 +2965,7 @@ void side_translate_type_destroy(const struct lttng_ust_type_common *type)
 {
 	if (!type)
 		return;
+	side_translate_attributes_destroy(lttng_ust_type_attributes(type));
 	switch (type->type) {
 	case lttng_ust_type_array:
 	{
@@ -3087,6 +3285,9 @@ void side_translate_float_type(const struct side_type_float *t, void *priv)
 	type->mant_dig = mant_dig;
 	type->alignment = align * CHAR_BIT;
 	type->reverse_byte_order = 0;
+	type->attributes = side_translate_attributes(
+		side_array_elements(&t->attributes),
+		side_array_length(&t->attributes), NULL);
 	(void) side_translate_append_field(ctx,
 		side_ptr_get(ctx->field->field_name), &type->parent, false);
 }
@@ -3111,6 +3312,9 @@ void side_translate_string_type(const struct side_type_string *t, void *priv)
 	type->parent.type = lttng_ust_type_string;
 	type->struct_size = sizeof(struct lttng_ust_type_string);
 	type->encoding = lttng_ust_string_encoding_UTF8;
+	type->attributes = side_translate_attributes(
+		side_array_elements(&t->attributes),
+		side_array_length(&t->attributes), NULL);
 	(void) side_translate_append_field(ctx,
 		side_ptr_get(ctx->field->field_name), &type->parent, false);
 }
@@ -3272,6 +3476,9 @@ void side_translate_after_enum(const struct side_type_enum *t, void *priv)
 	type->struct_size = sizeof(struct lttng_ust_type_enum);
 	type->desc = desc;
 	type->container_type = container;
+	type->attributes = side_translate_attributes(
+		side_array_elements(&mappings->attributes),
+		side_array_length(&mappings->attributes), NULL);
 	side_translate_commit_type(ctx, &type->parent, field);
 	return;
 
@@ -3351,6 +3558,9 @@ void side_translate_after_struct(const struct side_type_struct *side_struct, voi
 	type->nr_fields = nr_fields;
 	type->fields = fields;
 	type->alignment = align * CHAR_BIT;
+	type->attributes = side_translate_attributes(
+		side_array_elements(&side_struct->attributes),
+		side_array_length(&side_struct->attributes), NULL);
 	side_translate_commit_type(ctx, &type->parent, field);
 	return;
 
@@ -3402,6 +3612,10 @@ void side_translate_after_array(const struct side_type_array *a,
 		blob->media_type = side_attr_media_type(
 			side_array_elements(&a->attributes),
 			side_array_length(&a->attributes));
+		blob->attributes = side_translate_attributes(
+			side_array_elements(&a->attributes),
+			side_array_length(&a->attributes),
+			"std.blob.media-type");
 		side_translate_type_destroy(ctx->elem_type);
 		ctx->elem_type = NULL;
 		(void) side_translate_append_field(ctx,
@@ -3417,6 +3631,9 @@ void side_translate_after_array(const struct side_type_array *a,
 	type->length = ctx->array_length;
 	type->alignment = 0;
 	type->encoding = lttng_ust_string_encoding_none;
+	type->attributes = side_translate_attributes(
+		side_array_elements(&a->attributes),
+		side_array_length(&a->attributes), NULL);
 	ctx->elem_type = NULL;
 	(void) side_translate_append_field(ctx,
 		side_ptr_get(ctx->field->field_name), &type->parent, false);
@@ -3494,6 +3711,10 @@ void side_translate_after_element_vla(const struct side_type_vla *v,
 		blob->media_type = side_attr_media_type(
 			side_array_elements(&v->attributes),
 			side_array_length(&v->attributes));
+		blob->attributes = side_translate_attributes(
+			side_array_elements(&v->attributes),
+			side_array_length(&v->attributes),
+			"std.blob.media-type");
 		side_translate_type_destroy(ctx->elem_type);
 		ctx->elem_type = NULL;
 		(void) side_translate_append_field(ctx,
@@ -3509,6 +3730,9 @@ void side_translate_after_element_vla(const struct side_type_vla *v,
 	type->elem_type = ctx->elem_type;
 	type->alignment = 0;
 	type->encoding = lttng_ust_string_encoding_none;
+	type->attributes = side_translate_attributes(
+		side_array_elements(&v->attributes),
+		side_array_length(&v->attributes), NULL);
 	ctx->elem_type = NULL;
 	(void) side_translate_append_field(ctx,
 		side_ptr_get(ctx->field->field_name), &type->parent, false);
@@ -3609,6 +3833,7 @@ void lttng_ust_side_event_destroy(struct lttng_ust_side_event *se)
 	side_translate_fields_destroy(
 		(const struct lttng_ust_event_field **) se->fields,
 		se->nr_fields);
+	side_translate_attributes_destroy(se->parent.attributes);
 	free(se);
 }
 
@@ -3687,6 +3912,9 @@ struct lttng_ust_side_event *lttng_ust_side_event_create(struct side_event_descr
 	se->parent.tp_class = &se->tp_class;
 	se->parent.loglevel = &se->loglevel_ptr;
 	se->parent.model_emf_uri = &se->model_emf_uri_ptr;
+	se->parent.attributes = side_translate_attributes(
+		side_array_elements(&sdesc->attributes),
+		side_array_length(&sdesc->attributes), NULL);
 
 	se->event_desc_array[0] = &se->parent;
 

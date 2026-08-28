@@ -1086,6 +1086,7 @@ int lttng_event_register_to_sessiond(struct lttng_event_enabler_common *event_en
 			desc->tp_class->nr_fields,
 			desc->tp_class->fields,
 			uri,
+			lttng_ust_event_desc_attributes(desc),
 			event_enabler_session->parent.user_token,
 			&id);
 		if (ret)
