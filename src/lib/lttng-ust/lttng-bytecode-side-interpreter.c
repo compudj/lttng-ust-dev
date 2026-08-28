@@ -775,12 +775,18 @@ static int side_arg_object_type(const struct side_arg *item,
 /* Load the value at the address a gathered element resolved to. */
 static int side_gather_dynamic_load_field(struct estack_entry *stack_top)
 {
+	/*
+	 * The value loaded is written to the same storage the address
+	 * and the type it is loaded from occupy: they are members of
+	 * one union. Everything the load needs is read out of it first.
+	 */
+	enum object_type object_type = stack_top->u.ptr.object_type;
 	const struct side_type *side_type = stack_top->u.ptr.side_type;
 	const void *base = stack_top->u.ptr.ptr;
 	bool rev_bo = stack_top->u.ptr.rev_bo;
 	int ret;
 
-	switch (stack_top->u.ptr.object_type) {
+	switch (object_type) {
 	case OBJECT_TYPE_S64:		/* Fall-through. */
 	case OBJECT_TYPE_U64:
 	{
@@ -790,7 +796,7 @@ static int side_gather_dynamic_load_field(struct estack_entry *stack_top)
 		if (ret)
 			return ret;
 		stack_top->u.v = v;
-		stack_top->type = stack_top->u.ptr.object_type == OBJECT_TYPE_S64 ?
+		stack_top->type = object_type == OBJECT_TYPE_S64 ?
 			REG_S64 : REG_U64;
 		break;
 	}
