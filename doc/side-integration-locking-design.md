@@ -696,7 +696,12 @@ about the statedump itself.
   registered with it. Regular events are emitted with a key matching
   them all, so they keep reaching every session.
 
-### 3.4 The optional type: unsupported everywhere [FUTURE WORK]
+### 3.4 Types unsupported everywhere: optional, bitmap enumeration [FUTURE WORK]
+
+Two side types cannot be expressed anywhere in the stack. Both need
+the same three layers, and neither is blocked on side.
+
+#### The optional type
 
 Side describes an optional value with `SIDE_TYPE_OPTIONAL`: a value
 which is either present or absent. Nothing in the stack can express
@@ -724,6 +729,34 @@ and variants are supported end to end. Translating an optional into a
 variant whose selector is the presence of the value reuses everything
 and needs nothing from the protocol, at the price of describing it in
 the trace as a variant rather than as the optional of CTF 2.
+
+#### The bitmap enumeration
+
+Side describes a bitmap with `SIDE_TYPE_ENUM_BITMAP`: labels mapped to
+bit ranges of a container. The situation is the same, at the same
+three layers:
+
+- LTTng-UST has no bitmap type.
+- The protocol has no bitmap abstract type.
+- The session daemon has no bitmap field class. What it does have,
+  `lst::bit_array_type`, is not one: it is the "n bits with a byte
+  order" base class which `integer_type` derives from. Its CTF 2
+  visit emits `fixed-length-bit-array`, and nothing ever constructs a
+  standalone one, every instance being an integer or an enumeration;
+  the TSDL visit of that class calls `abort()`, which is only safe
+  because of that. The class which would describe a side bitmap is the
+  `fixed-length-bit-map` of CTF 2, which is mapped labels to bit
+  ranges, and which appears nowhere in lttng-tools. CTF 1.8 has no
+  bitmap concept at all.
+
+Unlike the optional, there is no cheaper mapping onto the types which
+are already supported: the closest would be to describe the container
+integer and lose the labels, which is the whole content of a bitmap.
+
+Note that side can already describe a bitmap as the element of an
+array or of a VLA, since `side_type_enum_bitmap()` was exposed
+together with `side_type_enum()`: the instrumentation side is ready,
+only the tracer refuses them.
 
 ### 3.5 Attributes: migrating the special-cased metadata [DEFERRED]
 
