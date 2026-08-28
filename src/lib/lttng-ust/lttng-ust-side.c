@@ -4740,6 +4740,24 @@ const struct side_event_description *lttng_ust_side_get_side_desc(
 	return se->side_desc;
 }
 
+/*
+ * Key identifying the side event callbacks of an event: the key of the
+ * session which owns it, so that a statedump requested by a session is
+ * only delivered to that session. Events which do not belong to a
+ * session, the event notifiers, use the key of the tracer: they never
+ * request a statedump, and never receive one.
+ */
+static
+uint64_t side_event_key(struct lttng_ust_event_common *event)
+{
+	struct lttng_ust_channel_common *chan_common;
+
+	chan_common = lttng_ust_get_chan_common_from_event_common(event);
+	if (!chan_common || !chan_common->session->priv->side_key)
+		return tracer_key;
+	return chan_common->session->priv->side_key;
+}
+
 int lttng_ust_side_register_event(const struct lttng_ust_event_desc *desc,
 		struct lttng_ust_event_common *event)
 {
@@ -4747,7 +4765,7 @@ int lttng_ust_side_register_event(const struct lttng_ust_event_desc *desc,
 		caa_container_of(desc, struct lttng_ust_side_event, parent);
 
 	if (side_tracer_callback_register(se->side_desc, tracer_call,
-			event, tracer_key) != SIDE_ERROR_OK)
+			event, side_event_key(event)) != SIDE_ERROR_OK)
 		return -EINVAL;
 	return 0;
 }
@@ -4759,7 +4777,7 @@ int lttng_ust_side_unregister_event(const struct lttng_ust_event_desc *desc,
 		caa_container_of(desc, struct lttng_ust_side_event, parent);
 
 	if (side_tracer_callback_unregister(se->side_desc, tracer_call,
-			event, tracer_key) != SIDE_ERROR_OK)
+			event, side_event_key(event)) != SIDE_ERROR_OK)
 		return -EINVAL;
 	return 0;
 }
@@ -4869,6 +4887,34 @@ void lttng_ust_side_tracer_exit(void)
  * is a distinct domain. Data reachable from the probes is therefore
  * only quiescent once both domains have observed a grace period.
  */
+/*
+ * A session requests the state of the application: side dispatches the
+ * request to the statedump callbacks registered by the application,
+ * which emit their events with the key of the session, so that only
+ * this session records them.
+ */
+int lttng_ust_side_session_key_alloc(struct lttng_ust_session *session)
+{
+	uint64_t key;
+
+	if (session->priv->side_key)
+		return 0;
+	if (side_tracer_request_key(&key) != SIDE_ERROR_OK) {
+		DBG("Unable to allocate a side key for the session");
+		return -ENOMEM;
+	}
+	session->priv->side_key = key;
+	return 0;
+}
+
+void lttng_ust_side_session_statedump(struct lttng_ust_session *session)
+{
+	if (!session->priv->side_key)
+		return;
+	if (side_tracer_statedump_request(session->priv->side_key) != SIDE_ERROR_OK)
+		DBG("Unable to request a side statedump for the session");
+}
+
 void lttng_ust_tracer_synchronize(void)
 {
 	lttng_ust_urcu_synchronize_rcu();

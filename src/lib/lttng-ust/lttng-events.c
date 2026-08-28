@@ -218,6 +218,13 @@ struct lttng_ust_session *lttng_session_create(void)
 		CDS_INIT_HLIST_HEAD(&session->priv->events_name_ht.table[i]);
 	for (i = 0; i < LTTNG_UST_ENUM_HT_SIZE; i++)
 		CDS_INIT_HLIST_HEAD(&session->priv->enums_ht.table[i]);
+	/*
+	 * The key identifying the side event callbacks of this session,
+	 * which scopes the side statedumps it requests. A session
+	 * without one still traces: its side events are then registered
+	 * with the key of the tracer.
+	 */
+	(void) lttng_ust_side_session_key_alloc(session);
 	cds_list_add(&session->priv->node, &sessions);
 	return session;
 }
@@ -1746,6 +1753,14 @@ void lttng_handle_pending_statedump(void *owner)
 		if (!session_priv->statedump_pending)
 			continue;
 		session_priv->statedump_pending = 0;
+		/*
+		 * Request the state of the application from the side
+		 * instrumentation for this session. The request is
+		 * queued: the statedump callbacks of the application
+		 * emit their events with the key of the session, so
+		 * they are only delivered to it, whenever they run.
+		 */
+		lttng_ust_side_session_statedump(session_priv->pub);
 	}
 end:
 	ust_unlock();

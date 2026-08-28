@@ -386,6 +386,12 @@ struct lttng_ust_session_private {
 	void *owner;				/* object owner */
 	unsigned int tstate:1;			/* Transient enable state */
 	unsigned int statedump_pending:1;
+	/*
+	 * Key identifying the side event callbacks of this session:
+	 * a side statedump requested with it is only delivered to this
+	 * session. 0 if none was allocated.
+	 */
+	uint64_t side_key;
 	struct lttng_ust_ctx *ctx;		/* contexts for filters. */
 	unsigned char uuid[LTTNG_UST_ABI_UUID_LEN]; /* Trace session unique ID */
 	bool uuid_set;				/* Is uuid set ? */

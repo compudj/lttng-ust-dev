@@ -120,6 +120,16 @@ int lttng_ust_side_unregister_event(const struct lttng_ust_event_desc *desc,
 		struct lttng_ust_event_common *event)
 	__attribute__((visibility("hidden")));
 
+/*
+ * Side statedump: a session identifies its side event callbacks by a
+ * key, and requests the state of the application with it.
+ */
+struct lttng_ust_session;
+int lttng_ust_side_session_key_alloc(struct lttng_ust_session *session)
+	__attribute__((visibility("hidden")));
+void lttng_ust_side_session_statedump(struct lttng_ust_session *session)
+	__attribute__((visibility("hidden")));
+
 #ifdef HAVE_LINUX_PERF_EVENT_H
 void lttng_ust_perf_counter_init_thread(int flags)
 	__attribute__((visibility("hidden")));
