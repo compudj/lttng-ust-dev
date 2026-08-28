@@ -121,6 +121,20 @@ int lttng_ust_side_unregister_event(const struct lttng_ust_event_desc *desc,
 	__attribute__((visibility("hidden")));
 
 /*
+ * The registration and unregistration of the side event callbacks take
+ * effect as they return, but their memory reclaim is deferred: it is
+ * performed by this function, which waits for a single grace period of
+ * the side event domain for the whole batch of events it is called
+ * for. It is the counterpart of
+ * lttng_ust_tp_probe_prune_release_queue() for the side events, and is
+ * called at the same places.
+ *
+ * Called under ust_mutex.
+ */
+void lttng_ust_side_prune_release_queue(void)
+	__attribute__((visibility("hidden")));
+
+/*
  * Side statedump: a session identifies its side event callbacks by a
  * key, and requests the state of the application with it.
  */

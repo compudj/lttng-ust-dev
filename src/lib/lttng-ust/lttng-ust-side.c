@@ -4758,15 +4758,41 @@ uint64_t side_event_key(struct lttng_ust_event_common *event)
 	return chan_common->session->priv->side_key;
 }
 
+/*
+ * Number of deferred registrations and unregistrations performed since
+ * the last reclaim: the memory they leave behind is held until then,
+ * so reclaim within a batch which grows past this bound rather than
+ * letting an arbitrarily long batch, e.g. the synchronization of the
+ * enablers of a session which has many events, hold it all.
+ *
+ * The count is an upper bound of the number of queued callback arrays:
+ * a registration which replaces the empty callback array, or an
+ * unregistration which leaves it behind, has nothing to queue.
+ *
+ * Protected by ust_mutex, like the registration and unregistration of
+ * the events themselves.
+ */
+#define SIDE_RELEASE_QUEUE_BATCH_LEN	32
+
+static unsigned long side_release_queue_len;
+
+static
+void side_release_queue_account(void)
+{
+	if (++side_release_queue_len >= SIDE_RELEASE_QUEUE_BATCH_LEN)
+		lttng_ust_side_prune_release_queue();
+}
+
 int lttng_ust_side_register_event(const struct lttng_ust_event_desc *desc,
 		struct lttng_ust_event_common *event)
 {
 	struct lttng_ust_side_event *se =
 		caa_container_of(desc, struct lttng_ust_side_event, parent);
 
-	if (side_tracer_callback_register(se->side_desc, tracer_call,
+	if (side_tracer_callback_register_defer(se->side_desc, tracer_call,
 			event, side_event_key(event)) != SIDE_ERROR_OK)
 		return -EINVAL;
+	side_release_queue_account();
 	return 0;
 }
 
@@ -4776,10 +4802,26 @@ int lttng_ust_side_unregister_event(const struct lttng_ust_event_desc *desc,
 	struct lttng_ust_side_event *se =
 		caa_container_of(desc, struct lttng_ust_side_event, parent);
 
-	if (side_tracer_callback_unregister(se->side_desc, tracer_call,
+	if (side_tracer_callback_unregister_defer(se->side_desc, tracer_call,
 			event, side_event_key(event)) != SIDE_ERROR_OK)
 		return -EINVAL;
+	side_release_queue_account();
 	return 0;
+}
+
+/*
+ * Reclaim the memory left behind by the deferred registration and
+ * unregistration of the side event callbacks. A single grace period of
+ * the side event domain is issued for the whole batch, rather than one
+ * per event.
+ */
+void lttng_ust_side_prune_release_queue(void)
+{
+	if (!side_release_queue_len)
+		return;
+	side_release_queue_len = 0;
+	side_tracer_callback_synchronize();
+	side_tracer_callback_reclaim();
 }
 
 static

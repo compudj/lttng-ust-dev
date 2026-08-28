@@ -369,6 +369,7 @@ void lttng_session_destroy(struct lttng_ust_session *session)
 		_lttng_event_unregister(event_priv->pub);
 	lttng_ust_tracer_synchronize();		/* Wait for in-flight events to complete */
 	lttng_ust_tp_probe_prune_release_queue();
+	lttng_ust_side_prune_release_queue();
 	cds_list_for_each_entry_safe(event_enabler, event_tmpenabler, &session->priv->unsync_enablers_head, node)
 		lttng_event_enabler_destroy(event_enabler);
 	cds_list_for_each_entry_safe(event_enabler, event_tmpenabler, &session->priv->sync_enablers_head, node)
@@ -404,6 +405,7 @@ void lttng_event_notifier_group_destroy(
 		_lttng_event_unregister(event_priv->pub);
 
 	lttng_ust_tracer_synchronize();
+	lttng_ust_side_prune_release_queue();
 
 	cds_list_for_each_entry_safe(event_enabler, tmpevent_enabler, &event_notifier_group->sync_enablers_head, node)
 		lttng_event_enabler_destroy(event_enabler);
@@ -1619,8 +1621,9 @@ void lttng_probe_provider_unregister_events(
 
 	/* Wait for grace period. */
 	lttng_ust_tracer_synchronize();
-	/* Prune the unregistration queue. */
+	/* Prune the unregistration queues. */
 	lttng_ust_tp_probe_prune_release_queue();
+	lttng_ust_side_prune_release_queue();
 
 	/*
 	 * It is now safe to destroy the events and remove them from the event list
@@ -2310,6 +2313,7 @@ void lttng_sync_event_list(struct cds_list_head *sync_event_enabler_list,
 		lttng_event_sync_capture_state(event_priv->pub);
 	}
 	lttng_ust_tp_probe_prune_release_queue();
+	lttng_ust_side_prune_release_queue();
 }
 
 /*
