@@ -143,6 +143,212 @@ bool side_arg_is_gather(const struct side_type *side_type)
 }
 
 /*
+ * Load the integer a gather type reads from memory. Bit-packed values
+ * are refused, as they are by the translation of the event.
+ */
+int side_gather_load_integer(const struct side_type_gather_integer *t,
+		const void *gather_ptr, bool signedness, bool rev_bo, int64_t *v)
+{
+	union side_integer_value value;
+	const char *ptr;
+
+	if (t->offset_bits)
+		return -EINVAL;
+	ptr = side_gather_access(side_enum_get(t->access_mode),
+			(const char *) gather_ptr + t->offset);
+	if (!ptr)
+		return -EINVAL;
+	switch (t->type.integer_size) {
+	case 1:		/* Fall-through. */
+	case 2:		/* Fall-through. */
+	case 4:		/* Fall-through. */
+	case 8:
+		break;
+	default:
+		return -EINVAL;
+	}
+	memcpy(&value, ptr, t->type.integer_size);
+	switch (t->type.integer_size) {
+	case 1:
+		*v = signedness ? (int64_t) (int8_t) value.side_u8 :
+				(int64_t) value.side_u8;
+		break;
+	case 2:
+	{
+		uint16_t tmp = value.side_u16;
+
+		if (rev_bo)
+			tmp = lttng_ust_bswap_16(tmp);
+		*v = signedness ? (int64_t) (int16_t) tmp : (int64_t) tmp;
+		break;
+	}
+	case 4:
+	{
+		uint32_t tmp = value.side_u32;
+
+		if (rev_bo)
+			tmp = lttng_ust_bswap_32(tmp);
+		*v = signedness ? (int64_t) (int32_t) tmp : (int64_t) tmp;
+		break;
+	}
+	case 8:
+	{
+		uint64_t tmp = value.side_u64;
+
+		if (rev_bo)
+			tmp = lttng_ust_bswap_64(tmp);
+		*v = (int64_t) tmp;
+		break;
+	}
+	default:
+		return -EINVAL;
+	}
+	return 0;
+}
+
+bool side_type_is_gather_container(const struct side_type *side_type)
+{
+	switch (side_enum_get(side_type->type)) {
+	case SIDE_TYPE_GATHER_ARRAY:	/* Fall-through. */
+	case SIDE_TYPE_GATHER_VLA:
+		return true;
+	default:
+		return false;
+	}
+}
+
+const struct side_type *side_gather_container_elem_type(const struct side_type *side_type)
+{
+	switch (side_enum_get(side_type->type)) {
+	case SIDE_TYPE_GATHER_ARRAY:
+		return side_ptr_get(side_type->u.side_gather.u.side_array.type.elem_type);
+	case SIDE_TYPE_GATHER_VLA:
+		return side_ptr_get(side_type->u.side_gather.u.side_vla.type.elem_type);
+	default:
+		return NULL;
+	}
+}
+
+/*
+ * How far apart the elements of a gathered container are: the size the
+ * element occupies where it is read from, which is the size of a
+ * pointer when the element is reached through one. Zero when the
+ * element is not of a fixed size, which makes the elements which
+ * follow it unreachable.
+ */
+static
+uint32_t side_gather_elem_stride(const struct side_type *elem_type)
+{
+	const struct side_type_gather *gather = &elem_type->u.side_gather;
+	enum side_type_gather_access_mode access_mode;
+	uint32_t size;
+
+	switch (side_enum_get(elem_type->type)) {
+	case SIDE_TYPE_GATHER_BOOL:
+		access_mode = side_enum_get(gather->u.side_bool.access_mode);
+		size = gather->u.side_bool.type.bool_size;
+		break;
+	case SIDE_TYPE_GATHER_BYTE:
+		access_mode = side_enum_get(gather->u.side_byte.access_mode);
+		size = 1;
+		break;
+	case SIDE_TYPE_GATHER_INTEGER:	/* Fall-through. */
+	case SIDE_TYPE_GATHER_POINTER:
+		access_mode = side_enum_get(gather->u.side_integer.access_mode);
+		size = gather->u.side_integer.type.integer_size;
+		break;
+	case SIDE_TYPE_GATHER_FLOAT:
+		access_mode = side_enum_get(gather->u.side_float.access_mode);
+		size = gather->u.side_float.type.float_size;
+		break;
+	case SIDE_TYPE_GATHER_STRUCT:
+		access_mode = side_enum_get(gather->u.side_struct.access_mode);
+		size = gather->u.side_struct.size;
+		break;
+	case SIDE_TYPE_GATHER_ENUM:
+	{
+		const struct side_type *container =
+			side_ptr_get(gather->u.side_enum.elem_type);
+
+		if (side_enum_get(container->type) != SIDE_TYPE_GATHER_INTEGER)
+			return 0;
+		access_mode = side_enum_get(container->u.side_gather.u.side_integer.access_mode);
+		size = container->u.side_gather.u.side_integer.type.integer_size;
+		break;
+	}
+	default:
+		/* A gathered string has no size of its own. */
+		return 0;
+	}
+	switch (access_mode) {
+	case SIDE_TYPE_GATHER_ACCESS_DIRECT:
+		return size;
+	case SIDE_TYPE_GATHER_ACCESS_POINTER:
+		return sizeof(void *);
+	default:
+		return 0;
+	}
+}
+
+int side_gather_container_elem(const struct side_type *container,
+		const struct side_arg *item, uint64_t index, const void **elem_base)
+{
+	const struct side_type *elem_type = side_gather_container_elem_type(container);
+	const char *base;
+	uint32_t stride;
+	uint64_t length;
+
+	if (!elem_type)
+		return -EINVAL;
+	stride = side_gather_elem_stride(elem_type);
+	if (!stride)
+		return -EINVAL;
+	switch (side_enum_get(container->type)) {
+	case SIDE_TYPE_GATHER_ARRAY:
+	{
+		const struct side_type_gather_array *ga =
+			&container->u.side_gather.u.side_array;
+
+		length = ga->type.length;
+		base = side_gather_access(side_enum_get(ga->access_mode),
+			(const char *) side_ptr_get(item->u.side_static.side_array_gather_ptr)
+				+ ga->offset);
+		break;
+	}
+	case SIDE_TYPE_GATHER_VLA:
+	{
+		const struct side_type_gather_vla *gv =
+			&container->u.side_gather.u.side_vla;
+		const struct side_type *length_type =
+			side_ptr_get(gv->type.length_type);
+		int64_t v;
+
+		/* The length of a gathered sequence is gathered as well. */
+		if (side_enum_get(length_type->type) != SIDE_TYPE_GATHER_INTEGER)
+			return -EINVAL;
+		if (side_gather_load_integer(
+				&length_type->u.side_gather.u.side_integer,
+				side_ptr_get(item->u.side_static.side_vla_gather.length_ptr),
+				false, false, &v))
+			return -EINVAL;
+		if (v < 0)
+			return -EINVAL;
+		length = (uint64_t) v;
+		base = side_gather_access(side_enum_get(gv->access_mode),
+			(const char *) side_ptr_get(item->u.side_static.side_vla_gather.ptr)
+				+ gv->offset);
+		break;
+	}
+	default:
+		return -EINVAL;
+	}
+	if (!base || index >= length)
+		return -EINVAL;
+	*elem_base = base + index * stride;
+	return 0;
+}
+
+/*
  * The fields of a structure, whether it is copied onto the argument
  * vector or gathered from memory. NULL for anything else.
  */

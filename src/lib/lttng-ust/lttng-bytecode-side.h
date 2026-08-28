@@ -60,6 +60,26 @@ const char *side_gather_access(enum side_type_gather_access_mode access_mode,
 bool side_arg_is_gather(const struct side_type *side_type)
 	__attribute__((visibility("hidden")));
 
+/* Load the integer a gather type reads from @gather_ptr. */
+int side_gather_load_integer(const struct side_type_gather_integer *t,
+		const void *gather_ptr, bool signedness, bool rev_bo, int64_t *v)
+	__attribute__((visibility("hidden")));
+
+/*
+ * The elements of a gathered array or sequence: whether a type is such
+ * a container, the type of its elements, and the address of the
+ * element at @index, which is refused when the index is out of the
+ * length of the container or when the elements are not of a fixed
+ * size.
+ */
+bool side_type_is_gather_container(const struct side_type *side_type)
+	__attribute__((visibility("hidden")));
+const struct side_type *side_gather_container_elem_type(const struct side_type *side_type)
+	__attribute__((visibility("hidden")));
+int side_gather_container_elem(const struct side_type *container,
+		const struct side_arg *item, uint64_t index, const void **elem_base)
+	__attribute__((visibility("hidden")));
+
 /*
  * The type and the value the @path of a payload field reaches, within
  * @sav. A gathered field reads its value from @gather_base rather than

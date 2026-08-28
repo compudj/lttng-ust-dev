@@ -382,6 +382,13 @@ static int context_get_index(struct lttng_ust_ctx *ctx,
 static const struct lttng_ust_event_field side_arg_field_marker;
 
 /*
+ * The elements of a gathered array or sequence are not arguments of
+ * their own: indexing one leaves the address it is read from rather
+ * than an argument, which this marker says.
+ */
+static const struct lttng_ust_event_field side_gather_base_marker;
+
+/*
  * A gather type reads its value from an address rather than carrying
  * it in the argument, which holds the address instead. Resolve it: the
  * access mode says whether the address is the value's own or a pointer
@@ -401,70 +408,6 @@ static const void *side_arg_gather_base_of(const struct side_type *side_type,
 	 * argument union, under a name per type.
 	 */
 	return side_ptr_get(item->u.side_static.side_integer_gather_ptr);
-}
-
-/*
- * Load the integer a gather type reads from memory. Bit-packed values
- * are refused, as they are by the translation of the event.
- */
-static int side_gather_load_integer(const struct side_type_gather_integer *t,
-		const void *gather_ptr, bool signedness, bool rev_bo, int64_t *v)
-{
-	union side_integer_value value;
-	const char *ptr;
-
-	if (t->offset_bits)
-		return -EINVAL;
-	ptr = side_gather_access(side_enum_get(t->access_mode),
-			(const char *) gather_ptr + t->offset);
-	if (!ptr)
-		return -EINVAL;
-	switch (t->type.integer_size) {
-	case 1:		/* Fall-through. */
-	case 2:		/* Fall-through. */
-	case 4:		/* Fall-through. */
-	case 8:
-		break;
-	default:
-		return -EINVAL;
-	}
-	memcpy(&value, ptr, t->type.integer_size);
-	switch (t->type.integer_size) {
-	case 1:
-		*v = signedness ? (int64_t) (int8_t) value.side_u8 :
-				(int64_t) value.side_u8;
-		break;
-	case 2:
-	{
-		uint16_t tmp = value.side_u16;
-
-		if (rev_bo)
-			tmp = lttng_ust_bswap_16(tmp);
-		*v = signedness ? (int64_t) (int16_t) tmp : (int64_t) tmp;
-		break;
-	}
-	case 4:
-	{
-		uint32_t tmp = value.side_u32;
-
-		if (rev_bo)
-			tmp = lttng_ust_bswap_32(tmp);
-		*v = signedness ? (int64_t) (int32_t) tmp : (int64_t) tmp;
-		break;
-	}
-	case 8:
-	{
-		uint64_t tmp = value.side_u64;
-
-		if (rev_bo)
-			tmp = lttng_ust_bswap_64(tmp);
-		*v = (int64_t) tmp;
-		break;
-	}
-	default:
-		return -EINVAL;
-	}
-	return 0;
 }
 
 /*
@@ -829,6 +772,62 @@ static int side_arg_object_type(const struct side_arg *item,
 	return 0;
 }
 
+/* Load the value at the address a gathered element resolved to. */
+static int side_gather_dynamic_load_field(struct estack_entry *stack_top)
+{
+	const struct side_type *side_type = stack_top->u.ptr.side_type;
+	const void *base = stack_top->u.ptr.ptr;
+	bool rev_bo = stack_top->u.ptr.rev_bo;
+	int ret;
+
+	switch (stack_top->u.ptr.object_type) {
+	case OBJECT_TYPE_S64:		/* Fall-through. */
+	case OBJECT_TYPE_U64:
+	{
+		int64_t v;
+
+		ret = side_gather_load_field_integer(side_type, base, rev_bo, &v);
+		if (ret)
+			return ret;
+		stack_top->u.v = v;
+		stack_top->type = stack_top->u.ptr.object_type == OBJECT_TYPE_S64 ?
+			REG_S64 : REG_U64;
+		break;
+	}
+	case OBJECT_TYPE_DOUBLE:
+	{
+		double d;
+
+		ret = side_gather_load_field_double(side_type, base, rev_bo, &d);
+		if (ret)
+			return ret;
+		stack_top->u.d = d;
+		stack_top->type = REG_DOUBLE;
+		break;
+	}
+	case OBJECT_TYPE_STRING:
+	{
+		const char *str;
+
+		ret = side_gather_load_field_string(side_type, base, &str);
+		if (ret)
+			return ret;
+		if (unlikely(!str)) {
+			dbg_printf("Interpreter warning: loading a NULL string.\n");
+			return -EINVAL;
+		}
+		stack_top->u.s.str = str;
+		stack_top->u.s.seq_len = SIZE_MAX;
+		stack_top->u.s.literal_type = ESTACK_STRING_LITERAL_TYPE_NONE;
+		stack_top->type = REG_STRING;
+		break;
+	}
+	default:
+		return -EINVAL;
+	}
+	return 0;
+}
+
 /* Load a side argument onto the estack entry. */
 static int side_arg_dynamic_load_field(struct estack_entry *stack_top)
 {
@@ -938,6 +937,23 @@ static int dynamic_get_index(struct lttng_ust_ctx *ctx,
 				ret = -EINVAL;
 				goto end;
 			}
+			if (gid->side_type
+					&& side_type_is_gather_container(gid->side_type)) {
+				const void *elem_base;
+
+				ret = side_gather_container_elem(gid->side_type,
+					item, gid->offset, &elem_base);
+				if (ret)
+					goto end;
+				stack_top->u.ptr.ptr = elem_base;
+				stack_top->u.ptr.object_type = gid->elem.type;
+				stack_top->u.ptr.rev_bo = gid->elem.rev_bo;
+				stack_top->u.ptr.side_type =
+					side_gather_container_elem_type(gid->side_type);
+				/* The element is an address, not an argument. */
+				stack_top->u.ptr.field = &side_gather_base_marker;
+				break;
+			}
 			/* Arrays and VLAs are nested argument vectors. */
 			switch (side_enum_get(item->type)) {
 			case SIDE_TYPE_ARRAY:
@@ -1035,6 +1051,9 @@ static int dynamic_load_field(struct estack_entry *stack_top)
 	/* Side arguments: self-describing typed load. */
 	if (stack_top->u.ptr.field == &side_arg_field_marker)
 		return side_arg_dynamic_load_field(stack_top);
+	/* The element of a gathered container: an address and a type. */
+	if (stack_top->u.ptr.field == &side_gather_base_marker)
+		return side_gather_dynamic_load_field(stack_top);
 	switch (stack_top->u.ptr.object_type) {
 	case OBJECT_TYPE_S8:
 		dbg_printf("op load field s8\n");
