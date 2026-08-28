@@ -708,12 +708,29 @@ types", and the event is never registered with the LTTng tracer. An
 application which puts one unsupported field in one event loses that
 whole event, silently unless debug output is enabled.
 
-Of the 48 labels of `enum side_type_label`, 29 are accepted. 13 are
-refused by the visitor table, and 6 more (`U128`, `S128`,
+Two further reasons drop an event, at the time it is recorded rather
+than at the time it is described, both of them from 3.12: a
+statically laid out event which records a field more aligned than its
+description says, which would place it where the reader does not look
+for it, and an event whose layout is laid out against the offset it is
+recorded at on a channel whose client has no reservation which
+computes the size of a payload. Both log through `DBG()`.
+
+Of the 48 labels of `enum side_type_label`, **29 are accepted**. 13
+are refused by the visitor table, and 6 more (`U128`, `S128`,
 `FLOAT_BINARY16`, `FLOAT_BINARY128`, `STRING_UTF16`, `STRING_UTF32`)
 reach a supported callback but are refused by its size or encoding
 restrictions. The restrictions of a type apply to its gather flavour
 as well, which wraps it.
+
+Everything a side event can describe is therefore carried into the
+trace, and decodes, except: the three types which nothing in the stack
+can express (null, optional, bitmap enumeration), the dynamic types
+and the variadic events which need a self-describing encoding, and the
+parameterizations of otherwise supported types listed below. The
+byte order of an integer or of a float is no longer among them (3.10),
+the gather types are recorded (3.11), and a variant is aligned as CTF
+2 says (3.12).
 
 | Group | Status |
 | --- | --- |
@@ -737,7 +754,7 @@ Above the type level, variadic events are refused as a whole
 
 #### Restrictions within the supported types
 
-Four parameterizations which side can describe are refused by types
+Five parameterizations which side can describe are refused by types
 which are otherwise supported. Each fails the whole event, like an
 unsupported type. Byte order is not among them any more, see 3.10:
 
@@ -757,6 +774,13 @@ unsupported type. Byte order is not among them any more, see 3.10:
   encoding is hardcoded to `lttng_ust_string_encoding_UTF8`, for field
   types, for enumeration labels and for attribute values. LTTng-UST's
   `enum lttng_ust_string_encoding` has no UTF-16 or UTF-32.
+- **Gathered sequences whose elements are not of a fixed size**, which
+  excludes a gathered string, a gathered sequence and a gathered
+  structure as the element of a gathered sequence. The reason is in
+  3.11: the length of a gathered sequence is read from memory on each
+  serialization pass, so the write pass has to know where the elements
+  of the size pass ended, and it finds that size in the entry which
+  follows the length only if the elements record nothing of their own.
 #### The gather types [DONE, see 3.11]
 
 #### The dynamic types and variadic events
