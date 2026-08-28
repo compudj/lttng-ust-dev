@@ -758,24 +758,40 @@ array or of a VLA, since `side_type_enum_bitmap()` was exposed
 together with `side_type_enum()`: the instrumentation side is ready,
 only the tracer refuses them.
 
-### 3.5 Loglevels: enabling side events by loglevel [FUTURE WORK]
+### 3.5 Loglevels: enabling side events by loglevel [DONE]
 
-The translation maps the loglevel of a side event onto the loglevel of
-the LTTng event description, so the metadata describes it and the
-session daemon reports it. What is not verified is the other
-direction: enabling events by loglevel, `lttng enable-event
---loglevel` and `--loglevel-only`, which matches the loglevel of the
-description in the enabler.
+Enabling side events by loglevel works, and needed nothing: the
+translation puts the loglevel of a side event in the LTTng event
+description, and `lttng_desc_match_enabler()` reads it from there and
+hands it to the generic `lttng_loglevel_match()`. The same path serves
+the triggers, so a log level condition of `lttng add-trigger` selects
+side events as well, and `lttng list` reports their loglevel.
 
-The mapping itself deserves a look at the same time. It sends the
-eight side loglevels to the values of the LTTng-UST scale which look
-like them, EMERG to 0 up to INFO at 6, and DEBUG at 14, which is the
-most verbose of the debug levels of that scale. Those two scales do
-not have the same shape: LTTng-UST has several debug levels between
-`TRACE_DEBUG_SYSTEM` and `TRACE_DEBUG`, which side does not, so the
-range from 7 to 13 is unreachable from a side event. Whether that is
-the wanted behaviour of `--loglevel` on side events, which is a range
-comparison, is exactly what has to be decided.
+Verified on a side event declared `SIDE_LOGLEVEL_INFO`:
+
+| Enabler                          | Matches |
+| -------------------------------- | ------- |
+| `--loglevel=TRACE_INFO`          | yes     |
+| `--loglevel-only=TRACE_INFO`     | yes     |
+| `--loglevel-only=TRACE_DEBUG`    | no      |
+| `--loglevel=TRACE_WARNING`       | no      |
+| `--loglevel=TRACE_DEBUG`         | yes     |
+| no loglevel option               | yes     |
+
+The mapping of the two scales is DECIDED (2026-08-27): the eight side
+loglevels go to the values of the LTTng-UST scale which look like
+them, EMERG at 0 up to INFO at 6, and DEBUG at 14, the most verbose of
+the debug levels of that scale.
+
+The two scales do not have the same shape, and the consequences of
+that mapping are intended rather than accidental. LTTng-UST has debug
+levels from `TRACE_DEBUG_SYSTEM` (7) to `TRACE_DEBUG` (14) which side
+does not have, so a side event is never one of the levels from 7 to
+13, and an enabler which names one of them selects tracepoint
+providers only. Since `--loglevel` selects a level and everything more
+severe, `--loglevel=TRACE_DEBUG_FUNCTION` does not select the side
+events of loglevel DEBUG: DEBUG is the most verbose thing side can
+express, which is what the value 14 says.
 
 ### 3.6 Attributes: migrating the special-cased metadata [DEFERRED]
 
