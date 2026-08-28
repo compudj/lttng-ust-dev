@@ -776,6 +776,79 @@ matched onto the LTTng dynamic type's fixed choice set, and a variadic
 event's runtime-appended fields onto a description which LTTng
 requires to be fixed at registration.
 
+##### What a dynamic value carries
+
+A side dynamic value carries its whole type with it, in the argument
+rather than in the description:
+
+- `DYNAMIC_NULL` carries only attributes.
+- `DYNAMIC_BOOL` carries a `struct side_type_bool`: size, bit length
+  and byte order.
+- `DYNAMIC_BYTE` carries a byte.
+- `DYNAMIC_INTEGER` and `DYNAMIC_POINTER` carry a
+  `struct side_type_integer`: size **up to 16 bytes**, bit length,
+  signedness and byte order.
+- `DYNAMIC_FLOAT` carries a `struct side_type_float`: size, which
+  includes **binary16 and binary128**, and byte order.
+- `DYNAMIC_STRING` carries a `struct side_type_string`: unit size of
+  1, 2 or 4 bytes, and byte order.
+- `DYNAMIC_STRUCT` is a `struct side_arg_dynamic_struct`: a list of
+  **named** fields, each of which is any argument, plus attributes.
+- `DYNAMIC_VLA` is a `struct side_arg_dynamic_vla`: a list of
+  arguments, plus attributes.
+
+Two properties follow. The compound values are **heterogeneous**: the
+elements of a dynamic sequence are arguments of any dynamic type, and
+a dynamic structure is a mapping of names to values of any dynamic
+type. And **every value can carry attributes**, which are name/value
+pairs within a namespace, like the ones events and fields carry (3.6).
+
+##### The encoding to carry them
+
+A dynamic value is typed at the instrumentation call site and nowhere
+else, so what carries it into the trace has to be self-describing.
+
+**Protocol buffers are not a fit.** They are schema-first: the wire
+format carries field numbers and wire types, not the type of a value,
+so a decoder needs the schema. A value whose type is only known at the
+call site would have to be wrapped in `Any` together with a descriptor,
+which turns the problem into distributing a schema registry alongside
+the trace. Nothing in the type set above is expressible without that.
+
+**MessagePack is the fit**, and it is already in the tree:
+`src/common/msgpack/`, used by the event notifier capture path
+(`event-notifier-notification.c`). Its type tags are part of the
+encoding: nil, booleans, signed and unsigned integers, floats,
+strings, binary, arrays and maps of arbitrary values. Heterogeneous
+arrays and string-keyed maps are native, which is what
+`DYNAMIC_VLA` and `DYNAMIC_STRUCT` need, and attributes fit as a
+wrapping map.
+
+**Binary JSON** would also be self-describing, but it has no distinct
+unsigned 64-bit type, its documents are length-prefixed which means
+back-patching a size, and nothing in the tree writes it.
+
+What MessagePack does not have, and what would have to be decided:
+
+- **Integers wider than 64 bits**, which side allows, and the
+  **binary16 and binary128** floats. Either an extension type, or a
+  binary value plus an attribute naming the type, or refusing them.
+- The existing writer is a subset: it has `write_double` and no
+  32-bit float, no extension type. It would need extending, which is
+  no more than what the notifier capture path already needed.
+- A dynamic value's **byte order** would be normalized, MessagePack
+  integers being big-endian by definition. That is the opposite of the
+  choice made for the static types in 3.10, where a value is recorded
+  as emitted and its byte order described. For a value carried inside
+  an encoding it is the encoding which describes itself, so
+  normalizing is the only option.
+
+The carrier in the trace already exists: a variable length blob field
+with a media type attribute in the `std.blob` namespace (3.4, 3.6), a
+media type such as `application/msgpack`. A variadic event would then
+be one such blob field, and a `SIDE_TYPE_DYNAMIC` static field would
+be one blob field where it appears.
+
 #### The null type
 
 `SIDE_TYPE_NULL` is a value which carries no data. LTTng-UST has no
@@ -1563,8 +1636,9 @@ lttng-ust:
    only where the filter and capture bytecode compares values (3.10).
 10. FUTURE WORK: type coverage (3.4). In ascending cost: the remaining
    restrictions within the supported types are lttng-ust-only, as is
-   filtering on a gather field; the dynamic types and variadic events need a
-   mapping onto machinery which already exists end to end; null,
+   filtering on a gather field; the dynamic types and variadic events
+   need a self-describing encoding carried in a blob field, for which
+   MessagePack is the candidate and is already in the tree; null,
    optional and bitmap enumeration need the whole stack.
 11. FUTURE WORK: report the events dropped for unsupported field types
    through something other than a DBG line (3.4), so that an

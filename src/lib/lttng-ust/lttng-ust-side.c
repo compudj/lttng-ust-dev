@@ -2474,8 +2474,11 @@ void print_event_description(const struct side_event_description *desc)
  * POC scope: static (non-variadic) events; field types supported by
  * LTTng-UST tracepoints: integers, pointers, bool, byte, floats,
  * UTF-8 strings, and arrays/sequences of integer elements. Variadic
- * events and dynamic types are not mapped for now (a future "blob"
- * type with a MIME-type such as protobuf could carry them); events
+ * events and dynamic types are not mapped for now (a future blob
+ * field with a media type could carry them, encoded in a
+ * self-describing encoding such as MessagePack: a dynamic value is
+ * typed at the instrumentation call site and nowhere else, so a
+ * schema-first encoding does not fit); events
  * containing unsupported types are skipped. Filter bytecode wiring
  * is a separate phase: events with a filter attached are discarded.
  * Serialization walks the description/payload with the simple
