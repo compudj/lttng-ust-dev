@@ -2858,6 +2858,50 @@ size_t side_type_alignof(const struct side_type *type_desc)
 		}
 		return align;
 	}
+
+	/*
+	 * A gathered value is recorded like the value it wraps, so it
+	 * is aligned like it as well.
+	 */
+	case SIDE_TYPE_GATHER_BOOL:
+		return side_integer_alignof(
+			type_desc->u.side_gather.u.side_bool.type.bool_size);
+	case SIDE_TYPE_GATHER_INTEGER:	/* Fall-through. */
+	case SIDE_TYPE_GATHER_POINTER:
+		return side_integer_alignof(
+			type_desc->u.side_gather.u.side_integer.type.integer_size);
+	case SIDE_TYPE_GATHER_BYTE:
+		return lttng_ust_rb_alignof(uint8_t);
+	case SIDE_TYPE_GATHER_FLOAT:
+		switch (type_desc->u.side_gather.u.side_float.type.float_size) {
+		case 4:
+			return lttng_ust_rb_alignof(float);
+		case 8:
+			return lttng_ust_rb_alignof(double);
+		default:
+			return 0;
+		}
+	case SIDE_TYPE_GATHER_STRING:
+		return lttng_ust_rb_alignof(char);
+	case SIDE_TYPE_GATHER_ENUM:
+		return side_type_alignof(side_ptr_get(
+			type_desc->u.side_gather.u.side_enum.elem_type));
+	case SIDE_TYPE_GATHER_STRUCT:
+		return side_struct_alignof(side_ptr_get(
+			type_desc->u.side_gather.u.side_struct.type));
+	case SIDE_TYPE_GATHER_ARRAY:
+		return side_type_alignof(side_ptr_get(
+			type_desc->u.side_gather.u.side_array.type.elem_type));
+	case SIDE_TYPE_GATHER_VLA:
+	{
+		const struct side_type_vla *v =
+			&type_desc->u.side_gather.u.side_vla.type;
+		size_t length_align, elem_align;
+
+		length_align = side_type_alignof(side_ptr_get(v->length_type));
+		elem_align = side_type_alignof(side_ptr_get(v->elem_type));
+		return length_align > elem_align ? length_align : elem_align;
+	}
 	default:
 		return 0;
 	}
@@ -4468,6 +4512,21 @@ void side_serialize_align(struct side_serialize_ctx *c, size_t align)
 		if (align > c->align)
 			c->align = align;
 	} else {
+		size_t offset = c->written;
+
+		/*
+		 * The padding is part of what the size pass reserved,
+		 * so the write pass accounts for it the same way it
+		 * accounts for what it records.
+		 */
+		offset += lttng_ust_ring_buffer_align(offset, align);
+		if (c->seq_open && offset > c->seq_end)
+			return;
+		if (offset > c->len) {
+			c->fail = true;
+			return;
+		}
+		c->written = offset;
 		c->chan->ops->event_write(c->bufctx, "", 0, align);
 	}
 }
