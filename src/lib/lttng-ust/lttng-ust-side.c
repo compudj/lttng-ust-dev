@@ -3045,6 +3045,16 @@ struct side_translate_scope {
 	unsigned int nr_fields;
 	const struct side_event_field *field;
 	enum side_translate_state state;
+	/*
+	 * The translation of an array, of a sequence and of an
+	 * enumeration keeps what it is building in the context, and the
+	 * members of a compound type nested within one of them build
+	 * their own. Saved here for as long as they do.
+	 */
+	const struct lttng_ust_type_common *elem_type;
+	const struct lttng_ust_type_common *vla_length_type;
+	const struct lttng_ust_type_common *enum_container_type;
+	uint32_t array_length;
 };
 
 struct side_translate_ctx {
@@ -3761,6 +3771,19 @@ void side_translate_before_variant(const struct side_type_variant *v __attribute
 	memset(scope, 0, sizeof(*scope));
 	scope->field = ctx->field;
 	scope->state = ctx->state;
+	/*
+	 * The selector and the options overwrite what the enclosing
+	 * array, sequence or enumeration is building: save it for the
+	 * end of this scope.
+	 */
+	scope->elem_type = ctx->elem_type;
+	scope->vla_length_type = ctx->vla_length_type;
+	scope->enum_container_type = ctx->enum_container_type;
+	scope->array_length = ctx->array_length;
+	ctx->elem_type = NULL;
+	ctx->vla_length_type = NULL;
+	ctx->enum_container_type = NULL;
+	ctx->array_length = 0;
 	ctx->variant_selector_type = NULL;
 	ctx->state = SIDE_TRANSLATE_IN_VARIANT_SELECTOR;
 }
@@ -3817,6 +3840,11 @@ void side_translate_after_variant(const struct side_type_variant *v, void *priv)
 	field = scope->field;
 	ctx->state = scope->state;
 	ctx->field = field;
+	/* Restore what this scope overwrote. */
+	ctx->elem_type = scope->elem_type;
+	ctx->vla_length_type = scope->vla_length_type;
+	ctx->enum_container_type = scope->enum_container_type;
+	ctx->array_length = scope->array_length;
 	memset(scope, 0, sizeof(*scope));
 	if (ctx->fail)
 		goto fail;
@@ -3880,6 +3908,18 @@ void side_translate_before_struct(const struct side_type_struct *side_struct __a
 	 */
 	scope->field = ctx->field;
 	scope->state = ctx->state;
+	/*
+	 * The members overwrite what the enclosing array, sequence or
+	 * enumeration is building: save it for the end of this scope.
+	 */
+	scope->elem_type = ctx->elem_type;
+	scope->vla_length_type = ctx->vla_length_type;
+	scope->enum_container_type = ctx->enum_container_type;
+	scope->array_length = ctx->array_length;
+	ctx->elem_type = NULL;
+	ctx->vla_length_type = NULL;
+	ctx->enum_container_type = NULL;
+	ctx->array_length = 0;
 	ctx->state = SIDE_TRANSLATE_TOPLEVEL;
 }
 
@@ -3905,6 +3945,11 @@ void side_translate_after_struct(const struct side_type_struct *side_struct, voi
 	/* Restore the enclosing context, overwritten by the members. */
 	ctx->state = scope->state;
 	ctx->field = field;
+	/* Restore what the members of this scope overwrote. */
+	ctx->elem_type = scope->elem_type;
+	ctx->vla_length_type = scope->vla_length_type;
+	ctx->enum_container_type = scope->enum_container_type;
+	ctx->array_length = scope->array_length;
 	memset(scope, 0, sizeof(*scope));
 	if (ctx->fail)
 		goto fail;
