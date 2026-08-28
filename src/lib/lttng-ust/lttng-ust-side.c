@@ -4288,10 +4288,16 @@ void side_translate_after_gather_array(const struct side_type_gather_array *t, v
  * so it can differ between the size pass and the write pass of the
  * serialization. What is recorded is the length of the size pass, and
  * the elements which follow it are truncated or filled to match, which
- * requires knowing where they end. Only elements of a fixed size are
- * therefore accepted: they are also the only ones which record nothing
- * of their own between the length of the sequence and the size of its
- * elements, which is how the write pass finds that size.
+ * requires knowing where they end. The write pass reads that extent
+ * from the entry which follows the length in the list of sizes the
+ * size pass built, so an element which appends an entry of its own
+ * between the two would leave the write pass reading the wrong one.
+ *
+ * The elements accepted are therefore the ones which record nothing of
+ * their own there: the gather scalars, and a gathered structure or
+ * array built out of them, to any depth. A gathered string and a
+ * gathered sequence both do record one, and are refused; they are also
+ * the only two whose own size is not a property of the description.
  */
 static
 bool side_gather_elem_is_fixed_size(const struct side_type *elem_type)
@@ -4307,6 +4313,28 @@ bool side_gather_elem_is_fixed_size(const struct side_type *elem_type)
 	{
 		const struct side_type *container =
 			side_ptr_get(elem_type->u.side_gather.u.side_enum.elem_type);
+
+		return side_gather_elem_is_fixed_size(container);
+	}
+	case SIDE_TYPE_GATHER_STRUCT:
+	{
+		const struct side_type_struct *side_struct =
+			side_ptr_get(elem_type->u.side_gather.u.side_struct.type);
+		uint32_t i;
+
+		for (i = 0; i < side_array_length(&side_struct->fields); i++) {
+			const struct side_event_field *field =
+				side_array_at(&side_struct->fields, i);
+
+			if (!side_gather_elem_is_fixed_size(&field->side_type))
+				return false;
+		}
+		return true;
+	}
+	case SIDE_TYPE_GATHER_ARRAY:
+	{
+		const struct side_type *container =
+			side_ptr_get(elem_type->u.side_gather.u.side_array.type.elem_type);
 
 		return side_gather_elem_is_fixed_size(container);
 	}
