@@ -781,7 +781,7 @@ unsupported type. Byte order is not among them any more, see 3.10:
   serialization pass, so the write pass has to know where the elements
   of the size pass ended, and it finds that size in the entry which
   follows the length only if the elements record nothing of their own.
-#### The gather types [DONE, see 3.11, including filtering on them]
+#### The gather types [DONE, see 3.11, including filtering and capturing]
 
 #### The dynamic types and variadic events
 
@@ -1371,11 +1371,7 @@ the byte order is the one of the type the gather wraps. Bit-packed
 gathered values are refused, as the translation refuses them.
 
 The six gather scalars are covered: integer, pointer, boolean, byte,
-float and enumeration. A gathered structure is not, being unreachable
-by name, since the filter grammar addresses the top level fields of
-the payload; nor are the elements of a gathered array or sequence,
-which are not arguments of their own and so cannot be indexed the way
-the elements of a stack-copy array are. Both keep failing closed.
+float and enumeration.
 
 Verified on an event carrying every gather scalar as a top level
 field, one reached through a pointer rather than directly and one
@@ -1388,6 +1384,86 @@ unsigned and signed integer, byte, pointer, binary32, binary64,
 string, boolean, enumeration, and a sequence reached through a pointer
 access mode, plus a top level gathered integer, a big-endian gathered
 integer, and a gathered array.
+
+#### Filtering below the top level [DONE]
+
+The filter grammar addresses more than the top level fields of the
+payload, and the whole of it now resolves against the side types: the
+field of a structure, the element of an array or of a sequence, and
+any mix of the two, to any depth.
+
+Three things were missing, each added in turn:
+
+- **The field of a structure.** The session daemon turns a chain of
+  symbols with no index in it into one dotted reloc symbol, so `a.b`
+  reaches the linker as a single name, and the operand of a field
+  reference is a 16-bit index which cannot hold a path. The linker
+  resolves the name to a path of argument indices, puts the resolution
+  in the data area of the linked bytecode, and the operand points into
+  it. Each level of a gathered structure resolves its own access and
+  offset, and the member reached at the end applies its own to what
+  the walk arrived at, so the gather loaders take the address they
+  read from rather than the argument which carries it.
+
+- **The element of a gathered container.** Those elements are not
+  arguments of their own: they are read from the memory the container
+  resolves to, one element size apart, and the length of a gathered
+  sequence is itself gathered. The specialize phase puts the type of
+  the container in the data of the `get_index` and types the element
+  statically; the interpreter checks the index against the length and
+  leaves the address of the element rather than an argument, which a
+  marker distinguishes. An element which is not of a fixed size, which
+  a gathered string is not, would leave the elements after it
+  unreachable, and is refused.
+
+- **A symbol against an object.** An expression which mixes the two,
+  `a.b[2].c`, resolves its symbols one at a time rather than as one
+  dotted name, and ended on a symbol applied to an object, which the
+  specialize phase used to refuse. A symbol against a structure is the
+  index of one of its members. What is descended into is what the
+  specialize phase resolved rather than the type the value would be
+  loaded as, since the element of a stack-copy container is typed by
+  its argument and is a structure all the same.
+
+Verified on a stack-copy array of structures containing an array, on a
+sequence in a structure in a sequence in a structure in an array, and
+on the gathered equivalents: `outer.list[1].vals[2]`,
+`g.inner.vals[0]` and `top[0].mid[1].leaf[0]` all match, and the
+values which must not match do not.
+
+#### Capturing below the top level [DONE]
+
+Capturing such a field was a separate restriction, in lttng-tools
+rather than here: the capture expression parser of the client rejected
+a subfield before any bytecode was generated ("Capturing subfields is
+not supported"). Its grammar already parsed `a.b` and `a[3].b`, and
+their intermediate representation is a chain of symbols and indices,
+but no event expression could hold a symbol applied to another
+expression, so the parser only accepted a root field name followed by
+at most one index.
+
+`LTTNG_EVENT_EXPR_TYPE_STRUCT_FIELD_MEMBER` is that expression, built
+the way the array field element already is. The parser now walks the
+chain rather than matching a fixed shape, and the bytecode generator
+emits a `get_symbol` after what the parent emitted — the same bytecode
+the filter of that expression produces, which is why nothing was
+needed here: the specialize phase and the interpreter already resolve
+it.
+
+A tracer which cannot reach the member reports the value as
+unavailable, which is what an out-of-bounds index already does. The
+LTTng-UST bytecode linker refuses a nested field for a classic
+tracepoint ("Nested fields not implemented yet"), so a capture
+descriptor which reaches too far there costs the other captures of the
+same event rule nothing.
+
+Verified on a notifier over the side events: `nested.inner.deep`,
+`compound.seq[3]`, `structs[1].val`, `flat.s`,
+`outer.list[0].vals[2]`, `g.inner.vals[1]` and
+`top[1].mid[0].leaf[2]` all capture the expected values, a member
+which does not exist and a capture of a whole structure or array
+report unavailable, and a classic tracepoint keeps running with its
+other captures intact.
 
 ### 3.12 Alignment of the payload, and of a variant option [DONE]
 
@@ -1690,14 +1766,20 @@ lttng-ust:
 10. DONE: filtering and capturing on a gather field, for the six
    gather scalars, by carrying the type of the payload field to the
    interpreter through both of its field lookup paths (3.11).
-11. FUTURE WORK: type coverage (3.4). In ascending cost: the remaining
-   restrictions within the supported types are lttng-ust-only, as is
-   filtering on a gathered structure or on the element of a gathered
-   array or sequence; the dynamic types and variadic events need a
-   self-describing encoding carried in a blob field, for which
-   MessagePack is the candidate and is already in the tree; null,
-   optional and bitmap enumeration need the whole stack.
-12. FUTURE WORK: report the events dropped for unsupported field types
+11. DONE: filtering and capturing below the top level (3.11): the
+   member of a structure, the element of a gathered array or
+   sequence, and any mix of the two, to any depth, whether the values
+   are copied onto the argument vector or gathered from memory. The
+   capture side needed lttng-tools: a capture expression which
+   reaches a member of a structure field, which its parser used to
+   refuse.
+12. FUTURE WORK: type coverage (3.4). In ascending cost: the remaining
+   restrictions within the supported types are lttng-ust-only; the
+   dynamic types and variadic events need a self-describing encoding
+   carried in a blob field, for which MessagePack is the candidate
+   and is already in the tree; null, optional and bitmap enumeration
+   need the whole stack.
+13. FUTURE WORK: report the events dropped for unsupported field types
    through something other than a DBG line (3.4), so that an
    application does not silently lose an event.
 
