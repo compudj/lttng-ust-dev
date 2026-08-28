@@ -696,10 +696,114 @@ about the statedump itself.
   registered with it. Regular events are emitted with a key matching
   them all, so they keep reaching every session.
 
-### 3.4 Types unsupported everywhere: optional, bitmap enumeration [FUTURE WORK]
+### 3.4 Type coverage: what the tracer accepts and what it refuses [PARTIAL]
 
-Two side types cannot be expressed anywhere in the stack. Both need
-the same three layers, and neither is blocked on side.
+The authority is the description visitor table
+`side_translate_visitor_callbacks` in `lttng-ust-side.c`. Every entry
+bound to a `side_translate_unsupported_*` callback calls
+`side_translate_set_fail()`, and the failure mode is coarse: the
+*event* is dropped, not the field. `lttng_ust_side_event_create()`
+returns NULL, logs "Skipping side event %s:%s: unsupported field
+types", and the event is never registered with the LTTng tracer. An
+application which puts one unsupported field in one event loses that
+whole event, silently unless debug output is enabled.
+
+Of the 48 labels of `enum side_type_label`, 19 are accepted. 23 are
+refused by the visitor table, and 6 more (`U128`, `S128`,
+`FLOAT_BINARY16`, `FLOAT_BINARY128`, `STRING_UTF16`, `STRING_UTF32`)
+reach a supported callback but are refused by its size or encoding
+restrictions.
+
+| Group | Status |
+| --- | --- |
+| `BOOL`, `U8`-`U64`, `S8`-`S64`, `BYTE`, `POINTER` | supported |
+| `FLOAT_BINARY32`, `FLOAT_BINARY64` | supported |
+| `STRING_UTF8` | supported |
+| `STRUCT`, `ARRAY`, `VLA`, `VARIANT`, `ENUM` | supported |
+| `U128`, `S128` | refused (see restrictions below) |
+| `FLOAT_BINARY16`, `FLOAT_BINARY128` | refused |
+| `STRING_UTF16`, `STRING_UTF32` | refused |
+| `NULL` | refused, nothing in the stack |
+| `OPTIONAL` | refused, nothing in the stack |
+| `ENUM_BITMAP` | refused, nothing in the stack |
+| the 10 `GATHER_*` types | refused, tracer-side only |
+| `DYNAMIC` and the 9 `DYNAMIC_*` types | refused, tracer-side only |
+
+Above the type level, variadic events are refused as a whole
+(`lttng_ust_side_event_create()` skips
+`SIDE_EVENT_FLAG_VARIADIC`), and lttng-ust never calls
+`side_tracer_callback_variadic_register()`.
+
+#### Restrictions within the supported types
+
+Five parameterizations which side can describe are refused by types
+which are otherwise supported. Each fails the whole event, like an
+unsupported type:
+
+- **Integers wider than 64 bits.** `side_integer_alignof()` accepts 1,
+  2, 4 and 8 bytes only, so `U128` and `S128` never translate.
+- **Bit-packed integers and booleans.** `side_integer_type_to_lttng()`
+  rejects `len_bits` different from `integer_size * CHAR_BIT`. The
+  LTTng type and the protocol carry the size in bits, so the
+  *description* can express a bitfield, but the payload is written in
+  whole bytes (`bt_bitfield_write()` serves the compact event header,
+  not the payload) and no tracepoint emits a sub-byte field. Lifting
+  this needs serializer work, not only translation.
+- **Floats other than binary32 and binary64.** The translation switches
+  on `float_size` 4 and 8 to derive the mantissa and exponent digits;
+  binary16 and binary128 fall in the default case.
+- **Strings which are not UTF-8.** `unit_size != 1` is refused and the
+  encoding is hardcoded to `lttng_ust_string_encoding_UTF8`, for field
+  types, for enumeration labels and for attribute values. LTTng-UST's
+  `enum lttng_ust_string_encoding` has no UTF-16 or UTF-32.
+- **Non-host byte order**, for integers and for floats. Note that the
+  *serializer* does handle reverse byte order (it byte-swaps on the
+  way into the ring buffer); only the description translation refuses
+  it.
+
+#### The gather types
+
+Ten labels, `GATHER_BOOL`, `GATHER_INTEGER`, `GATHER_BYTE`,
+`GATHER_POINTER`, `GATHER_FLOAT`, `GATHER_STRING`, `GATHER_STRUCT`,
+`GATHER_ARRAY`, `GATHER_VLA` and `GATHER_ENUM`, describe values read
+from an address rather than copied onto the argument vector.
+
+This is the cheapest of the missing groups, and the only one which
+needs nothing outside lttng-ust: a gather integer *is* an integer as
+far as the description goes, so the translation of each gather type is
+close to a copy of its stack-copy counterpart, and the resulting LTTng
+type, the protocol and the session daemon are unchanged. The work is
+in the serializer, which must read through the address with the right
+`side_type_gather_access_mode` (direct or pointer dereference) and
+honour the offsets, rather than pulling the value from the argument
+vector.
+
+#### The dynamic types and variadic events
+
+`SIDE_TYPE_DYNAMIC` is the placeholder which a static field uses to
+announce a value whose type is chosen at call site; the nine
+`SIDE_TYPE_DYNAMIC_*` labels are those runtime types. Variadic events
+carry the same values as named fields appended at the call site.
+
+The plumbing exists on the LTTng side: `enum lttng_ust_type` has
+`lttng_ust_type_dynamic`, and `serialize_dynamic_type()` expresses it
+over the wire as a `variant_nestable` with a tag field and one choice
+per dynamic type — which is the same machinery the side variant
+support reused, and which is therefore known to work end to end. What
+is missing is the mapping: side's dynamic values would have to be
+matched onto the LTTng dynamic type's fixed choice set, and a variadic
+event's runtime-appended fields onto a description which LTTng
+requires to be fixed at registration.
+
+#### The null type
+
+`SIDE_TYPE_NULL` is a value which carries no data. LTTng-UST has no
+equivalent, the protocol has none, and CTF has no null field class.
+
+A candidate cheap mapping, to be verified rather than assumed: a
+structure with no members, which CTF 2 can express and TSDL writes as
+an empty structure, would preserve the field and its name while
+carrying no payload.
 
 #### The optional type
 
@@ -1125,6 +1229,14 @@ lttng-ust:
 5. `-Wl,-z,nodelete`; dlsym-probe for old-libside fallback.
 6. Update the lttng-ust-comm.c locking doc block: L1 order; F1
    invariant; agent-progress wait rules; removal of ust_fork_mutex.
+7. FUTURE WORK: type coverage (3.4). In ascending cost: the gather
+   types and the restrictions within the supported types are
+   lttng-ust-only; the dynamic types and variadic events need a
+   mapping onto machinery which already exists end to end; null,
+   optional and bitmap enumeration need the whole stack.
+8. FUTURE WORK: report the events dropped for unsupported field types
+   through something other than a DBG line (3.4), so that an
+   application does not silently lose an event.
 
 ---
 
