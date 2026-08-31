@@ -6,12 +6,15 @@
 
 # Drive LTTng and Babeltrace over the libside example application.
 #
-# Three recording sessions in a row:
+# Two recording sessions and two readings of the first one:
 #
-#   1. everything the three events carry, decoded by babeltrace2;
+#   1. everything the four events carry, decoded by babeltrace2;
 #   2. the same events under filters which reach below the top level of
 #      the payload, so that only some of the instances are recorded;
-#   3. a trigger which captures subfields of an event.
+#   3. the attributes which say that a field holds a network address,
+#      from the description of the application to the rendering of the
+#      trace;
+#   4. a trigger which captures subfields of an event.
 #
 # Nothing outside a temporary directory is touched, and the session and
 # the trigger are removed on the way out.
@@ -102,7 +105,7 @@ record() {
 	babeltrace2 "$_output"
 }
 
-heading "1. Record everything the three events carry"
+heading "1. Record everything the four events carry"
 
 cat <<'EOF'
 side_example:reading   the scalar types, and the three copies of one
@@ -115,6 +118,9 @@ side_example:snapshot  fields gathered from the memory of the
                        application, including a sequence of structures
                        reached through a pointer whose length is read
                        from the structure which holds it
+side_example:packet    fields which an attribute describes as network
+                       addresses, rendered as addresses rather than as
+                       the numbers and bytes they hold
 
 EOF
 
@@ -143,7 +149,7 @@ onto the argument vector or gathered from memory:
              copied for the filter to look at: it reads the memory of
              the application through the description.
 
-Three of the eight events are recorded.
+Three of the eight events those three rules match are recorded.
 
 EOF
 
@@ -152,7 +158,68 @@ record filtered \
 	'side_example:frame' 'channels[1].samples[2] == 61' \
 	'side_example:snapshot' 'sensor.name == "gpu0" && sensor.axes[2].reading == 42'
 
-heading "3. Capture subfields with a trigger"
+heading "3. An attribute says how a field is meant to be read"
+
+cat <<'EOF'
+The application describes five of the fields of side_example:packet
+with an attribute:
+
+  saddr, daddr, peer.addr   lttng.fmt.ipv4
+  saddr6, daddr6            lttng.fmt.ipv6
+
+An attribute belongs to the type it describes, so it travels with it:
+libside hands it to LTTng-UST, which reports it to the session daemon,
+which writes it to the metadata of the trace as a property of the field
+class. Nothing along that path knows what an address is; each one
+carries the attribute across.
+
+Here is the metadata of the event as Babeltrace reads it back, and what
+the trace holds:
+
+EOF
+
+babeltrace2 "$WORKDIR/all" -c sink.text.details |
+	sed -n '/Event class .side_example:packet/,/^$/p'
+
+babeltrace2 "$WORKDIR/all" -c sink.text.details |
+	awk '/^Event .side_example:packet/ { seen = 1 }
+	     seen { print; if (NF == 0) exit }'
+
+cat <<'EOF'
+The pretty printer renders a field which carries one of those
+attributes as an address instead, wherever the field is: peer.addr is
+a member of a structure.
+
+EOF
+
+PACKETS=$(babeltrace2 "$WORKDIR/all" | grep 'side_example:packet')
+echo "$PACKETS"
+
+case $PACKETS in
+*"saddr = 10.0.0.1"*)
+	cat <<'EOF'
+
+The trace holds the same bytes either way: an attribute says how to
+read a value, not what is recorded. A reader which does not know
+lttng.fmt still decodes every one of those fields, as the details
+above show.
+
+EOF
+	;;
+*)
+	cat <<'EOF'
+
+Note: this babeltrace2 rendered those fields as the numbers and the
+bytes they hold, so its pretty printer does not act on the lttng.fmt
+attributes. Nothing is wrong with the trace: the attributes are in the
+metadata printed above, and every field decodes. Only the rendering
+differs.
+
+EOF
+	;;
+esac
+
+heading "4. Capture subfields with a trigger"
 
 if ! lttng add-trigger --help >/dev/null 2>&1; then
 	echo "This session daemon has no add-trigger command: skipping."

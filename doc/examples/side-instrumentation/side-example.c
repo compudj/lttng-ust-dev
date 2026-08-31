@@ -11,7 +11,7 @@
  * liblttng-ust preloaded, as run-side-example does, and LTTng
  * subscribes to those same events and records them.
  *
- * The three events below are each about one thing:
+ * The four events below are each about one thing:
  *
  *   side_example:reading   the scalar types, and integers and floats
  *                          which keep the byte order they are emitted
@@ -25,12 +25,16 @@
  *                          the memory of the application, described by
  *                          their offset, rather than copied onto the
  *                          argument vector by the caller
+ *   side_example:packet    the attributes, which say how a field is
+ *                          meant to be read rather than what it holds
  */
 
 #include <side/trace.h>
 
+#include <arpa/inet.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 /*
  * side_example:reading
@@ -379,6 +383,147 @@ static void emit_snapshots(void)
 	}
 }
 
+/*
+ * side_example:packet
+ * -------------------
+ *
+ * An attribute says how a field is meant to be read, which its type
+ * does not: the addresses below are an unsigned integer and sixteen
+ * bytes, and nothing about those types makes them network addresses.
+ * The attribute travels with the description into the metadata of the
+ * trace, where a consumer which knows it renders the value as an
+ * address, and one which does not still decodes the field.
+ */
+
+/*
+ * The sixteen bytes of an IPv6 address. Their element type is the byte
+ * rather than an integer, which is what makes the tracer record the
+ * array as a blob.
+ */
+static side_define_array(ipv6_addr, side_elem(side_type_byte()), 16,
+	side_attr_list(side_attr("lttng.fmt.ipv6", side_attr_bool(true))));
+
+/*
+ * An address is not always a field of the event: this one is a member
+ * of a structure, and carries its attribute just the same.
+ *
+ * struct { u32 addr; u16 port; }
+ */
+static side_define_struct(endpoint_struct,
+	side_field_list(
+		side_field_u32_be("addr",
+			side_attr_list(side_attr("lttng.fmt.ipv4", side_attr_bool(true)))),
+		side_field_u16("port"),
+	)
+);
+
+side_static_event(packet_event, "side_example", "packet", SIDE_LOGLEVEL_INFO,
+	side_field_list(
+		side_field_u32("seq"),
+		/*
+		 * An IPv4 address is four bytes in network byte order.
+		 * Declared big endian, the trace holds the bytes which
+		 * were on the wire whatever the byte order of the host,
+		 * and a reader converts them once.
+		 */
+		side_field_u32_be("saddr",
+			side_attr_list(side_attr("lttng.fmt.ipv4", side_attr_bool(true)))),
+		side_field_u32_be("daddr",
+			side_attr_list(side_attr("lttng.fmt.ipv4", side_attr_bool(true)))),
+		side_field_array("saddr6", ipv6_addr),
+		side_field_array("daddr6", ipv6_addr),
+		side_field_struct("peer", endpoint_struct),
+		side_field_u16("length"),
+	)
+);
+
+static void parse_ipv4(const char *str, struct in_addr *addr)
+{
+	if (inet_pton(AF_INET, str, addr) != 1) {
+		fprintf(stderr, "not an IPv4 address: %s\n", str);
+		exit(EXIT_FAILURE);
+	}
+}
+
+static void parse_ipv6(const char *str, struct in6_addr *addr)
+{
+	if (inet_pton(AF_INET6, str, addr) != 1) {
+		fprintf(stderr, "not an IPv6 address: %s\n", str);
+		exit(EXIT_FAILURE);
+	}
+}
+
+static void emit_packets(void)
+{
+	static const struct {
+		const char *saddr, *daddr, *saddr6, *daddr6, *peer;
+		uint16_t port, length;
+	} packets[] = {
+		{ "10.0.0.1", "192.168.1.1", "2001:db8::1", "2001:db8::2",
+			"10.0.0.254", 443, 1500 },
+		/* The destination is the same host over both families. */
+		{ "172.16.5.4", "8.8.8.8", "fe80::1", "::ffff:8.8.8.8",
+			"172.16.5.1", 53, 590 },
+		{ "127.0.0.1", "255.255.255.255", "::", "ff02::1",
+			"127.0.0.1", 9, 64 },
+	};
+	unsigned int i;
+
+	for (i = 0; i < 3; i++) {
+		struct in_addr saddr, daddr, peer;
+		struct in6_addr saddr6, daddr6;
+
+		parse_ipv4(packets[i].saddr, &saddr);
+		parse_ipv4(packets[i].daddr, &daddr);
+		parse_ipv4(packets[i].peer, &peer);
+		parse_ipv6(packets[i].saddr6, &saddr6);
+		parse_ipv6(packets[i].daddr6, &daddr6);
+
+		{
+			/*
+			 * An argument list is a literal: the sixteen
+			 * bytes of an address are written out rather
+			 * than pushed in a loop.
+			 */
+			side_arg_define_array(arg_saddr6, side_arg_list(
+				side_arg_byte(saddr6.s6_addr[0]), side_arg_byte(saddr6.s6_addr[1]),
+				side_arg_byte(saddr6.s6_addr[2]), side_arg_byte(saddr6.s6_addr[3]),
+				side_arg_byte(saddr6.s6_addr[4]), side_arg_byte(saddr6.s6_addr[5]),
+				side_arg_byte(saddr6.s6_addr[6]), side_arg_byte(saddr6.s6_addr[7]),
+				side_arg_byte(saddr6.s6_addr[8]), side_arg_byte(saddr6.s6_addr[9]),
+				side_arg_byte(saddr6.s6_addr[10]), side_arg_byte(saddr6.s6_addr[11]),
+				side_arg_byte(saddr6.s6_addr[12]), side_arg_byte(saddr6.s6_addr[13]),
+				side_arg_byte(saddr6.s6_addr[14]), side_arg_byte(saddr6.s6_addr[15])));
+			side_arg_define_array(arg_daddr6, side_arg_list(
+				side_arg_byte(daddr6.s6_addr[0]), side_arg_byte(daddr6.s6_addr[1]),
+				side_arg_byte(daddr6.s6_addr[2]), side_arg_byte(daddr6.s6_addr[3]),
+				side_arg_byte(daddr6.s6_addr[4]), side_arg_byte(daddr6.s6_addr[5]),
+				side_arg_byte(daddr6.s6_addr[6]), side_arg_byte(daddr6.s6_addr[7]),
+				side_arg_byte(daddr6.s6_addr[8]), side_arg_byte(daddr6.s6_addr[9]),
+				side_arg_byte(daddr6.s6_addr[10]), side_arg_byte(daddr6.s6_addr[11]),
+				side_arg_byte(daddr6.s6_addr[12]), side_arg_byte(daddr6.s6_addr[13]),
+				side_arg_byte(daddr6.s6_addr[14]), side_arg_byte(daddr6.s6_addr[15])));
+			/*
+			 * s_addr already holds the four bytes in
+			 * network byte order, which is what the big
+			 * endian field of the description expects.
+			 */
+			side_arg_define_struct(arg_peer, side_arg_list(
+				side_arg_u32(peer.s_addr),
+				side_arg_u16(packets[i].port)));
+
+			side_event(packet_event, side_arg_list(
+				side_arg_u32(i),
+				side_arg_u32(saddr.s_addr),
+				side_arg_u32(daddr.s_addr),
+				side_arg_array(arg_saddr6),
+				side_arg_array(arg_daddr6),
+				side_arg_struct(arg_peer),
+				side_arg_u16(packets[i].length)));
+		}
+	}
+}
+
 int main(void)
 {
 	emit_readings();
@@ -387,5 +532,7 @@ int main(void)
 	printf("emitted 2 side_example:frame events\n");
 	emit_snapshots();
 	printf("emitted 3 side_example:snapshot events\n");
+	emit_packets();
+	printf("emitted 3 side_example:packet events\n");
 	return 0;
 }
