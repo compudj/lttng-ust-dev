@@ -4,9 +4,9 @@
 #
 # SPDX-License-Identifier: MIT
 
-# Drive LTTng and Babeltrace over the libside example application.
+# Drive LTTng and Babeltrace over the libside example applications.
 #
-# Two recording sessions and two readings of the first one:
+# Three recording sessions and two readings of the first one:
 #
 #   1. everything the four events carry, decoded by babeltrace2;
 #   2. the same events under filters which reach below the top level of
@@ -14,7 +14,8 @@
 #   3. the attributes which say that a field holds a network address,
 #      from the description of the application to the rendering of the
 #      trace;
-#   4. a trigger which captures subfields of an event.
+#   4. the same instrumentation API from a C++ program;
+#   5. a trigger which captures subfields of an event.
 #
 # Nothing outside a temporary directory is touched, and the session and
 # the trigger are removed on the way out.
@@ -25,6 +26,7 @@ DIR=$(dirname "$0")
 DIR=$(readlink -f "$DIR")
 
 APP="$DIR/side-example"
+APP_CXX="$DIR/side-example-cxx"
 SESSION="side-example-$$"
 TRIGGER="side-example-$$"
 WORKDIR=
@@ -56,6 +58,8 @@ command -v babeltrace2 >/dev/null 2>&1 ||
 	die "the babeltrace2 command is not in PATH (install babeltrace2)"
 [ -x "$APP" ] ||
 	die "$APP is not built: run make in $DIR first"
+[ -x "$APP_CXX" ] ||
+	die "$APP_CXX is not built: run make in $DIR first"
 
 # The application is not linked against the tracer: preload it. Prefer
 # the one of the surrounding build tree over the installed one, so that
@@ -69,8 +73,12 @@ WORKDIR=$(mktemp -d "${TMPDIR:-/tmp}/side-example.XXXXXX") ||
 	die "failed to create a temporary directory"
 trap cleanup EXIT INT TERM
 
+# The application which record() runs. Sections 1 to 3 trace the C
+# program; section 4 sets this to the C++ one.
+RECORD_APP=$APP
+
 run_app() {
-	LD_PRELOAD="$UST_LIB" "$APP" >/dev/null ||
+	LD_PRELOAD="$UST_LIB" "$RECORD_APP" >/dev/null ||
 		die "the example application failed"
 }
 
@@ -219,7 +227,34 @@ EOF
 	;;
 esac
 
-heading "4. Capture subfields with a trigger"
+heading "4. The same instrumentation from C++"
+
+cat <<'EOF'
+side-example-cxx is a C++ program. libside has one instrumentation API
+and it is the C one, so the macros are the same; what differs is what a
+C++ program hands them.
+
+  request      a std::string recorded through c_str(), and an enum
+               class through its underlying type, with the mappings
+               naming its values in the trace
+  scope_begin  a scope guard: its constructor and its destructor emit
+  scope_end    the pair, so an early return or an exception closes the
+               scope as falling off the end does
+  buffer       the elements of a std::vector, read from the memory of
+               the application through a view whose layout the standard
+               guarantees, rather than pushed one by one
+
+The scope events are at the DEBUG log level and the others at INFO, so
+a session can record the work of the application without its scopes,
+with --loglevel=INFO.
+
+EOF
+
+RECORD_APP=$APP_CXX
+record cxx 'side_example_cxx:*' ''
+RECORD_APP=$APP
+
+heading "5. Capture subfields with a trigger"
 
 if ! lttng add-trigger --help >/dev/null 2>&1; then
 	echo "This session daemon has no add-trigger command: skipping."

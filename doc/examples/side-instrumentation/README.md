@@ -6,14 +6,15 @@ SPDX-License-Identifier: CC-BY-SA-4.0
 
 # libside instrumentation
 
-An application instrumented with [libside](https://github.com/efficios/libside),
-recorded by LTTng and decoded by Babeltrace.
+Two applications instrumented with
+[libside](https://github.com/efficios/libside), one in C and one in
+C++, recorded by LTTng and decoded by Babeltrace.
 
-`side-example` depends on libside only. It does not link against
-LTTng-UST, and it does not know a tracer exists: an event which nobody
-subscribed to costs a predicted-not-taken branch. `run-side-example`
-preloads `liblttng-ust.so.1`, which subscribes to those same events and
-records them.
+`side-example` and `side-example-cxx` depend on libside only. They do
+not link against LTTng-UST, and they do not know a tracer exists: an
+event which nobody subscribed to costs a predicted-not-taken branch.
+`run-side-example` preloads `liblttng-ust.so.1`, which subscribes to
+those same events and records them.
 
     make
     ./run-side-example
@@ -27,7 +28,7 @@ whose `sink.text.pretty` acts on the `lttng.fmt` attributes; every
 other section, and the trace itself, are the same either way. The
 script says which of the two it found.
 
-## What the four events are for
+## What the four events of `side-example` are for
 
 `side_example:reading` — the scalar types: unsigned and signed
 integers, a string, an enumeration, a `binary64`, a boolean. It also
@@ -113,7 +114,46 @@ the four bytes which were on the wire whatever the byte order of the
 host, and the reader converts them once. An IPv6 address is an array of
 `side_type_byte`, which the tracer records as a blob.
 
-**4. Capture subfields with a trigger.** A capture descriptor names
+**4. The same instrumentation from C++.** `side-example-cxx` is a C++
+program. libside has one instrumentation API and it is the C one, so
+the macros are the same ones `side-example.c` uses; what differs is
+what a C++ program hands them.
+
+`side_example_cxx:request` — a `std::string` recorded through
+`c_str()`, and an `enum class` through its underlying type, with the
+mappings naming its values in the trace.
+
+`side_example_cxx:scope_begin` and `side_example_cxx:scope_end` — the
+pair a scope guard emits. The destructor runs however the scope is
+left, so an early return or an exception closes the scope as falling
+off the end does. They are at the `DEBUG` log level and the other
+events at `INFO`, so a session can record the work of the application
+without its scopes, with `--loglevel=INFO`.
+
+`side_example_cxx:buffer` — the elements of a `std::vector`. They are
+not known when the event is described and an argument list is a
+literal, so they cannot be pushed one by one: the description says
+where to read them from instead, through a view whose layout the
+standard guarantees rather than the innards of the vector, which no
+offset can name portably.
+
+Two things to know before instrumenting a C++ translation unit:
+
+- The macros need the GNU dialect, which is what a compiler uses when
+  no `-std` is given. They rely on the `, ## __VA_ARGS__` extension to
+  leave out an optional attribute list, so `-std=c++17` fails to
+  compile them where `-std=gnu++17` succeeds. This is not a property of
+  C++: `-std=c11` fails just the same. `-Wpedantic` does not work on
+  the C++ program either, and that one is specific to C++: an event or
+  a type with no attributes declares an array of none, and C++ rejects
+  a zero size array where C accepts it.
+- `side_static_event()` cannot expand to a static variable, since C++
+  has no way to forward declare one. It defines the event in an
+  anonymous namespace instead, which gives it the same scope. An event
+  is therefore defined at namespace scope, never inside a class, and a
+  member function refers to it like any other name.
+
+**5. Capture subfields with a trigger.** A capture descriptor names
 what a notification carries when an event rule matches, and it reaches
 the same fields a filter does:
 
@@ -161,6 +201,18 @@ events as
 The second section decodes three of the eight events its three rules
 match: the reading whose sequence number is 1, the second frame, and
 the `gpu0` snapshot.
+
+The fourth section decodes the twelve events of the C++ program, four
+per request:
+
+    side_example_cxx:scope_begin: { name = "handle_request" }
+    side_example_cxx:request: { method = "GET", path = "/index.html", outcome = ( "ok" : container = 0 ), cached = 1, nr_samples = 3 }
+    side_example_cxx:buffer: { stats = { total = 60, _samples_length = 3, samples = [ [0] = 10, [1] = 20, [2] = 30 ] } }
+    side_example_cxx:scope_end: { name = "handle_request", duration_us = 43 }
+
+The third request passes an empty vector, which is recorded as the
+sequence of no elements it is: `_samples_length = 0, samples = [ ]`.
+The durations vary from one run to the next.
 
 ## Restrictions
 

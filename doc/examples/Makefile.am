@@ -131,6 +131,7 @@ dist_doc_examples_getcpu_override_DATA = getcpu-override/Makefile \
 
 dist_doc_examples_side_instrumentation_DATA = side-instrumentation/Makefile \
 	side-instrumentation/side-example.c \
+	side-instrumentation/side-example-cxx.cpp \
 	side-instrumentation/run-side-example \
 	side-instrumentation/README.md
 
