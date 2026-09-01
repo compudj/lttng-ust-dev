@@ -434,7 +434,7 @@ static int side_gather_load_field_integer(const struct side_type *side_type,
 	case SIDE_TYPE_GATHER_ENUM:
 	{
 		const struct side_type *container =
-			side_ptr_get(gather->u.side_enum.elem_type);
+			side_ptr_rel_get(gather->u.side_enum.elem_type);
 		const struct side_type_gather_integer *t;
 
 		if (side_enum_get(container->type) != SIDE_TYPE_GATHER_INTEGER)

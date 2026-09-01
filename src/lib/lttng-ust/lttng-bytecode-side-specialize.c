@@ -513,7 +513,7 @@ static bool side_elem_rev_bo(const struct side_type *elem_type)
 	case SIDE_TYPE_ENUM:
 	{
 		const struct side_type *container =
-			side_ptr_get(elem_type->u.side_enum.elem_type);
+			side_ptr_rel_get(elem_type->u.side_enum.elem_type);
 
 		return side_integer_rev_bo(&container->u.side_integer);
 	}
@@ -580,13 +580,13 @@ static int specialize_side_load_object(const struct side_type *side_type,
 		break;
 	case SIDE_TYPE_ARRAY:
 		load->object_type = OBJECT_TYPE_ARRAY;
-		load->rev_bo = side_elem_rev_bo(side_ptr_get(
-			side_ptr_get(side_type->u.side_array)->elem_type));
+		load->rev_bo = side_elem_rev_bo(side_ptr_rel_get(
+			side_ptr_rel_get(side_type->u.side_array)->elem_type));
 		break;
 	case SIDE_TYPE_VLA:
 		load->object_type = OBJECT_TYPE_SEQUENCE;
-		load->rev_bo = side_elem_rev_bo(side_ptr_get(
-			side_ptr_get(side_type->u.side_vla)->elem_type));
+		load->rev_bo = side_elem_rev_bo(side_ptr_rel_get(
+			side_ptr_rel_get(side_type->u.side_vla)->elem_type));
 		break;
 	/*
 	 * The elements of a gathered array or sequence are not
@@ -596,12 +596,12 @@ static int specialize_side_load_object(const struct side_type *side_type,
 	 */
 	case SIDE_TYPE_GATHER_ARRAY:
 		load->object_type = OBJECT_TYPE_ARRAY;
-		load->rev_bo = side_elem_rev_bo(side_ptr_get(
+		load->rev_bo = side_elem_rev_bo(side_ptr_rel_get(
 			side_type->u.side_gather.u.side_array.type.elem_type));
 		break;
 	case SIDE_TYPE_GATHER_VLA:
 		load->object_type = OBJECT_TYPE_SEQUENCE;
-		load->rev_bo = side_elem_rev_bo(side_ptr_get(
+		load->rev_bo = side_elem_rev_bo(side_ptr_rel_get(
 			side_type->u.side_gather.u.side_vla.type.elem_type));
 		break;
 	/*
@@ -631,7 +631,7 @@ static int specialize_side_load_object(const struct side_type *side_type,
 	case SIDE_TYPE_GATHER_ENUM:
 	{
 		const struct side_type *container =
-			side_ptr_get(side_type->u.side_gather.u.side_enum.elem_type);
+			side_ptr_rel_get(side_type->u.side_gather.u.side_enum.elem_type);
 		const struct side_type_integer *t;
 
 		if (side_enum_get(container->type) != SIDE_TYPE_GATHER_INTEGER)
@@ -644,7 +644,7 @@ static int specialize_side_load_object(const struct side_type *side_type,
 	case SIDE_TYPE_ENUM:
 	{
 		const struct side_type *container =
-			side_ptr_get(side_type->u.side_enum.elem_type);
+			side_ptr_rel_get(side_type->u.side_enum.elem_type);
 
 		/*
 		 * An enumeration is loaded as the integer value of its

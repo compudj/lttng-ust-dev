@@ -58,7 +58,7 @@ bool lttng_bytecode_side_type_rev_bo(const struct side_type *side_type)
 	case SIDE_TYPE_ENUM:
 	{
 		const struct side_type *container =
-			side_ptr_get(side_type->u.side_enum.elem_type);
+			side_ptr_rel_get(side_type->u.side_enum.elem_type);
 
 		return lttng_bytecode_side_type_rev_bo(container);
 	}
@@ -74,7 +74,7 @@ bool lttng_bytecode_side_type_rev_bo(const struct side_type *side_type)
 		return side_enum_get(side_type->u.side_gather.u.side_float.type.byte_order) !=
 			SIDE_TYPE_FLOAT_WORD_ORDER_HOST;
 	case SIDE_TYPE_GATHER_ENUM:
-		return lttng_bytecode_side_type_rev_bo(side_ptr_get(
+		return lttng_bytecode_side_type_rev_bo(side_ptr_rel_get(
 			side_type->u.side_gather.u.side_enum.elem_type));
 	default:
 		return false;
@@ -215,9 +215,9 @@ const struct side_type_struct *side_type_struct_fields(const struct side_type *s
 {
 	switch (side_enum_get(side_type->type)) {
 	case SIDE_TYPE_STRUCT:
-		return side_ptr_get(side_type->u.side_struct);
+		return side_ptr_rel_get(side_type->u.side_struct);
 	case SIDE_TYPE_GATHER_STRUCT:
-		return side_ptr_get(side_type->u.side_gather.u.side_struct.type);
+		return side_ptr_rel_get(side_type->u.side_gather.u.side_struct.type);
 	default:
 		return NULL;
 	}
@@ -235,9 +235,9 @@ const struct side_type *side_container_elem_type(const struct side_type *side_ty
 		return NULL;
 	switch (side_enum_get(side_type->type)) {
 	case SIDE_TYPE_ARRAY:
-		return side_ptr_get(side_ptr_get(side_type->u.side_array)->elem_type);
+		return side_ptr_rel_get(side_ptr_rel_get(side_type->u.side_array)->elem_type);
 	case SIDE_TYPE_VLA:
-		return side_ptr_get(side_ptr_get(side_type->u.side_vla)->elem_type);
+		return side_ptr_rel_get(side_ptr_rel_get(side_type->u.side_vla)->elem_type);
 	default:
 		return NULL;
 	}
@@ -258,9 +258,9 @@ const struct side_type *side_gather_container_elem_type(const struct side_type *
 {
 	switch (side_enum_get(side_type->type)) {
 	case SIDE_TYPE_GATHER_ARRAY:
-		return side_ptr_get(side_type->u.side_gather.u.side_array.type.elem_type);
+		return side_ptr_rel_get(side_type->u.side_gather.u.side_array.type.elem_type);
 	case SIDE_TYPE_GATHER_VLA:
-		return side_ptr_get(side_type->u.side_gather.u.side_vla.type.elem_type);
+		return side_ptr_rel_get(side_type->u.side_gather.u.side_vla.type.elem_type);
 	default:
 		return NULL;
 	}
@@ -305,7 +305,7 @@ uint32_t side_gather_elem_stride(const struct side_type *elem_type)
 	case SIDE_TYPE_GATHER_ENUM:
 	{
 		const struct side_type *container =
-			side_ptr_get(gather->u.side_enum.elem_type);
+			side_ptr_rel_get(gather->u.side_enum.elem_type);
 
 		if (side_enum_get(container->type) != SIDE_TYPE_GATHER_INTEGER)
 			return 0;
@@ -357,7 +357,7 @@ int side_gather_container_elem(const struct side_type *container,
 		const struct side_type_gather_vla *gv =
 			&container->u.side_gather.u.side_vla;
 		const struct side_type *length_type =
-			side_ptr_get(gv->type.length_type);
+			side_ptr_rel_get(gv->type.length_type);
 		int64_t v;
 
 		/* The length of a gathered sequence is gathered as well. */
@@ -413,7 +413,7 @@ int side_struct_member_lookup(const struct side_type_struct *side_struct,
 
 	for (i = 0; i < nr_fields; i++) {
 		const struct side_event_field *field =
-			side_array_at(&side_struct->fields, i);
+			side_array_rel_at(&side_struct->fields, i);
 		const char *field_name = side_ptr_rel_get(field->field_name);
 
 		if (strlen(field_name) == len && !strncmp(field_name, name, len)) {
@@ -448,7 +448,7 @@ const struct side_type *side_struct_member_type(const struct side_type *side_typ
 	if (!side_struct || idx >= side_array_length(&side_struct->fields))
 		return NULL;
 	return &((const struct side_event_field *)
-		side_array_at(&side_struct->fields, idx))->side_type;
+		side_array_rel_at(&side_struct->fields, idx))->side_type;
 }
 
 /*
@@ -563,13 +563,13 @@ int lttng_bytecode_side_field_ref(const struct side_event_description *side_desc
 			const struct side_arg_vec *sub =
 				side_ptr_get(arg->u.side_static.side_struct);
 
-			side_struct = side_ptr_get(type->u.side_struct);
+			side_struct = side_ptr_rel_get(type->u.side_struct);
 			if (path->idx[i] >= sub->len
 					|| path->idx[i] >= side_array_length(&side_struct->fields))
 				return -EINVAL;
 			arg = &side_ptr_get(sub->sav)[path->idx[i]];
 			type = &((const struct side_event_field *)
-				side_array_at(&side_struct->fields, path->idx[i]))->side_type;
+				side_array_rel_at(&side_struct->fields, path->idx[i]))->side_type;
 			break;
 		}
 		case SIDE_TYPE_GATHER_STRUCT:
@@ -591,11 +591,11 @@ int lttng_bytecode_side_field_ref(const struct side_event_description *side_desc
 			if (!ptr)
 				return -EINVAL;
 			base = ptr;
-			side_struct = side_ptr_get(gs->type);
+			side_struct = side_ptr_rel_get(gs->type);
 			if (path->idx[i] >= side_array_length(&side_struct->fields))
 				return -EINVAL;
 			type = &((const struct side_event_field *)
-				side_array_at(&side_struct->fields, path->idx[i]))->side_type;
+				side_array_rel_at(&side_struct->fields, path->idx[i]))->side_type;
 			break;
 		}
 		default:
