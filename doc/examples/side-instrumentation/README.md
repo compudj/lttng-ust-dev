@@ -177,7 +177,7 @@ the trigger over a notification channel, with
 The first section decodes eleven events. Abridged, and with the
 timestamps and the packet context removed:
 
-    side_example:reading: { seq = 0, sensor = "cpu0", state = ( "warming" : container = 1 ), celsius = 41.5, calibrated = 0, id_host = 4096, id_le = 4096, id_be = 4096, volts_be = 1.25 }
+    side_example:reading: { seq = 0, sensor = "cpu0", state = ( "warming" ), celsius = 41.5, calibrated = 0, id_host = 4096, id_le = 4096, id_be = 4096, volts_be = 1.25 }
     side_example:reading: { seq = 1, sensor = "cpu1", ... id_host = 4097, id_le = 4097, id_be = 4097, volts_be = 2.5 }
     side_example:reading: { seq = 2, sensor = "gpu0", ... id_host = 4098, id_le = 4098, id_be = 4098, volts_be = 3.75 }
     side_example:frame: { header = { magic = 51966, version = 1 }, channels = [ [0] = { id = 1, samples = [ [0] = 10, [1] = 20, [2] = 30 ] }, [1] = { id = 2, samples = [ [0] = 40, [1] = 50, [2] = 60 ] } ], bursts = [ [0] = { mark = 1, points = [ [0] = 101, [1] = 102 ] }, [1] = { mark = 2, points = [ [0] = 103 ] } ], payload = { 12648430 } }
@@ -206,7 +206,7 @@ The fourth section decodes the twelve events of the C++ program, four
 per request:
 
     side_example_cxx:scope_begin: { name = "handle_request" }
-    side_example_cxx:request: { method = "GET", path = "/index.html", outcome = ( "ok" : container = 0 ), cached = 1, nr_samples = 3 }
+    side_example_cxx:request: { method = "GET", path = "/index.html", outcome = ( "ok" ), cached = 1, nr_samples = 3 }
     side_example_cxx:buffer: { stats = { total = 60, samples = [ [0] = 10, [1] = 20, [2] = 30 ] } }
     side_example_cxx:scope_end: { name = "handle_request", duration_us = 43 }
 
@@ -229,9 +229,17 @@ writes them along with the attribute, and the filters of the second
 section reach into the sequences they measure.
 
 A `babeltrace2` whose `sink.text.pretty` does not act on the attribute
-prints them, which is what the output above looked like before:
+prints them, and one which does prints them again when asked to, with
+`-p print-hidden=true`:
 
     ..., _bursts_length = 2, bursts = [ [0] = { mark = 1, _points_length = 2, points = [ ... ] } ], _payload_selector = ( "option_0" : container = 0 ), payload = { 12648430 }
+
+That parameter also writes back the value behind the labels of an
+enumeration field, which the same `sink.text.pretty` leaves out for the
+same reason: `state = ( "warming" )` rather than
+`state = ( "warming" : container = 1 )`. A value which matches no label
+keeps it either way, since nothing else says what it is:
+`state = ( <unknown> : container = 42 )`.
 
 ## Restrictions
 
