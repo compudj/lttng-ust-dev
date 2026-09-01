@@ -234,12 +234,29 @@ prints them, and one which does prints them again when asked to, with
 
     ..., _bursts_length = 2, bursts = [ [0] = { mark = 1, _points_length = 2, points = [ ... ] } ], _payload_selector = ( "option_0" : container = 0 ), payload = { 12648430 }
 
-That parameter also writes back the value behind the labels of an
-enumeration field, which the same `sink.text.pretty` leaves out for the
-same reason: `state = ( "warming" )` rather than
-`state = ( "warming" : container = 1 )`. A value which matches no label
-keeps it either way, since nothing else says what it is:
-`state = ( <unknown> : container = 42 )`.
+## The value behind the labels of an enumeration
+
+The labels of an enumeration are what its values mean, and the number a
+label translates is a detail of the description, so the tracer
+describes an enumeration with the `lttng.fmt.print-value` attribute set
+to false. A reader which acts on it writes `state = ( "warming" )`
+where it used to write `state = ( "warming" : container = 1 )`.
+
+An application which wants the number as well describes the attribute
+itself, and its value wins:
+
+    static side_define_enum(example_states,
+        side_enum_mapping_list(...),
+        side_attr_list(side_attr("lttng.fmt.print-value", side_attr_bool(true)))
+    );
+
+A value which its labels do not account for keeps the number either
+way, since nothing else says what it is: `state = ( <unknown> :
+container = 42 )`. So does an enumeration in a trace whose producer
+says nothing about `print-value`, which is every trace but these — the
+attribute asks for the shorter form rather than assuming it.
+
+`-p print-hidden=true` writes the number back as well.
 
 ## Restrictions
 

@@ -41,6 +41,14 @@
  * --------------------
  */
 
+/*
+ * A reader shows a value of this enumeration as the label which names
+ * it, rather than as that label and the number behind it: the tracer
+ * describes an enumeration with "lttng.fmt.print-value" false unless
+ * the application says otherwise. A value which no label names is
+ * shown as the number it is either way, since nothing else says what
+ * it is.
+ */
 static side_define_enum(example_states,
 	side_enum_mapping_list(
 		side_enum_mapping_value("idle", 0),

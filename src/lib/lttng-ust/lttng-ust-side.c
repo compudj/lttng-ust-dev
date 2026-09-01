@@ -2747,6 +2747,104 @@ error:
 	return NULL;
 }
 
+/* One boolean attribute. */
+static
+struct lttng_ust_attribute *side_bool_attribute(const char *ns, const char *name,
+		bool value)
+{
+	struct lttng_ust_attribute *attr;
+
+	attr = zmalloc(sizeof(struct lttng_ust_attribute));
+	if (!attr)
+		return NULL;
+	attr->struct_size = sizeof(struct lttng_ust_attribute);
+	attr->ns = strdup(ns);
+	attr->name = strdup(name);
+	if (!attr->ns || !attr->name) {
+		free((void *) attr->ns);
+		free((void *) attr->name);
+		free(attr);
+		return NULL;
+	}
+	attr->type = LTTNG_UST_ATTRIBUTE_TYPE_BOOL;
+	attr->u.bool_value = value;
+	return attr;
+}
+
+/*
+ * Append @attr to @attributes, which may be empty, taking ownership of
+ * both. Returns NULL on failure, having destroyed both, which leaves
+ * the type without attributes rather than without a translation: they
+ * describe it, they do not define it.
+ */
+static
+const struct lttng_ust_attributes *side_attributes_append(
+		const struct lttng_ust_attributes *attributes,
+		struct lttng_ust_attribute *attr)
+{
+	const struct lttng_ust_attribute **entries, **new_entries;
+	struct lttng_ust_attributes *new_attributes;
+	unsigned int nr_entries = 0;
+
+	if (!attr)
+		goto error;
+	if (attributes) {
+		nr_entries = attributes->nr_attributes;
+		entries = (const struct lttng_ust_attribute **) attributes->attributes;
+		new_attributes = (struct lttng_ust_attributes *) attributes;
+	} else {
+		entries = NULL;
+		new_attributes = zmalloc(sizeof(struct lttng_ust_attributes));
+		if (!new_attributes)
+			goto error;
+	}
+	new_entries = realloc(entries, (nr_entries + 1) * sizeof(*new_entries));
+	if (!new_entries) {
+		if (!attributes)
+			free(new_attributes);
+		goto error;
+	}
+	new_entries[nr_entries] = attr;
+	new_attributes->attributes = new_entries;
+	new_attributes->nr_attributes = nr_entries + 1;
+	return new_attributes;
+
+error:
+	if (attr) {
+		free((void *) attr->ns);
+		free((void *) attr->name);
+		free(attr);
+	}
+	side_translate_attributes_destroy(attributes);
+	return NULL;
+}
+
+/* Whether the application described an attribute named @key. */
+static
+bool side_attr_has_key(const struct side_attr *_attr, uint32_t nr_attr,
+		const char *key)
+{
+	uint32_t i;
+
+	for (i = 0; i < nr_attr; i++) {
+		const struct side_attr *attr = &_attr[i];
+		char *utf8_str = NULL;
+		bool cmp;
+
+		tracer_convert_string_to_utf8(side_ptr_get(attr->key.p),
+			attr->key.unit_size, side_enum_get(attr->key.byte_order),
+			NULL, &utf8_str);
+		if (!utf8_str)
+			continue;
+		cmp = strcmp(utf8_str, key);
+		if (utf8_str != side_ptr_get(attr->key.p))
+			free(utf8_str);
+		if (!cmp)
+			return true;
+	}
+	return false;
+}
+
 /*
  * The attributes of a field which the translation synthesizes rather
  * than one the application described: the length of a sequence and the
@@ -2758,37 +2856,8 @@ error:
 static
 const struct lttng_ust_attributes *side_hidden_attributes(void)
 {
-	const struct lttng_ust_attribute **entries = NULL;
-	struct lttng_ust_attributes *attributes = NULL;
-	struct lttng_ust_attribute *attr;
-
-	attr = zmalloc(sizeof(struct lttng_ust_attribute));
-	if (!attr)
-		return NULL;
-	attr->struct_size = sizeof(struct lttng_ust_attribute);
-	attr->ns = strdup("lttng.visibility");
-	attr->name = strdup("hidden");
-	if (!attr->ns || !attr->name)
-		goto error;
-	attr->type = LTTNG_UST_ATTRIBUTE_TYPE_BOOL;
-	attr->u.bool_value = 1;
-	entries = zmalloc(sizeof(*entries));
-	if (!entries)
-		goto error;
-	entries[0] = attr;
-	attributes = zmalloc(sizeof(struct lttng_ust_attributes));
-	if (!attributes)
-		goto error;
-	attributes->nr_attributes = 1;
-	attributes->attributes = entries;
-	return attributes;
-
-error:
-	free((void *) attr->ns);
-	free((void *) attr->name);
-	free(attr);
-	free(entries);
-	return NULL;
+	return side_attributes_append(NULL,
+		side_bool_attribute("lttng.visibility", "hidden", true));
 }
 
 /* A blob is an array or a VLA of bytes. */
@@ -3684,6 +3753,19 @@ void side_translate_after_enum_mappings(const struct side_enum_mappings *mapping
 	type->attributes = side_translate_attributes(
 		side_array_elements(&mappings->attributes),
 		side_array_length(&mappings->attributes), NULL);
+	/*
+	 * The labels of an enumeration are what its values mean, and the
+	 * number a label translates is a detail of the description. Ask a
+	 * reader to show the label alone, unless the application asked
+	 * for something else: an application which wants the number as
+	 * well describes "lttng.fmt.print-value" itself.
+	 */
+	if (!side_attr_has_key(side_array_elements(&mappings->attributes),
+			side_array_length(&mappings->attributes),
+			"lttng.fmt.print-value")) {
+		type->attributes = side_attributes_append(type->attributes,
+			side_bool_attribute("lttng.fmt", "print-value", false));
+	}
 	side_translate_commit_type(ctx, &type->parent, field);
 	return;
 
