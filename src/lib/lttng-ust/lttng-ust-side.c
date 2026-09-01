@@ -5650,11 +5650,6 @@ void tracer_call(const struct side_event_description *desc,
 	struct lttng_ust_event_common *event = (struct lttng_ust_event_common *) priv;
 	struct lttng_ust_channel_common *chan_common;
 	struct lttng_ust_probe_ctx probe_ctx;
-	struct side_serialize_ctx c = {
-		.desc = desc,
-		.side_arg_vec = side_arg_vec,
-		.caller_addr = caller_addr,
-	};
 
 	if (caa_unlikely(!CMM_ACCESS_ONCE(event->enabled)))
 		return;
@@ -5680,6 +5675,20 @@ void tracer_call(const struct side_event_description *desc,
 			(struct lttng_ust_event_recorder *) event->child;
 		struct lttng_ust_channel_buffer *chan = event_recorder->chan;
 		struct lttng_ust_ring_buffer_ctx bufctx;
+		/*
+		 * The serialization context is built where it is used,
+		 * which is only here: it is the largest thing this
+		 * function has, and its unnamed members are zeroed by
+		 * this initializer. Building it on entry would put that
+		 * on the path of an event which is disabled, of one a
+		 * filter rejects, and of a notifier or a counter, none
+		 * of which serialize anything.
+		 */
+		struct side_serialize_ctx c = {
+			.desc = desc,
+			.side_arg_vec = side_arg_vec,
+			.caller_addr = caller_addr,
+		};
 
 		c.chan = chan;
 		c.align = side_event_alignof(desc);
