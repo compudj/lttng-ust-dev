@@ -2492,6 +2492,12 @@ struct lttng_ust_side_event {
 	struct lttng_ust_probe_desc probe_desc;
 	const struct lttng_ust_event_desc *event_desc_array[1];
 	struct side_event_description *side_desc;
+	/*
+	 * The state is what the side callbacks are registered against,
+	 * and what a description hangs off. See
+	 * side_event_state_description().
+	 */
+	struct side_event_state *side_state;
 	struct lttng_ust_registered_probe *reg_probe;
 	const int *loglevel_ptr;
 	int loglevel;
@@ -2503,7 +2509,7 @@ struct lttng_ust_side_event {
 
 struct lttng_ust_side_registration {
 	struct cds_list_head node;
-	struct side_event_description **side_events;	/* Identity for REMOVE. */
+	struct side_event_state **side_events;		/* Identity for REMOVE. */
 	uint32_t nr_side_events;
 	struct cds_list_head events;
 };
@@ -4594,7 +4600,8 @@ void side_translate_ctx_destroy(struct side_translate_ctx *ctx)
 }
 
 static
-struct lttng_ust_side_event *lttng_ust_side_event_create(struct side_event_description *sdesc)
+struct lttng_ust_side_event *lttng_ust_side_event_create(struct side_event_state *sstate,
+		struct side_event_description *sdesc)
 {
 	struct lttng_ust_side_event *se;
 	struct side_translate_ctx ctx = {};
@@ -4629,6 +4636,7 @@ struct lttng_ust_side_event *lttng_ust_side_event_create(struct side_event_descr
 	ctx.scopes[0].fields = NULL;
 	ctx.scopes[0].nr_fields = 0;
 	se->side_desc = sdesc;
+	se->side_state = sstate;
 	loglevel = side_enum_get(sdesc->loglevel);
 	if (loglevel <= SIDE_LOGLEVEL_DEBUG)
 		se->loglevel = side_loglevel_to_lttng[loglevel];
@@ -5836,7 +5844,7 @@ int lttng_ust_side_register_event(const struct lttng_ust_event_desc *desc,
 	struct lttng_ust_side_event *se =
 		caa_container_of(desc, struct lttng_ust_side_event, parent);
 
-	if (side_tracer_callback_register_defer(se->side_desc, tracer_call,
+	if (side_tracer_callback_register_defer(se->side_state, tracer_call,
 			event, side_event_key(event)) != SIDE_ERROR_OK)
 		return -EINVAL;
 	side_release_queue_account();
@@ -5849,7 +5857,7 @@ int lttng_ust_side_unregister_event(const struct lttng_ust_event_desc *desc,
 	struct lttng_ust_side_event *se =
 		caa_container_of(desc, struct lttng_ust_side_event, parent);
 
-	if (side_tracer_callback_unregister_defer(se->side_desc, tracer_call,
+	if (side_tracer_callback_unregister_defer(se->side_state, tracer_call,
 			event, side_event_key(event)) != SIDE_ERROR_OK)
 		return -EINVAL;
 	side_release_queue_account();
@@ -5873,7 +5881,7 @@ void lttng_ust_side_prune_release_queue(void)
 
 static
 void tracer_event_notification(enum side_tracer_notification notif,
-		struct side_event_description **events, uint32_t nr_events,
+		struct side_event_state **states, uint32_t nr_events,
 		void *priv __attribute__((unused)))
 {
 	uint32_t i;
@@ -5888,23 +5896,37 @@ void tracer_event_notification(enum side_tracer_notification notif,
 			ERR("Error allocating side event registration");
 			return;
 		}
-		reg->side_events = events;
+		reg->side_events = states;
 		reg->nr_side_events = nr_events;
 		CDS_INIT_LIST_HEAD(&reg->events);
 		cds_list_add_tail(&reg->node, &side_registration_list);
 		for (i = 0; i < nr_events; i++) {
-			struct side_event_description *sdesc = events[i];
+			struct side_event_state *sstate = states[i];
+			struct side_event_description *sdesc;
 			struct lttng_ust_side_event *se;
 
-			if (!sdesc)
+			if (!sstate)
 				continue;
+			/*
+			 * A notification hands over the state, and the
+			 * description hangs off it: a description holds
+			 * no address of its own, so the edge between the
+			 * two runs this way.
+			 */
+			sdesc = side_event_state_description(sstate);
+			if (!sdesc) {
+				ERR("Side event state ABI version (%u) does not match the version supported by the tracer (%u)",
+					sstate->version,
+					SIDE_EVENT_STATE_ABI_VERSION);
+				continue;
+			}
 			if (sdesc->version != SIDE_EVENT_DESCRIPTION_ABI_VERSION) {
 				ERR("Side event description ABI version (%u) does not match the version supported by the tracer (%u)",
 					sdesc->version,
 					SIDE_EVENT_DESCRIPTION_ABI_VERSION);
 				continue;
 			}
-			se = lttng_ust_side_event_create(sdesc);
+			se = lttng_ust_side_event_create(sstate, sdesc);
 			if (!se)
 				continue;
 			se->reg_probe = lttng_ust_probe_register(&se->probe_desc);
@@ -5929,7 +5951,7 @@ void tracer_event_notification(enum side_tracer_notification notif,
 		bool found = false;
 
 		cds_list_for_each_entry(reg, &side_registration_list, node) {
-			if (reg->side_events == events) {
+			if (reg->side_events == states) {
 				found = true;
 				break;
 			}
