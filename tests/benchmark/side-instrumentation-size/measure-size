@@ -1,0 +1,174 @@
+#!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2026 EfficiOS, Inc
+#
+# SPDX-License-Identifier: LGPL-2.1-only
+
+"""
+Report what instrumentation costs a program in code and in data.
+
+The programs measured contain nothing but the instrumentation, so every
+section is attributable to it.
+
+Both LTTng-UST and libside keep part of their descriptions in sections
+of their own, so reading .text, .data and .bss alone would miss most of
+what a description weighs: the tracepoints of a provider live in
+`lttng_ust_tracepoints`, and the descriptions of side events live in
+`side_event_description`. Those are counted here, and so is
+`.data.rel.ro`, which is where a description made of pointers ends up.
+"""
+
+import argparse
+import pathlib
+import re
+import subprocess
+import sys
+
+# Sections which hold instrumentation rather than the program itself.
+INSTR_SECTIONS = {
+    "lttng_ust_tracepoints",
+    "lttng_ust_tracepoints_ptrs",
+    "lttng_ust_tracepoints_strings",
+    "side_event_description",
+    "side_event_description_ptr",
+    "side_event_state",
+}
+
+GROUPS = [
+    ("text", "code", [".text", ".init", ".fini", ".plt", ".plt.sec", ".plt.got"]),
+    ("rodata", "read-only data", [".rodata"]),
+    ("data.rel.ro", "data needing relocation", [".data.rel.ro"]),
+    ("data", "writable data", [".data", ".got", ".got.plt"]),
+    ("bss", "zero-initialized data", [".bss"]),
+    ("instr", "instrumentation sections", sorted(INSTR_SECTIONS)),
+    ("reloc", "relocations", [".rela.dyn", ".rela.plt", ".rel.dyn", ".rel.plt"]),
+]
+
+
+def real_binary(path):
+    """
+    Resolve the ELF file to measure.
+
+    A program which links a libtool library is a wrapper script, and the
+    program itself is left in .libs.
+    """
+    with open(path, "rb") as f:
+        if f.read(4) == b"\x7fELF":
+            return path
+
+    real = path.parent / ".libs" / path.name
+
+    if not real.is_file():
+        sys.exit(f"{path} is a wrapper and {real} does not exist")
+
+    return real
+
+
+def sections(path):
+    """
+    The allocated sections of `path`, by name, in bytes.
+
+    Only the sections the loader maps are counted: debug information is
+    left out, since it costs a file on disk rather than a program in
+    memory, and how much of it there is says more about the compiler
+    flags than about the instrumentation.
+    """
+    out = subprocess.run(
+        ["objdump", "-h", str(real_binary(path))],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    res = {}
+    pending = None
+
+    for line in out.splitlines():
+        m = re.match(r"^\s*\d+\s+(\S+)\s+([0-9a-f]+)\s", line)
+
+        if m:
+            pending = (m.group(1), int(m.group(2), 16))
+        elif pending and "ALLOC" in line:
+            res[pending[0]] = pending[1]
+            pending = None
+
+    return res
+
+
+def grouped(path):
+    secs = sections(path)
+    res = {key: sum(secs.get(s, 0) for s in names) for key, _, names in GROUPS}
+    accounted = {s for _, _, names in GROUPS for s in names}
+    res["other"] = sum(v for k, v in secs.items() if k not in accounted)
+    res["total"] = sum(secs.values())
+    return res
+
+
+def main():
+    p = argparse.ArgumentParser(description=__doc__.strip().splitlines()[0])
+    p.add_argument("--events", type=int, default=1000, help="events built in")
+    p.add_argument(
+        "binaries",
+        nargs="*",
+        default=[
+            "tp-defs",
+            "tp-defs-probes",
+            "tp-calls",
+            "tp-calls-probes",
+            "side-defs",
+            "side-calls",
+        ],
+    )
+    args = p.parse_args()
+
+    labels = {
+        "tp-defs": "tracepoint, no probes",
+        "tp-defs-probes": "tracepoint, probes in",
+        "tp-calls": "tracepoint, no probes",
+        "tp-calls-probes": "tracepoint, probes in",
+        "side-defs": "libside",
+        "side-calls": "libside",
+    }
+
+    here = pathlib.Path(__file__).resolve().parent
+    data = {}
+
+    for b in args.binaries:
+        path = here / b
+
+        if not path.is_file():
+            sys.exit(f"{path} is not built: run make in {here} first")
+
+        data[b] = grouped(path)
+
+    keys = [g[0] for g in GROUPS] + ["other", "total"]
+
+    for title, group in (
+        ("definitions only, no call sites", ["tp-defs", "tp-defs-probes", "side-defs"]),
+        ("one call site per event", ["tp-calls", "tp-calls-probes", "side-calls"]),
+    ):
+        group = [b for b in group if b in data]
+
+        if not group:
+            continue
+
+        print(f"{title} ({args.events} events)")
+        print()
+        print(f"  {'':<26}" + "".join(f"{labels[b]:>24}" for b in group))
+        print("  " + "-" * (26 + 24 * len(group)))
+
+        for key, desc, _ in GROUPS:
+            row = "".join(f"{data[b][key]:>24,}" for b in group)
+            print(f"  {desc:<26}{row}")
+
+        print("  " + "-" * (26 + 24 * len(group)))
+        print(f"  {'total':<26}" + "".join(f"{data[b]['total']:>24,}" for b in group))
+        print(
+            f"  {'bytes per event':<26}"
+            + "".join(f"{data[b]['total'] / args.events:>24,.1f}" for b in group)
+        )
+        print()
+
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

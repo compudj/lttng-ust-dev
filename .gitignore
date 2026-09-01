@@ -86,6 +86,17 @@ cscope.*
 /tests/benchmark/bench2
 /tests/benchmark/side-instrumentation/bench-side
 /tests/benchmark/side-instrumentation/bench-tp
+/tests/benchmark/side-instrumentation-size/side-calls
+/tests/benchmark/side-instrumentation-size/side-defs
+/tests/benchmark/side-instrumentation-size/tp-calls
+/tests/benchmark/side-instrumentation-size/tp-calls-probes
+/tests/benchmark/side-instrumentation-size/tp-defs
+/tests/benchmark/side-instrumentation-size/tp-defs-probes
+/tests/benchmark/side-instrumentation-size/gen-instrumentation.stamp
+/tests/benchmark/side-instrumentation-size/side-callsites.h
+/tests/benchmark/side-instrumentation-size/side-events.h
+/tests/benchmark/side-instrumentation-size/tp-callsites.h
+/tests/benchmark/side-instrumentation-size/tp-events.h
 /tests/compile/api0/ctf-types/ctf-types
 /tests/compile/api0/ctf-types/ctf-types-api1
 /tests/compile/api0/hello.cxx/hello
@@ -207,6 +218,7 @@ cscope.*
 /tests/Makefile
 /tests/benchmark/Makefile
 /tests/benchmark/side-instrumentation/Makefile
+/tests/benchmark/side-instrumentation-size/Makefile
 /tests/compile/Makefile
 /tests/compile/api0/Makefile
 /tests/compile/api0/ctf-types/Makefile

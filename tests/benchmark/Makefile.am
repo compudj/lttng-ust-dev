@@ -4,7 +4,7 @@
 
 AM_CPPFLAGS += -I$(srcdir)
 
-SUBDIRS = side-instrumentation
+SUBDIRS = side-instrumentation side-instrumentation-size
 
 noinst_PROGRAMS = bench1 bench2
 bench1_SOURCES = bench.c tp.c ust_tests_benchmark.h

@@ -661,6 +661,7 @@ AC_CONFIG_FILES([
   src/python-lttngust/setup.py
   tests/benchmark/Makefile
   tests/benchmark/side-instrumentation/Makefile
+  tests/benchmark/side-instrumentation-size/Makefile
   tests/compile/api0/ctf-types/Makefile
   tests/compile/api0/hello.cxx/Makefile
   tests/compile/api0/hello/Makefile
