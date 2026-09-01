@@ -2747,6 +2747,50 @@ error:
 	return NULL;
 }
 
+/*
+ * The attributes of a field which the translation synthesizes rather
+ * than one the application described: the length of a sequence and the
+ * selector of a variant, which CTF requires to precede the field they
+ * belong to. Such a field is recorded and decoded like any other one;
+ * the attribute says that a reader showing the payload to a person can
+ * leave it out.
+ */
+static
+const struct lttng_ust_attributes *side_hidden_attributes(void)
+{
+	const struct lttng_ust_attribute **entries = NULL;
+	struct lttng_ust_attributes *attributes = NULL;
+	struct lttng_ust_attribute *attr;
+
+	attr = zmalloc(sizeof(struct lttng_ust_attribute));
+	if (!attr)
+		return NULL;
+	attr->struct_size = sizeof(struct lttng_ust_attribute);
+	attr->ns = strdup("lttng.visibility");
+	attr->name = strdup("hidden");
+	if (!attr->ns || !attr->name)
+		goto error;
+	attr->type = LTTNG_UST_ATTRIBUTE_TYPE_BOOL;
+	attr->u.bool_value = 1;
+	entries = zmalloc(sizeof(*entries));
+	if (!entries)
+		goto error;
+	entries[0] = attr;
+	attributes = zmalloc(sizeof(struct lttng_ust_attributes));
+	if (!attributes)
+		goto error;
+	attributes->nr_attributes = 1;
+	attributes->attributes = entries;
+	return attributes;
+
+error:
+	free((void *) attr->ns);
+	free((void *) attr->name);
+	free(attr);
+	free(entries);
+	return NULL;
+}
+
 /* A blob is an array or a VLA of bytes. */
 static
 bool side_type_is_byte(const struct side_type *type_desc)
@@ -3190,18 +3234,27 @@ void side_translate_fields_destroy(const struct lttng_ust_event_field **fields,
 		if (!f)
 			continue;
 		side_translate_type_destroy(f->type);
+		side_translate_attributes_destroy(f->attributes);
 		free((void *) f->name);
 		free((void *) f);
 	}
 	free(fields);
 }
 
+/*
+ * Append a field to the scope being translated. A synthesized field is
+ * one the application did not describe: the length of a sequence and
+ * the selector of a variant, which CTF requires to precede the field
+ * they belong to. It is not a field a filter can name, and it carries
+ * the attribute which says a reader may leave it out.
+ */
 static
 bool side_translate_append_field(struct side_translate_ctx *ctx,
 		const char *name, const struct lttng_ust_type_common *type,
-		bool nofilter)
+		bool synthesized)
 {
 	struct side_translate_scope *scope = &ctx->scopes[ctx->nesting];
+	const struct lttng_ust_attributes *attributes = NULL;
 	const struct lttng_ust_event_field **new_fields;
 	struct lttng_ust_event_field *f;
 	char *name_copy;
@@ -3211,9 +3264,14 @@ bool side_translate_append_field(struct side_translate_ctx *ctx,
 	name_copy = strdup(name);
 	if (!name_copy)
 		goto fail_free_type;
+	if (synthesized) {
+		attributes = side_hidden_attributes();
+		if (!attributes)
+			goto fail_free_name;
+	}
 	f = zmalloc(sizeof(struct lttng_ust_event_field));
 	if (!f)
-		goto fail_free_name;
+		goto fail_free_attributes;
 	new_fields = realloc(scope->fields,
 		(scope->nr_fields + 1) * sizeof(*new_fields));
 	if (!new_fields)
@@ -3223,12 +3281,15 @@ bool side_translate_append_field(struct side_translate_ctx *ctx,
 	f->name = name_copy;
 	f->type = type;
 	f->nowrite = 0;
-	f->nofilter = nofilter;
+	f->nofilter = synthesized;
+	f->attributes = attributes;
 	scope->fields[scope->nr_fields++] = f;
 	return true;
 
 fail_free_field:
 	free(f);
+fail_free_attributes:
+	side_translate_attributes_destroy(attributes);
 fail_free_name:
 	free(name_copy);
 fail_free_type:

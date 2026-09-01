@@ -180,11 +180,11 @@ timestamps and the packet context removed:
     side_example:reading: { seq = 0, sensor = "cpu0", state = ( "warming" : container = 1 ), celsius = 41.5, calibrated = 0, id_host = 4096, id_le = 4096, id_be = 4096, volts_be = 1.25 }
     side_example:reading: { seq = 1, sensor = "cpu1", ... id_host = 4097, id_le = 4097, id_be = 4097, volts_be = 2.5 }
     side_example:reading: { seq = 2, sensor = "gpu0", ... id_host = 4098, id_le = 4098, id_be = 4098, volts_be = 3.75 }
-    side_example:frame: { header = { magic = 51966, version = 1 }, channels = [ [0] = { id = 1, samples = [ [0] = 10, [1] = 20, [2] = 30 ] }, [1] = { id = 2, samples = [ [0] = 40, [1] = 50, [2] = 60 ] } ], _bursts_length = 2, bursts = [ [0] = { mark = 1, _points_length = 2, points = [ [0] = 101, [1] = 102 ] }, [1] = { mark = 2, _points_length = 1, points = [ [0] = 103 ] } ], _payload_selector = ( "option_0" : container = 0 ), payload = { 12648430 } }
-    side_example:frame: { header = { magic = 51966, version = 2 }, ... _bursts_length = 1, bursts = [ [0] = { mark = 9, _points_length = 3, points = [ [0] = 201, [1] = 202, [2] = 203 ] } ], _payload_selector = ( "option_1" : container = 1 ), payload = { "degraded" } }
-    side_example:snapshot: { sensor = { id = 1, name = "cpu0", value = 41.5, active = 1, _samples_length = 3, samples = [ [0] = 5, [1] = 15, [2] = 25 ], _axes_length = 2, axes = [ [0] = { axis_id = 0, reading = -3 }, [1] = { axis_id = 1, reading = 7 } ] }, window = [ [0] = 7, [1] = 14, [2] = 21, [3] = 28 ] }
-    side_example:snapshot: { sensor = { id = 2, name = "cpu1", ... _axes_length = 1, axes = [ [0] = { axis_id = 0, reading = 12 } ] }, ... }
-    side_example:snapshot: { sensor = { id = 3, name = "gpu0", ... _axes_length = 3, axes = [ [0] = { axis_id = 0, reading = -1 }, [1] = { axis_id = 1, reading = 0 }, [2] = { axis_id = 2, reading = 42 } ] }, ... }
+    side_example:frame: { header = { magic = 51966, version = 1 }, channels = [ [0] = { id = 1, samples = [ [0] = 10, [1] = 20, [2] = 30 ] }, [1] = { id = 2, samples = [ [0] = 40, [1] = 50, [2] = 60 ] } ], bursts = [ [0] = { mark = 1, points = [ [0] = 101, [1] = 102 ] }, [1] = { mark = 2, points = [ [0] = 103 ] } ], payload = { 12648430 } }
+    side_example:frame: { header = { magic = 51966, version = 2 }, ... bursts = [ [0] = { mark = 9, points = [ [0] = 201, [1] = 202, [2] = 203 ] } ], payload = { "degraded" } }
+    side_example:snapshot: { sensor = { id = 1, name = "cpu0", value = 41.5, active = 1, samples = [ [0] = 5, [1] = 15, [2] = 25 ], axes = [ [0] = { axis_id = 0, reading = -3 }, [1] = { axis_id = 1, reading = 7 } ] }, window = [ [0] = 7, [1] = 14, [2] = 21, [3] = 28 ] }
+    side_example:snapshot: { sensor = { id = 2, name = "cpu1", ... axes = [ [0] = { axis_id = 0, reading = 12 } ] }, ... }
+    side_example:snapshot: { sensor = { id = 3, name = "gpu0", ... axes = [ [0] = { axis_id = 0, reading = -1 }, [1] = { axis_id = 1, reading = 0 }, [2] = { axis_id = 2, reading = 42 } ] }, ... }
     side_example:packet: { seq = 0, saddr = 10.0.0.1, daddr = 192.168.1.1, saddr6 = 2001:db8::1, daddr6 = 2001:db8::2, peer = { addr = 10.0.0.254, port = 443 }, length = 1500 }
     side_example:packet: { seq = 1, saddr = 172.16.5.4, daddr = 8.8.8.8, saddr6 = fe80::1, daddr6 = ::ffff:8.8.8.8, peer = { addr = 172.16.5.1, port = 53 }, length = 590 }
     side_example:packet: { seq = 2, saddr = 127.0.0.1, daddr = 255.255.255.255, saddr6 = ::, daddr6 = ff02::1, peer = { addr = 127.0.0.1, port = 9 }, length = 64 }
@@ -207,12 +207,31 @@ per request:
 
     side_example_cxx:scope_begin: { name = "handle_request" }
     side_example_cxx:request: { method = "GET", path = "/index.html", outcome = ( "ok" : container = 0 ), cached = 1, nr_samples = 3 }
-    side_example_cxx:buffer: { stats = { total = 60, _samples_length = 3, samples = [ [0] = 10, [1] = 20, [2] = 30 ] } }
+    side_example_cxx:buffer: { stats = { total = 60, samples = [ [0] = 10, [1] = 20, [2] = 30 ] } }
     side_example_cxx:scope_end: { name = "handle_request", duration_us = 43 }
 
 The third request passes an empty vector, which is recorded as the
-sequence of no elements it is: `_samples_length = 0, samples = [ ]`.
-The durations vary from one run to the next.
+sequence of no elements it is: `samples = [ ]`. The durations vary from
+one run to the next.
+
+## Fields which do not belong to the application
+
+CTF requires the length of a sequence and the selector of a variant to
+precede the field they belong to, so the tracer synthesizes a field for
+each: `_bursts_length` before `bursts`, `_payload_selector` before
+`payload`. The application never described them, and they repeat what
+the field itself already shows.
+
+They carry the `lttng.visibility.hidden` attribute, which says that a
+reader showing the payload to a person may leave them out. Nothing else
+changes: they are recorded, they are decoded, `sink.text.details`
+writes them along with the attribute, and the filters of the second
+section reach into the sequences they measure.
+
+A `babeltrace2` whose `sink.text.pretty` does not act on the attribute
+prints them, which is what the output above looked like before:
+
+    ..., _bursts_length = 2, bursts = [ [0] = { mark = 1, _points_length = 2, points = [ ... ] } ], _payload_selector = ( "option_0" : container = 0 ), payload = { 12648430 }
 
 ## Restrictions
 
