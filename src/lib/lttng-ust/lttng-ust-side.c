@@ -3052,7 +3052,7 @@ size_t side_event_alignof(const struct side_event_description *desc)
 	size_t align = 1;
 
 	for (i = 0; i < nr_fields; i++) {
-		const struct side_event_field *f = side_array_at(&desc->fields, i);
+		const struct side_event_field *f = side_array_rel_at(&desc->fields, i);
 		size_t field_align = side_type_alignof(&f->side_type);
 
 		if (field_align > align)
@@ -5579,7 +5579,7 @@ bool side_event_layout_is_dynamic(const struct side_event_description *desc)
 	uint32_t i, nr_fields = side_array_length(&desc->fields);
 
 	for (i = 0; i < nr_fields; i++) {
-		const struct side_event_field *f = side_array_at(&desc->fields, i);
+		const struct side_event_field *f = side_array_rel_at(&desc->fields, i);
 
 		if (side_type_layout_is_dynamic(&f->side_type))
 			return true;
