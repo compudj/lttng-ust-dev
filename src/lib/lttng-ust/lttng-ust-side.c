@@ -1032,7 +1032,7 @@ void tracer_before_print_event(const struct side_event_description *desc,
 	printf("provider: %s, event: %s",
 		side_ptr_rel_get(desc->provider_name),
 		side_ptr_rel_get(desc->event_name));
-	print_attributes(", attr", ":", side_array_elements(&desc->attributes), side_array_length(&desc->attributes));
+	print_attributes(", attr", ":", side_array_rel_elements(&desc->attributes), side_array_length(&desc->attributes));
 }
 
 static
@@ -1750,7 +1750,7 @@ static
 void before_print_description_event(const struct side_event_description *desc, void *priv __attribute__((unused)))
 {
 	printf("event description: provider: %s, event: %s", side_ptr_rel_get(desc->provider_name), side_ptr_rel_get(desc->event_name));
-	print_attributes(", attr", ":", side_array_elements(&desc->attributes), side_array_length(&desc->attributes));
+	print_attributes(", attr", ":", side_array_rel_elements(&desc->attributes), side_array_length(&desc->attributes));
 }
 
 static
@@ -4651,7 +4651,7 @@ struct lttng_ust_side_event *lttng_ust_side_event_create(struct side_event_descr
 	se->parent.loglevel = &se->loglevel_ptr;
 	se->parent.model_emf_uri = &se->model_emf_uri_ptr;
 	se->parent.attributes = side_translate_attributes(
-		side_array_elements(&sdesc->attributes),
+		side_array_rel_elements(&sdesc->attributes),
 		side_array_length(&sdesc->attributes), NULL);
 
 	se->event_desc_array[0] = &se->parent;
