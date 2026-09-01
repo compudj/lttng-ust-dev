@@ -1,0 +1,227 @@
+#!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2026 EfficiOS, Inc
+#
+# SPDX-License-Identifier: LGPL-2.1-only
+
+"""
+Compare the cost of one event, carrying a single 32-bit integer, taken
+through libside into LTTng-UST against the same event taken through an
+LTTng-UST tracepoint.
+
+Both programs are timed the same way: a warmup loop primes the ring
+buffer pages, then a timed loop reports nanoseconds per event. The
+sub-buffers are the default ones of a snapshot session, which are
+overwrite buffers, so nothing is written to disk while the loop runs and
+what is measured is the path from the instrumentation site to the
+committed record.
+
+Four cases per instrumentation:
+
+  disabled       no session at all: the event has no subscriber
+  enabled        recorded into the ring buffer, no filter
+  filter-const   a filter which is false without reading the payload
+  filter-field   a filter which reads the payload and rejects every
+                 instance
+
+With --field-loads, measure instead how the cost grows with the number
+of times a filter loads the payload field, which is what tells the cost
+of one load apart from the cost of reaching the filter at all.
+
+A session daemon must be running. Nothing outside a temporary session is
+touched: the session is destroyed on the way out.
+"""
+
+import argparse
+import os
+import pathlib
+import statistics
+import subprocess
+import sys
+
+HERE = pathlib.Path(__file__).resolve().parent
+
+# The tracer is preloaded into the libside program, which does not link
+# against it. Prefer the one of the surrounding build tree.
+UST_LIB = os.environ.get(
+    "UST_LIB", str(HERE / "../../../src/lib/lttng-ust/.libs/liblttng-ust.so.1")
+)
+
+CPU = os.environ.get("BENCH_CPU", "3")
+ITERS = int(os.environ.get("BENCH_ITERS", "5000000"))
+WARMUP = int(os.environ.get("BENCH_WARMUP", "1000000"))
+REPS = int(os.environ.get("BENCH_REPS", "7"))
+
+# The loop emits v = 0, 1, 2, ..., so these values are never reached and
+# every instance is rejected however many of them the filter compares.
+TERMS = [f"v == {4000000000 + i}" for i in range(8)]
+
+FILTERS = {
+    "filter-const": "1 == 0",
+    "filter-field": TERMS[0],
+}
+
+MODES = ("disabled", "enabled", "filter-const", "filter-field")
+
+# The tracepoint comes first: it is what libside is measured against.
+CASES = [
+    ("tracepoint", "bench-tp", "tp_benchmark:u32", False),
+    ("libside", "bench-side", "side_benchmark:u32", True),
+]
+
+
+def sh(args, check=True):
+    return subprocess.run(args, check=check, capture_output=True, text=True)
+
+
+def run_app(binary, preload):
+    path = HERE / binary
+
+    if not path.is_file():
+        sys.exit(f"{path} is not built: run make in {HERE} first")
+
+    env = dict(os.environ)
+
+    if preload:
+        env["LD_PRELOAD"] = UST_LIB
+
+    r = subprocess.run(
+        ["taskset", "-c", CPU, str(path), str(ITERS), str(WARMUP), str(REPS)],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    return [float(line) for line in r.stdout.split() if line]
+
+
+def measure(binary, event, preload, filter_expr):
+    """
+    Nanoseconds per event, one figure per repetition. A filter_expr of
+    None records the event; a filter_expr of False runs without a
+    session at all.
+    """
+    session = f"bench-side-{os.getpid()}"
+    traced = filter_expr is not False
+
+    if traced:
+        sh(["lttng", "destroy", session], check=False)
+        sh(["lttng", "-q", "create", session, "--snapshot"])
+        args = ["lttng", "-q", "enable-event", "--userspace", event]
+
+        if filter_expr:
+            args += ["--filter", filter_expr]
+
+        sh(args)
+        sh(["lttng", "-q", "start"])
+
+    try:
+        vals = run_app(binary, preload)
+    finally:
+        if traced:
+            sh(["lttng", "-q", "stop"], check=False)
+            sh(["lttng", "destroy", session], check=False)
+
+    return vals
+
+
+def stats(vals):
+    """Median, and the range the repetitions spanned."""
+    return statistics.median(vals), min(vals), max(vals)
+
+
+def cell(vals):
+    med, lo, hi = stats(vals)
+    return f"{med:6.2f} [{lo:5.2f}-{hi:5.2f}]"
+
+
+def filter_for_loads(n):
+    return "1 == 0" if n == 0 else " || ".join(TERMS[:n])
+
+
+def header():
+    print(f"iterations={ITERS} warmup={WARMUP} reps={REPS} cpu={CPU}")
+    print(f"tracer: {UST_LIB}")
+    print()
+
+
+def main_matrix():
+    header()
+    results = {}
+
+    for name, binary, event, preload in CASES:
+        for mode in MODES:
+            expr = {"disabled": False, "enabled": None}.get(mode, FILTERS.get(mode))
+            results[(name, mode)] = measure(binary, event, preload, expr)
+
+    print(f"{'case':<28}{'tracepoint':<22}{'libside':<22}{'delta':>8}{'ratio':>7}")
+    print(f"{'':<28}{'median [min - max]':<22}{'median [min - max]':<22}")
+    print("-" * 87)
+
+    labels = {
+        "disabled": "disabled (no session)",
+        "enabled": "recorded to ring buffer",
+        "filter-const": "filter \"1 == 0\"",
+        "filter-field": "filter on the payload field",
+    }
+
+    for mode in MODES:
+        sv, tv = results[("libside", mode)], results[("tracepoint", mode)]
+        sm, tm = statistics.median(sv), statistics.median(tv)
+        print(f"{labels[mode]:<28}{cell(tv):<22}{cell(sv):<22}"
+              f"{sm - tm:>+8.2f}{sm / tm:>6.2f}x")
+
+    print()
+    print("nanoseconds per event")
+    return 0
+
+
+def main_field_loads():
+    header()
+    loads = (0, 1, 2, 4, 8)
+    results = {}
+
+    for name, binary, event, preload in CASES:
+        for n in loads:
+            results[(name, n)] = measure(binary, event, preload, filter_for_loads(n))
+
+    print(f"{'field loads':<28}{'tracepoint':<22}{'libside':<22}{'delta':>8}")
+    print(f"{'':<28}{'median [min - max]':<22}{'median [min - max]':<22}")
+    print("-" * 80)
+
+    for n in loads:
+        sv, tv = results[("libside", n)], results[("tracepoint", n)]
+        sm, tm = statistics.median(sv), statistics.median(tv)
+        label = f'{n}  ("1 == 0")' if n == 0 else str(n)
+        print(f"{label:<28}{cell(tv):<22}{cell(sv):<22}{sm - tm:>+8.2f}")
+
+    print()
+
+    for name in ("tracepoint", "libside"):
+        xs = [n for n in loads]
+        ys = [statistics.median(results[(name, n)]) for n in xs]
+        n = len(xs)
+        sx, sy = sum(xs), sum(ys)
+        slope = (n * sum(x * y for x, y in zip(xs, ys)) - sx * sy) / (
+            n * sum(x * x for x in xs) - sx * sx
+        )
+        print(f"{name:<28}{slope:>8.2f} ns per load")
+
+    print()
+    print("nanoseconds per event")
+    return 0
+
+
+def main():
+    p = argparse.ArgumentParser(description=__doc__.strip().splitlines()[0])
+    p.add_argument(
+        "--field-loads",
+        action="store_true",
+        help="measure the cost of one field load in a filter instead",
+    )
+    args = p.parse_args()
+
+    return main_field_loads() if args.field_loads else main_matrix()
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -84,6 +84,8 @@ cscope.*
 
 /tests/benchmark/bench1
 /tests/benchmark/bench2
+/tests/benchmark/side-instrumentation/bench-side
+/tests/benchmark/side-instrumentation/bench-tp
 /tests/compile/api0/ctf-types/ctf-types
 /tests/compile/api0/ctf-types/ctf-types-api1
 /tests/compile/api0/hello.cxx/hello
@@ -204,6 +206,7 @@ cscope.*
 /src/Makefile
 /tests/Makefile
 /tests/benchmark/Makefile
+/tests/benchmark/side-instrumentation/Makefile
 /tests/compile/Makefile
 /tests/compile/api0/Makefile
 /tests/compile/api0/ctf-types/Makefile
