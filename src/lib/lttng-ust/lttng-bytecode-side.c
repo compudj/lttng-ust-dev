@@ -414,7 +414,7 @@ int side_struct_member_lookup(const struct side_type_struct *side_struct,
 	for (i = 0; i < nr_fields; i++) {
 		const struct side_event_field *field =
 			side_array_at(&side_struct->fields, i);
-		const char *field_name = side_ptr_get(field->field_name);
+		const char *field_name = side_ptr_rel_get(field->field_name);
 
 		if (strlen(field_name) == len && !strncmp(field_name, name, len)) {
 			*type = &field->side_type;
@@ -496,7 +496,7 @@ int lttng_bytecode_side_field_path(const struct side_event_description *side_des
 			for (i = 0; i < nr_fields; i++) {
 				const struct side_event_field *field =
 					side_array_rel_at(&side_desc->fields, i);
-				const char *field_name = side_ptr_get(field->field_name);
+				const char *field_name = side_ptr_rel_get(field->field_name);
 
 				if (strlen(field_name) == len
 						&& !strncmp(field_name, name, len)) {
@@ -624,7 +624,7 @@ int lttng_bytecode_side_field_lookup(const struct side_event_description *side_d
 		const struct side_event_field *field =
 			side_array_rel_at(&side_desc->fields, i);
 
-		if (!strcmp(side_ptr_get(field->field_name), name)) {
+		if (!strcmp(side_ptr_rel_get(field->field_name), name)) {
 			*type = &field->side_type;
 			return (int) i;
 		}

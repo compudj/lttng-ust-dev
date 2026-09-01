@@ -1096,7 +1096,7 @@ void tracer_before_print_field(const struct side_event_field *item_desc, void *p
 
 	if (get_nested_item_nr(ctx) != 0)
 		printf(",");
-	printf(" %s: { ", side_ptr_get(item_desc->field_name));
+	printf(" %s: { ", side_ptr_rel_get(item_desc->field_name));
 }
 
 static
@@ -1789,7 +1789,7 @@ void before_print_description_field(const struct side_event_field *item_desc, vo
 
 	if (get_nested_item_nr(ctx) != 0)
 		printf(",");
-	printf(" %s: { ", side_ptr_get(item_desc->field_name));
+	printf(" %s: { ", side_ptr_rel_get(item_desc->field_name));
 }
 
 static
@@ -3397,7 +3397,7 @@ void side_translate_commit_type(struct side_translate_ctx *ctx,
 			break;
 		}
 		(void) side_translate_append_field(ctx,
-			side_ptr_get(field->field_name), type, false);
+			side_ptr_rel_get(field->field_name), type, false);
 		break;
 	case SIDE_TRANSLATE_IN_ARRAY:
 	case SIDE_TRANSLATE_IN_VLA_ELEM:
@@ -3639,14 +3639,14 @@ char *side_translate_enum_name(struct side_translate_ctx *ctx,
 			continue;
 		len = strlen(name);
 		ret = snprintf(name + len, sizeof(name) - len, "_%s",
-			side_ptr_get(enclosing->field_name));
+			side_ptr_rel_get(enclosing->field_name));
 		if (ret < 0 || ret >= (int) (sizeof(name) - len))
 			return NULL;
 	}
 	if (field) {
 		len = strlen(name);
 		ret = snprintf(name + len, sizeof(name) - len, "_%s",
-			side_ptr_get(field->field_name));
+			side_ptr_rel_get(field->field_name));
 		if (ret < 0 || ret >= (int) (sizeof(name) - len))
 			return NULL;
 	}
@@ -4000,7 +4000,7 @@ void side_translate_after_variant(const struct side_type_variant *v, void *priv)
 	ctx->variant_selector_type = NULL;
 	/* Hidden selector field, followed by the variant itself. */
 	if (snprintf(selector_name, sizeof(selector_name), "_%s_selector",
-			side_ptr_get(field->field_name)) >= (int) sizeof(selector_name))
+			side_ptr_rel_get(field->field_name)) >= (int) sizeof(selector_name))
 		goto fail;
 	if (!side_translate_append_field(ctx, selector_name, selector_enum, true)) {
 		selector_enum = NULL;
@@ -4168,7 +4168,7 @@ void side_translate_after_array(const struct side_type_array *a,
 		side_translate_type_destroy(ctx->elem_type);
 		ctx->elem_type = NULL;
 		(void) side_translate_append_field(ctx,
-			side_ptr_get(ctx->field->field_name), &blob->parent, false);
+			side_ptr_rel_get(ctx->field->field_name), &blob->parent, false);
 		return;
 	}
 	type = zmalloc(sizeof(struct lttng_ust_type_array));
@@ -4185,7 +4185,7 @@ void side_translate_after_array(const struct side_type_array *a,
 		side_array_length(&a->attributes), NULL);
 	ctx->elem_type = NULL;
 	(void) side_translate_append_field(ctx,
-		side_ptr_get(ctx->field->field_name), &type->parent, false);
+		side_ptr_rel_get(ctx->field->field_name), &type->parent, false);
 	return;
 
 fail:
@@ -4239,7 +4239,7 @@ void side_translate_after_element_vla(const struct side_type_vla *v,
 		goto fail;
 	/* Hidden length field, followed by the sequence itself. */
 	if (snprintf(length_name, sizeof(length_name), "_%s_length",
-			side_ptr_get(ctx->field->field_name)) >= (int) sizeof(length_name))
+			side_ptr_rel_get(ctx->field->field_name)) >= (int) sizeof(length_name))
 		goto fail;
 	if (!side_translate_append_field(ctx, length_name,
 			ctx->vla_length_type, true)) {
@@ -4267,7 +4267,7 @@ void side_translate_after_element_vla(const struct side_type_vla *v,
 		side_translate_type_destroy(ctx->elem_type);
 		ctx->elem_type = NULL;
 		(void) side_translate_append_field(ctx,
-			side_ptr_get(ctx->field->field_name), &blob->parent, false);
+			side_ptr_rel_get(ctx->field->field_name), &blob->parent, false);
 		return;
 	}
 	type = zmalloc(sizeof(struct lttng_ust_type_sequence));
@@ -4284,7 +4284,7 @@ void side_translate_after_element_vla(const struct side_type_vla *v,
 		side_array_length(&v->attributes), NULL);
 	ctx->elem_type = NULL;
 	(void) side_translate_append_field(ctx,
-		side_ptr_get(ctx->field->field_name), &type->parent, false);
+		side_ptr_rel_get(ctx->field->field_name), &type->parent, false);
 	return;
 
 fail:
