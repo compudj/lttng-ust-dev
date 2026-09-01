@@ -1030,8 +1030,8 @@ void tracer_before_print_event(const struct side_event_description *desc,
 	if (print_caller)
 		printf("caller: [%p], ", caller_addr);
 	printf("provider: %s, event: %s",
-		side_ptr_get(desc->provider_name),
-		side_ptr_get(desc->event_name));
+		side_ptr_rel_get(desc->provider_name),
+		side_ptr_rel_get(desc->event_name));
 	print_attributes(", attr", ":", side_array_elements(&desc->attributes), side_array_length(&desc->attributes));
 }
 
@@ -1749,7 +1749,7 @@ void tracer_print_call_variadic(const struct side_event_description *desc,
 static
 void before_print_description_event(const struct side_event_description *desc, void *priv __attribute__((unused)))
 {
-	printf("event description: provider: %s, event: %s", side_ptr_get(desc->provider_name), side_ptr_get(desc->event_name));
+	printf("event description: provider: %s, event: %s", side_ptr_rel_get(desc->provider_name), side_ptr_rel_get(desc->event_name));
 	print_attributes(", attr", ":", side_array_elements(&desc->attributes), side_array_length(&desc->attributes));
 }
 
@@ -3627,8 +3627,8 @@ char *side_translate_enum_name(struct side_translate_ctx *ctx,
 	int ret;
 
 	ret = snprintf(name, sizeof(name), "%s_%s",
-		side_ptr_get(ctx->sdesc->provider_name),
-		side_ptr_get(ctx->sdesc->event_name));
+		side_ptr_rel_get(ctx->sdesc->provider_name),
+		side_ptr_rel_get(ctx->sdesc->event_name));
 	if (ret < 0 || ret >= (int) sizeof(name))
 		return NULL;
 	/* Enclosing structures, outermost first. */
@@ -4603,8 +4603,8 @@ struct lttng_ust_side_event *lttng_ust_side_event_create(struct side_event_descr
 
 	if (sdesc->flags & SIDE_EVENT_FLAG_VARIADIC) {
 		DBG("Skipping side event %s:%s: variadic events are not supported",
-			side_ptr_get(sdesc->provider_name),
-			side_ptr_get(sdesc->event_name));
+			side_ptr_rel_get(sdesc->provider_name),
+			side_ptr_rel_get(sdesc->event_name));
 		return NULL;
 	}
 	se = zmalloc(sizeof(struct lttng_ust_side_event));
@@ -4619,8 +4619,8 @@ struct lttng_ust_side_event *lttng_ust_side_event_create(struct side_event_descr
 	visit_event_description(&visitor, sdesc);
 	if (ctx.fail || ctx.nesting) {
 		DBG("Skipping side event %s:%s: unsupported field types",
-			side_ptr_get(sdesc->provider_name),
-			side_ptr_get(sdesc->event_name));
+			side_ptr_rel_get(sdesc->provider_name),
+			side_ptr_rel_get(sdesc->event_name));
 		goto error;
 	}
 	/* The event payload is the outermost field scope. */
@@ -4645,7 +4645,7 @@ struct lttng_ust_side_event *lttng_ust_side_event_create(struct side_event_descr
 	se->tp_class.probe_desc = &se->probe_desc;
 
 	se->parent.struct_size = sizeof(struct lttng_ust_event_desc);
-	se->parent.event_name = side_ptr_get(sdesc->event_name);
+	se->parent.event_name = side_ptr_rel_get(sdesc->event_name);
 	se->parent.probe_desc = &se->probe_desc;
 	se->parent.tp_class = &se->tp_class;
 	se->parent.loglevel = &se->loglevel_ptr;
@@ -4657,7 +4657,7 @@ struct lttng_ust_side_event *lttng_ust_side_event_create(struct side_event_descr
 	se->event_desc_array[0] = &se->parent;
 
 	se->probe_desc.struct_size = sizeof(struct lttng_ust_probe_desc);
-	se->probe_desc.provider_name = side_ptr_get(sdesc->provider_name);
+	se->probe_desc.provider_name = side_ptr_rel_get(sdesc->provider_name);
 	se->probe_desc.event_desc = se->event_desc_array;
 	se->probe_desc.nr_events = 1;
 	se->probe_desc.major = LTTNG_UST_PROVIDER_MAJOR;
@@ -5622,8 +5622,8 @@ ssize_t side_serialize_size_pass(struct side_serialize_ctx *c, unsigned long bas
 	 */
 	if (caa_unlikely(!c->dynamic_layout && c->align != side_event_alignof(c->desc))) {
 		DBG("Side event %s:%s records a field more aligned than its description",
-			side_ptr_get(c->desc->provider_name),
-			side_ptr_get(c->desc->event_name));
+			side_ptr_rel_get(c->desc->provider_name),
+			side_ptr_rel_get(c->desc->event_name));
 		return -1;
 	}
 	return (ssize_t) c->len;
@@ -5704,8 +5704,8 @@ void tracer_call(const struct side_event_description *desc,
 			 */
 			if (caa_unlikely(!chan->ops->event_reserve_dyn)) {
 				DBG("Side event %s:%s needs a reservation which computes the size of its payload, which this channel does not provide",
-					side_ptr_get(desc->provider_name),
-					side_ptr_get(desc->event_name));
+					side_ptr_rel_get(desc->provider_name),
+					side_ptr_rel_get(desc->event_name));
 				return;
 			}
 			lttng_ust_ring_buffer_ctx_init(&bufctx, event_recorder,
@@ -5910,15 +5910,15 @@ void tracer_event_notification(enum side_tracer_notification notif,
 			se->reg_probe = lttng_ust_probe_register(&se->probe_desc);
 			if (!se->reg_probe) {
 				ERR("Error registering probe provider for side event %s:%s",
-					side_ptr_get(sdesc->provider_name),
-					side_ptr_get(sdesc->event_name));
+					side_ptr_rel_get(sdesc->provider_name),
+					side_ptr_rel_get(sdesc->event_name));
 				lttng_ust_side_event_destroy(se);
 				continue;
 			}
 			cds_list_add_tail(&se->node, &reg->events);
 			DBG("Registered side event %s:%s with the LTTng tracer",
-				side_ptr_get(sdesc->provider_name),
-				side_ptr_get(sdesc->event_name));
+				side_ptr_rel_get(sdesc->provider_name),
+				side_ptr_rel_get(sdesc->event_name));
 		}
 		break;
 	}
