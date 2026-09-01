@@ -160,7 +160,7 @@ struct BufferView {
 static_assert(std::is_standard_layout<BufferView>::value,
 	"BufferView must be a standard layout type for offsetof() to name its members");
 
-static side_define_struct(buffer_desc,
+side_static_define_struct(buffer_desc,
 	side_field_list(
 		side_field_gather_unsigned_integer("total",
 			offsetof(BufferView, total),

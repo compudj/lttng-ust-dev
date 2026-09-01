@@ -130,7 +130,7 @@ static void emit_readings(void)
  */
 
 /* struct { u32 magic; u16 version; } */
-static side_define_struct(frame_header,
+side_static_define_struct(frame_header,
 	side_field_list(
 		side_field_u32("magic"),
 		side_field_u16("version"),
@@ -138,10 +138,10 @@ static side_define_struct(frame_header,
 );
 
 /* Three samples per channel. */
-static side_define_array(sample_array, side_elem(side_type_u32()), 3);
+side_static_define_array(sample_array, side_elem(side_type_u32()), 3);
 
 /* struct { u32 id; u32 samples[3]; } */
-static side_define_struct(channel_struct,
+side_static_define_struct(channel_struct,
 	side_field_list(
 		side_field_u32("id"),
 		side_field_array("samples", sample_array),
@@ -149,16 +149,16 @@ static side_define_struct(channel_struct,
 );
 
 /* An array of structures, each of which holds an array. */
-static side_define_array(channel_array,
+side_static_define_array(channel_array,
 	side_elem(side_type_struct(channel_struct)), 2);
 
 /* A sequence of u32, its length recorded as a u16. */
-static side_define_vla(point_vla,
+side_static_define_vla(point_vla,
 	side_elem(side_type_u32()),
 	side_elem(side_type_u16()));
 
 /* struct { u32 mark; sequence<u32> points; } */
-static side_define_struct(burst_struct,
+side_static_define_struct(burst_struct,
 	side_field_list(
 		side_field_u32("mark"),
 		side_field_vla("points", point_vla),
@@ -166,7 +166,7 @@ static side_define_struct(burst_struct,
 );
 
 /* A sequence of structures, each of which holds a sequence. */
-static side_define_vla(burst_vla,
+side_static_define_vla(burst_vla,
 	side_elem(side_type_struct(burst_struct)),
 	side_elem(side_type_u16()));
 
@@ -174,7 +174,7 @@ static side_define_vla(burst_vla,
  * A variant: the option recorded is the one whose range contains the
  * value of the selector. Only the selected option occupies the trace.
  */
-static side_define_variant(payload_variant,
+side_static_define_variant(payload_variant,
 	side_type_u32(),
 	side_option_list(
 		side_option_range(0, 0, side_type_u32()),
@@ -289,7 +289,7 @@ struct sensor {
 };
 
 /* The members of one element of the "axes" sequence below. */
-static side_define_struct(axis_desc,
+side_static_define_struct(axis_desc,
 	side_field_list(
 		side_field_gather_unsigned_integer("axis_id",
 			offsetof(struct axis, axis_id),
@@ -302,7 +302,7 @@ static side_define_struct(axis_desc,
 	)
 );
 
-static side_define_struct(sensor_desc,
+side_static_define_struct(sensor_desc,
 	side_field_list(
 		side_field_gather_unsigned_integer("id",
 			offsetof(struct sensor, id),
@@ -408,7 +408,7 @@ static void emit_snapshots(void)
  * rather than an integer, which is what makes the tracer record the
  * array as a blob.
  */
-static side_define_array(ipv6_addr, side_elem(side_type_byte()), 16,
+side_static_define_array(ipv6_addr, side_elem(side_type_byte()), 16,
 	side_attr_list(side_attr("lttng.fmt.ipv6", side_attr_bool(true))));
 
 /*
@@ -417,7 +417,7 @@ static side_define_array(ipv6_addr, side_elem(side_type_byte()), 16,
  *
  * struct { u32 addr; u16 port; }
  */
-static side_define_struct(endpoint_struct,
+side_static_define_struct(endpoint_struct,
 	side_field_list(
 		side_field_u32_be("addr",
 			side_attr_list(side_attr("lttng.fmt.ipv4", side_attr_bool(true)))),
