@@ -92,6 +92,7 @@ faults it in at all, and when a tracer does read it, it faults in clean.
     ./measure-resident                     # what one process holds
     ./measure-resident --processes 4       # and what several then share
     ./measure-resident --maps side-defs    # mapping by mapping
+    ./measure-resident --sections          # and what each section costs
 
 `--processes` matters because a clean page is accounted `Private_Clean`
 while one process alone maps it, however shareable it is. Holding
@@ -101,6 +102,33 @@ that the private half does not move at all.
 `--maps` is where the difference is legible: the mapping holding
 `side_event_description` is dirtied only where the event states are,
 while the one holding `.data.rel.ro` is dirtied in full.
+
+`--sections` asks the same of a section rather than of the mapping it
+shares, and answers the other half of the question: not what a page
+costs once it is there, but whether it is ever fetched at all. For a
+thousand events in a program which never traces:
+
+| section | bytes | pages | faulted in |
+|---|---:|---:|---:|
+| `side_event_description` | 456,000 | 113 | 7 |
+| `.data.rel.ro` (tracepoint provider) | 540,088 | 132 | 132 |
+
+The seven are the six pages at the description's start, which share
+their pages with the event states the loader does write, and the
+partial page at its end. Not one of the 106 pages in between is ever
+read from disk by a process which does not trace.
+
+This is the same job `LTTNG_UST_TRACEPOINT_PROBE_DYNAMIC_LINKAGE` does
+for a tracepoint provider -- keep what is not used out of the program
+-- done by the MMU instead of by the build. It needs no second object,
+no separate linkage mode and no load step, it is per page rather than
+all or nothing, and what it does fetch arrives clean and shared rather
+than private and dirty.
+
+Residency is read from `/proc/self/pagemap` and not from `mincore()`,
+which for a file backed mapping answers whether the page is in the page
+cache -- true of a file just built, whether or not the process ever
+touched it.
 
 The numbers come from `/proc/self/smaps`, read by a constructor in
 `smaps-probe.c`, which is preloaded rather than linked into the

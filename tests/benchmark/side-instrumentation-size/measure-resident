@@ -71,19 +71,25 @@ def probe(here):
 
 
 def parse(path):
+    """
+    The mappings each program reported, and which of their pages were
+    resident, keyed by the address the mapping starts at.
+    """
     res = collections.defaultdict(list)
+    resident = {}
 
     for line in pathlib.Path(path).read_text().splitlines():
         f = line.split()
 
-        if len(f) != 9:
-            continue
+        if len(f) == 3 and f[0].endswith("-resident"):
+            resident[(f[0][: -len("-resident")], int(f[1], 16))] = f[2]
+        elif len(f) == 9:
+            res[f[0]].append(
+                Vma(f[0], int(f[1], 16), int(f[2], 16), f[3],
+                    *(int(x) for x in f[4:]))
+            )
 
-        res[f[0]].append(
-            Vma(f[0], int(f[1], 16), int(f[2], 16), f[3], *(int(x) for x in f[4:]))
-        )
-
-    return res
+    return res, resident
 
 
 def run(here, programs, probe_so, concurrent):
@@ -139,12 +145,12 @@ def run(here, programs, probe_so, concurrent):
                     p.stdin.close()
                     p.wait()
 
-            got = parse(report)
+            got, resident = parse(report)
 
             if program not in got:
                 sys.exit(f"{program} reported nothing: is it a wrapper for .libs?")
 
-            res[program] = got[program]
+            res[program] = (got[program], resident)
 
     return res
 
@@ -171,13 +177,13 @@ def table(title, data, programs):
         ("private_clean", "  private, clean"),
         ("private_dirty", "  private, dirty"),
     ):
-        row = "".join(f"{totals(data[p])[field]:>24,}" for p in programs)
+        row = "".join(f"{totals(data[p][0])[field]:>24,}" for p in programs)
         print(f"  {desc:<26}{row}")
 
     print("  " + "-" * (26 + 24 * len(programs)))
     print(
         f"  {'paid per process':<26}"
-        + "".join(f"{totals(data[p])['private_dirty']:>24,}" for p in programs)
+        + "".join(f"{totals(data[p][0])['private_dirty']:>24,}" for p in programs)
     )
     print()
 
@@ -246,7 +252,7 @@ def maps(here, data, programs):
         if program not in data:
             continue
 
-        vmas = data[program]
+        vmas, _ = data[program]
         secs = sections(here / program)
         base = min(v.start for v in vmas)
 
@@ -274,6 +280,67 @@ def maps(here, data, programs):
         print()
 
 
+def section_cost(vmas, resident, secs, base, page=4096):
+    """
+    What each section costs, in pages of its own rather than of the
+    mapping it happens to share.
+
+    A page belongs to whichever section covers it; the residency comes
+    from mincore(), so a section which is mapped and never read reports
+    zero however large it is.
+    """
+    res = []
+
+    for addr, size, name in secs:
+        if not size:
+            continue
+
+        lo, hi = base + addr, base + addr + size
+        first, last = lo // page, (hi + page - 1) // page
+        pages = last - first
+        live = 0
+
+        for v in vmas:
+            bits = resident.get((v.name, v.start))
+
+            if not bits:
+                continue
+
+            for i in range(first, last):
+                offset = i * page - v.start
+
+                if 0 <= offset < v.end - v.start:
+                    live += bits[offset // page] == "1"
+
+        res.append((name, size, pages, live))
+
+    return res
+
+
+def show_sections(here, data, programs, only):
+    for program in programs:
+        if program not in data:
+            continue
+
+        vmas, resident = data[program]
+        secs = sections(here / program)
+        base = min(v.start for v in vmas)
+        rows = section_cost(vmas, resident, secs, base)
+
+        if only:
+            rows = [r for r in rows if any(k in r[0] for k in only)]
+
+        print(f"{program} ({LABELS[program]})")
+        print()
+        print(f"  {'section':<32}{'bytes':>12}{'pages':>8}{'resident':>10}")
+        print("  " + "-" * 62)
+
+        for name, size, pages, live in sorted(rows, key=lambda r: -r[1]):
+            print(f"  {name:<32}{size:>12,}{pages:>8,}{live:>10,}")
+
+        print()
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__.strip().splitlines()[0])
     p.add_argument("--events", type=int, default=1000, help="events built in")
@@ -284,6 +351,12 @@ def main():
         help="processes to hold alive at once, so shared pages read as shared",
     )
     p.add_argument("--maps", action="store_true", help="report every mapping")
+    p.add_argument(
+        "--sections",
+        action="store_true",
+        help="report what each instrumentation section costs, and how much"
+        " of it demand paging ever fetches",
+    )
     p.add_argument("programs", nargs="*", default=list(LABELS))
     args = p.parse_args()
 
@@ -315,6 +388,10 @@ def main():
 
     if args.maps:
         maps(here, data, args.programs)
+
+    if args.sections:
+        show_sections(here, data, args.programs,
+                      ["lttng_ust_tracepoints", "side_event_", ".data.rel.ro"])
 
     return 0
 

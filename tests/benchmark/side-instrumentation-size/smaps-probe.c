@@ -18,6 +18,17 @@
  * Only the mappings backed by the executable itself are reported. The
  * loader, the C library and this object are left out.
  *
+ * Each mapping is followed by which of its pages this process has
+ * actually faulted in, so a reader can ask what a section costs rather
+ * than what the mapping it shares costs. That is the question worth
+ * asking of a description which is mapped and never read: it is in the
+ * address space, and demand paging means this process never fetches it.
+ *
+ * The answer comes from /proc/self/pagemap and not from mincore(),
+ * which for a file backed mapping answers whether the page is in the
+ * page cache -- true of a file just built and linked, whether or not
+ * this process ever touched it.
+ *
  * Environment:
  *
  *   SMAPS_PROGRAM  name of the executable to act on. Everything else
@@ -48,6 +59,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdint.h>
 #include <unistd.h>
 
 #define REPORT_MAX	65536
@@ -58,7 +70,53 @@ struct vma {
 	long rss, shared_clean, shared_dirty, private_clean, private_dirty;
 };
 
-static void emit(char *buf, size_t *len, const char *name, const struct vma *v)
+/* Set in a pagemap entry when the page is in this process's tables. */
+#define PAGEMAP_PRESENT		(1ULL << 63)
+#define PAGEMAP_SWAPPED		(1ULL << 62)
+
+/*
+ * Which pages of the mapping this process has faulted in, as a run of 0
+ * and 1 in the order they are mapped.
+ *
+ * /proc/self/pagemap and not mincore(): for a file backed mapping
+ * mincore() answers whether the page is in the page cache, which it is
+ * for a file just built, whether or not this process ever touched it.
+ */
+static void emit_resident(int pagemap, char *buf, size_t *len,
+		const char *name, const struct vma *v)
+{
+	size_t page = (size_t) sysconf(_SC_PAGESIZE);
+	size_t pages = (v->end - v->start) / page;
+	size_t i;
+	int n;
+
+	if (pagemap < 0 || !pages || *len >= REPORT_MAX)
+		return;
+
+	n = snprintf(buf + *len, REPORT_MAX - *len, "%s-resident %lx ",
+		name, v->start);
+
+	if (n > 0)
+		*len += (size_t) n;
+
+	for (i = 0; i < pages && *len + 2 < REPORT_MAX; i++) {
+		uint64_t entry = 0;
+		off_t at = (off_t) ((v->start / page + i) * sizeof(entry));
+		int here = 0;
+
+		if (pread(pagemap, &entry, sizeof(entry), at) == sizeof(entry))
+			here = (entry & (PAGEMAP_PRESENT | PAGEMAP_SWAPPED)) != 0;
+
+		buf[(*len)++] = here ? '1' : '0';
+	}
+
+	if (*len + 1 < REPORT_MAX)
+		buf[(*len)++] = '\n';
+}
+
+
+static void emit(int pagemap, char *buf, size_t *len, const char *name,
+		const struct vma *v)
 {
 	int n;
 
@@ -73,6 +131,8 @@ static void emit(char *buf, size_t *len, const char *name, const struct vma *v)
 
 	if (n > 0)
 		*len += (size_t) n;
+
+	emit_resident(pagemap, buf, len, name, v);
 }
 
 /*
@@ -82,12 +142,17 @@ static void emit(char *buf, size_t *len, const char *name, const struct vma *v)
 static void scan(const char *exe, const char *name, char *buf, size_t *len)
 {
 	FILE *f = fopen("/proc/self/smaps", "r");
+	int pagemap = open("/proc/self/pagemap", O_RDONLY);
 	char line[8192];
 	struct vma v;
 	int mine = 0, have = 0;
 
-	if (!f)
+	if (!f) {
+		if (pagemap >= 0)
+			close(pagemap);
+
 		return;
+	}
 
 	while (fgets(line, sizeof(line), f)) {
 		unsigned long start, end;
@@ -96,7 +161,7 @@ static void scan(const char *exe, const char *name, char *buf, size_t *len)
 
 		if (sscanf(line, "%lx-%lx %7s", &start, &end, perms) == 3) {
 			if (mine && have)
-				emit(buf, len, name, &v);
+				emit(pagemap, buf, len, name, &v);
 
 			memset(&v, 0, sizeof(v));
 			v.start = start;
@@ -128,7 +193,10 @@ static void scan(const char *exe, const char *name, char *buf, size_t *len)
 	}
 
 	if (mine && have)
-		emit(buf, len, name, &v);
+		emit(pagemap, buf, len, name, &v);
+
+	if (pagemap >= 0)
+		close(pagemap);
 
 	fclose(f);
 }
