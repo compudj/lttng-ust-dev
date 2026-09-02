@@ -56,7 +56,7 @@ description weighs, because both projects keep theirs elsewhere:
 - the tracepoints of a provider live in `lttng_ust_tracepoints`,
   `lttng_ust_tracepoints_ptrs` and `lttng_ust_tracepoints_strings`;
 - the descriptions of side events live in `side_event_description`,
-  `side_event_description_ptr` and `side_event_state`;
+  `side_event_state_ptr` and `side_event_state`;
 - a description made of pointers ends up in `.data.rel.ro`, and each of
   those pointers needs an entry in `.rela.dyn`.
 

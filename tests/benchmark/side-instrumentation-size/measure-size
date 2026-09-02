@@ -29,7 +29,7 @@ INSTR_SECTIONS = {
     "lttng_ust_tracepoints_ptrs",
     "lttng_ust_tracepoints_strings",
     "side_event_description",
-    "side_event_description_ptr",
+    "side_event_state_ptr",
     "side_event_state",
 }
 
