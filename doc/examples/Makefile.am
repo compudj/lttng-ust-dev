@@ -175,6 +175,9 @@ all-local:
 				-I$$rel_build_subdir$(top_builddir)/src/" \
 				CFLAGS='$(CFLAGS)' \
 				AM_CFLAGS='$(AM_CFLAGS)' \
+				CXX="$(CXX)" \
+				CXXFLAGS='$(CXXFLAGS)' \
+				AM_CXXFLAGS='$(AM_CXXFLAGS)' \
 				LDFLAGS="$(LDFLAGS)" \
 				AM_LDFLAGS='$(AM_LDFLAGS) -L../../../src/lib/lttng-ust/.libs -L../../../src/lib/lttng-ust-common/.libs -L../../../src/lib/lttng-ust-tracepoint/.libs \
 				-Wl,-rpath="$(abs_top_builddir)/src/lib/lttng-ust/.libs/" \
