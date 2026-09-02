@@ -178,6 +178,8 @@ all-local:
 				CXX="$(CXX)" \
 				CXXFLAGS='$(CXXFLAGS)' \
 				AM_CXXFLAGS='$(AM_CXXFLAGS)' \
+				SIDE_CFLAGS='$(SIDE_CFLAGS)' \
+				SIDE_LIBS='$(SIDE_LIBS)' \
 				LDFLAGS="$(LDFLAGS)" \
 				AM_LDFLAGS='$(AM_LDFLAGS) -L../../../src/lib/lttng-ust/.libs -L../../../src/lib/lttng-ust-common/.libs -L../../../src/lib/lttng-ust-tracepoint/.libs \
 				-Wl,-rpath="$(abs_top_builddir)/src/lib/lttng-ust/.libs/" \

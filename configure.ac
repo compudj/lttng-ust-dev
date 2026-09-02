@@ -313,8 +313,38 @@ AC_CHECK_LIB([$libdl_name], [dlmopen], [
 # Require URCU >= 0.15 for CMM_RELEASE
 PKG_CHECK_MODULES([URCU], [liburcu >= 0.15])
 
-# Optionally depend on libside
-# TODO
+# Depend on libside for the SIDE instrumentation ABI, and on
+# libphased-atfork for the fork coordination the two share. Both are
+# built and installed by the libside project.
+#
+# --with-side-prefix reaches a libside installed outside the directories
+# pkg-config searches. A libside build tree which has not been installed
+# is reached by setting SIDE_CFLAGS, SIDE_LIBS, PHASED_ATFORK_CFLAGS and
+# PHASED_ATFORK_LIBS, which take the place of the pkg-config lookup:
+#
+#   ./configure SIDE_CFLAGS=-I/path/to/libside/include \
+#       SIDE_LIBS="-L/path/to/libside/src/lib/libside/.libs -lside" \
+#       PHASED_ATFORK_CFLAGS=-I/path/to/libside/include \
+#       PHASED_ATFORK_LIBS="-L/path/to/libside/src/lib/libphased-atfork/.libs -lphased-atfork"
+#
+# TODO: make the libside dependency optional
+AC_ARG_WITH([side-prefix],
+  [AS_HELP_STRING([--with-side-prefix=DIR],
+    [libside is installed in DIR rather than where pkg-config looks for it])],
+  [
+    AS_CASE([$withval],
+      [yes], [AC_MSG_ERROR([--with-side-prefix requires a directory])],
+      [no], [],
+      [
+        SIDE_CFLAGS="-I$withval/include"
+        SIDE_LIBS="-L$withval/lib -lside"
+        PHASED_ATFORK_CFLAGS="-I$withval/include"
+        PHASED_ATFORK_LIBS="-L$withval/lib -lphased-atfork"
+      ])
+  ])
+
+PKG_CHECK_MODULES([SIDE], [libside])
+PKG_CHECK_MODULES([PHASED_ATFORK], [libphased-atfork])
 
 ##                 ##
 ## User variables  ##
@@ -598,10 +628,10 @@ AC_SUBST([LTTNG_UST_CTL_LIBRARY_VERSION], ust_ctl_lib_version)
 # Major soname for python-lttngust
 AC_SUBST([LTTNG_UST_LIB_SONAME_MAJOR], [ust_lib_version_current])
 
-AM_CFLAGS="$OPT_CFLAGS $WARN_CFLAGS $URCU_CFLAGS $PTHREAD_CFLAGS"
+AM_CFLAGS="$OPT_CFLAGS $WARN_CFLAGS $URCU_CFLAGS $SIDE_CFLAGS $PHASED_ATFORK_CFLAGS $PTHREAD_CFLAGS"
 AC_SUBST(AM_CFLAGS)
 
-AM_CXXFLAGS="$WARN_CXXFLAGS $URCU_CFLAGS $PTHREAD_CFLAGS"
+AM_CXXFLAGS="$WARN_CXXFLAGS $URCU_CFLAGS $SIDE_CFLAGS $PHASED_ATFORK_CFLAGS $PTHREAD_CFLAGS"
 AC_SUBST(AM_CXXFLAGS)
 
 # The order in which the include folders are searched is important.

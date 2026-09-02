@@ -51,11 +51,11 @@ tp_calls_probes_CPPFLAGS = -DCALLSITES $(AM_CPPFLAGS)
 tp_calls_probes_LDADD = $(UST_LIBS)
 
 side_defs_SOURCES = side-size.c
-side_defs_LDADD = -lside
+side_defs_LDADD = $(SIDE_LIBS)
 
 side_calls_SOURCES = side-size.c
 side_calls_CPPFLAGS = -DCALLSITES $(AM_CPPFLAGS)
-side_calls_LDADD = -lside
+side_calls_LDADD = $(SIDE_LIBS)
 
 dist_noinst_SCRIPTS = gen-instrumentation measure-size
 

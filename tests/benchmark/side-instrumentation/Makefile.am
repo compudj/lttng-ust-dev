@@ -11,7 +11,7 @@ noinst_PROGRAMS = bench-side bench-tp
 #
 # TODO: make libside dependency optional
 bench_side_SOURCES = bench-side.c
-bench_side_LDADD = -lside
+bench_side_LDADD = $(SIDE_LIBS)
 
 # Both programs are built with _LGPL_SOURCE, which is what an
 # application which may use the inlined RCU read side does, and which is
