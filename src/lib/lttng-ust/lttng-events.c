@@ -365,6 +365,12 @@ void lttng_session_destroy(struct lttng_ust_session *session)
 	struct lttng_event_enabler_common *event_enabler, *event_tmpenabler;
 
 	CMM_ACCESS_ONCE(session->active) = 0;
+	/*
+	 * Drop whatever side statedump this session asked for and has
+	 * not been given: it would have the application walk its state
+	 * for a session which is going away.
+	 */
+	lttng_ust_side_session_statedump_cancel(session);
 	cds_list_for_each_entry(event_priv, &session->priv->events_head, node)
 		_lttng_event_unregister(event_priv->pub);
 	lttng_ust_tracer_synchronize();		/* Wait for in-flight events to complete */
@@ -728,6 +734,13 @@ int lttng_session_disable(struct lttng_ust_session *session)
 	}
 	/* Set atomically the state to "inactive" */
 	CMM_ACCESS_ONCE(session->active) = 0;
+
+	/*
+	 * Same for a session which stops: a statedump which runs now
+	 * records nothing, the session being inactive, and starting the
+	 * session again asks for a new one.
+	 */
+	lttng_ust_side_session_statedump_cancel(session);
 
 	/* Set transient enabler state to "disabled" */
 	session->priv->tstate = 0;

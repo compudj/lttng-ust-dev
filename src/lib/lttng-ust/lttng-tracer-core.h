@@ -143,6 +143,8 @@ int lttng_ust_side_session_key_alloc(struct lttng_ust_session *session)
 	__attribute__((visibility("hidden")));
 void lttng_ust_side_session_statedump(struct lttng_ust_session *session)
 	__attribute__((visibility("hidden")));
+void lttng_ust_side_session_statedump_cancel(struct lttng_ust_session *session)
+	__attribute__((visibility("hidden")));
 
 #ifdef HAVE_LINUX_PERF_EVENT_H
 void lttng_ust_perf_counter_init_thread(int flags)

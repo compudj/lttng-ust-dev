@@ -6026,6 +6026,27 @@ void lttng_ust_side_session_statedump(struct lttng_ust_session *session)
 		DBG("Unable to request a side statedump for the session");
 }
 
+/*
+ * Drop the statedump requests of a session which stopped or is going
+ * away, so that the application does not walk its state for a session
+ * which would record none of it.
+ *
+ * Best effort: side hands a whole queue of requests to whoever runs
+ * them before running any, so a statedump already under way completes.
+ * Its events are then discarded by the key of the callbacks and by the
+ * session no longer being active. What this bounds is the work and the
+ * memory of the requests which have not been picked up yet, which in
+ * polling mode is however many the session daemon made since the
+ * application last polled.
+ */
+void lttng_ust_side_session_statedump_cancel(struct lttng_ust_session *session)
+{
+	if (!session->priv->side_key)
+		return;
+	if (side_tracer_statedump_request_cancel(session->priv->side_key) != SIDE_ERROR_OK)
+		DBG("Unable to cancel the side statedump requests of the session");
+}
+
 void lttng_ust_tracer_synchronize(void)
 {
 	lttng_ust_urcu_synchronize_rcu();
