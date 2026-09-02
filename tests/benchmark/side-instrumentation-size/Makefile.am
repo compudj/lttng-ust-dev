@@ -57,6 +57,13 @@ side_calls_SOURCES = side-size.c
 side_calls_CPPFLAGS = -DCALLSITES $(AM_CPPFLAGS)
 side_calls_LDADD = $(SIDE_LIBS)
 
-dist_noinst_SCRIPTS = gen-instrumentation measure-size
+# Preloaded by measure-resident rather than linked into the programs
+# it measures: those same binaries are what measure-size weighs, so
+# anything added to them would be counted as instrumentation.
+noinst_LTLIBRARIES = libsmaps-probe.la
+libsmaps_probe_la_SOURCES = smaps-probe.c
+libsmaps_probe_la_LDFLAGS = -module -shared -avoid-version -rpath $(abs_builddir)/.libs/
+
+dist_noinst_SCRIPTS = gen-instrumentation measure-size measure-resident
 
 EXTRA_DIST = README.md

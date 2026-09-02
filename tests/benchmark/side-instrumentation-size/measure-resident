@@ -1,0 +1,323 @@
+#!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2026 EfficiOS, Inc
+#
+# SPDX-License-Identifier: LGPL-2.1-only
+
+"""
+Report what instrumentation costs a process in resident memory.
+
+Bytes in a file are not bytes in a process, and the bytes in a process
+do not all scale the same way. measure-size weighs what the linker
+emitted, which is address space and disk; this weighs what a running
+process holds, and splits it the way it is paid for:
+
+  shared    faulted in, clean, backed by the page cache. Paid once for
+            the whole system however many processes map it.
+
+  private   dirtied, so the copy-on-write already happened. Paid in
+            full by every process. This is the only number which
+            multiplies by the number of processes.
+
+A relocation is what turns the first into the second: the loader writes
+the page, so it is private and dirty in every process before main()
+runs, whether or not tracing is ever enabled. A description holding no
+address is never written, so it is never faulted in by a process which
+does not trace, and when a tracer reads it, it faults in clean.
+
+The numbers come from /proc/self/smaps, read by a constructor in a
+preloaded object, which runs once the loader has relocated and before
+the program has touched anything of its own. Only mappings backed by
+the executable are counted.
+
+A clean page shows as Private_Clean while one process alone maps it,
+however shareable it is, so --processes runs several at once and
+reports what they then share.
+"""
+
+import argparse
+import collections
+import os
+import pathlib
+import re
+import subprocess
+import sys
+import tempfile
+
+FIELDS = ["rss", "shared_clean", "shared_dirty", "private_clean", "private_dirty"]
+
+LABELS = {
+    "tp-defs": "tracepoint, no probes",
+    "tp-defs-probes": "tracepoint, probes in",
+    "tp-calls": "tracepoint, no probes",
+    "tp-calls-probes": "tracepoint, probes in",
+    "side-defs": "libside",
+    "side-calls": "libside",
+}
+
+Vma = collections.namedtuple("Vma", ["name", "start", "end", "perms"] + FIELDS)
+
+
+def probe(here):
+    """
+    The preloaded object, which libtool leaves in .libs.
+    """
+    for name in ("libsmaps-probe.so", "smaps-probe.so"):
+        path = here / ".libs" / name
+
+        if path.is_file():
+            return path
+
+    sys.exit(f"{here}/.libs/libsmaps-probe.so is not built: run make first")
+
+
+def parse(path):
+    res = collections.defaultdict(list)
+
+    for line in pathlib.Path(path).read_text().splitlines():
+        f = line.split()
+
+        if len(f) != 9:
+            continue
+
+        res[f[0]].append(
+            Vma(f[0], int(f[1], 16), int(f[2], 16), f[3], *(int(x) for x in f[4:]))
+        )
+
+    return res
+
+
+def run(here, programs, probe_so, concurrent):
+    """
+    Run each program under the probe and collect what it reported.
+
+    The program is run through its libtool wrapper rather than the
+    binary in .libs, which links the installed liblttng-ust rather than
+    the one just built.
+
+    With `concurrent` above one, that many extra processes are held
+    alive while the measured one starts, which is what makes a clean
+    page shared rather than private.
+    """
+    res = {}
+
+    with tempfile.TemporaryDirectory() as tmp:
+        for program in programs:
+            report = pathlib.Path(tmp) / f"{program}.txt"
+            env = dict(os.environ)
+            env["LD_PRELOAD"] = str(probe_so)
+            env["SMAPS_REPORT"] = str(report)
+            env["SMAPS_PROGRAM"] = program
+            held = []
+
+            try:
+                for _ in range(concurrent - 1):
+                    held.append(
+                        subprocess.Popen(
+                            [str(here / program)],
+                            env=dict(env, SMAPS_WAIT="1", SMAPS_REPORT=""),
+                            stdin=subprocess.PIPE,
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.DEVNULL,
+                        )
+                    )
+
+                # A holder writes a line once its mappings are in place
+                # and then blocks, so reading that line is what says the
+                # process being measured may start.
+                for holder in held:
+                    if not holder.stdout.readline():
+                        sys.exit(f"{program} did not start under the probe")
+
+                subprocess.run(
+                    [str(here / program)],
+                    env=env,
+                    stdout=subprocess.DEVNULL,
+                    check=True,
+                )
+            finally:
+                for p in held:
+                    p.stdin.close()
+                    p.wait()
+
+            got = parse(report)
+
+            if program not in got:
+                sys.exit(f"{program} reported nothing: is it a wrapper for .libs?")
+
+            res[program] = got[program]
+
+    return res
+
+
+def totals(vmas):
+    return {f: sum(getattr(v, f) for v in vmas) for f in FIELDS}
+
+
+def table(title, data, programs):
+    programs = [p for p in programs if p in data]
+
+    if not programs:
+        return
+
+    print(title)
+    print()
+    print(f"  {'':<26}" + "".join(f"{LABELS[p]:>24}" for p in programs))
+    print("  " + "-" * (26 + 24 * len(programs)))
+
+    for field, desc in (
+        ("rss", "resident"),
+        ("shared_clean", "  shared, clean"),
+        ("shared_dirty", "  shared, dirty"),
+        ("private_clean", "  private, clean"),
+        ("private_dirty", "  private, dirty"),
+    ):
+        row = "".join(f"{totals(data[p])[field]:>24,}" for p in programs)
+        print(f"  {desc:<26}{row}")
+
+    print("  " + "-" * (26 + 24 * len(programs)))
+    print(
+        f"  {'paid per process':<26}"
+        + "".join(f"{totals(data[p])['private_dirty']:>24,}" for p in programs)
+    )
+    print()
+
+
+def real_binary(path):
+    """
+    The ELF file behind a libtool wrapper script, which is what the
+    sections have to be read from.
+    """
+    with open(path, "rb") as f:
+        if f.read(4) == b"\x7fELF":
+            return path
+
+    return path.parent / ".libs" / path.name
+
+
+def sections(path):
+    """
+    Allocated sections of `path` as (address, size, name), at the
+    addresses the linker gave them. A position independent executable is
+    linked at zero, so a runtime address is one of these plus the base
+    the loader chose.
+    """
+    out = subprocess.run(
+        ["readelf", "-SW", str(real_binary(path))],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    res = []
+
+    for line in out.splitlines():
+        m = re.match(
+            r"\s*\[\s*\d+\]\s+(\S+)\s+(\S+)\s+([0-9a-f]+)\s+"
+            r"([0-9a-f]+)\s+([0-9a-f]+)\s+\S+\s+(\S*)",
+            line,
+        )
+
+        if not m or m.group(2) == "NULL" or "A" not in m.group(6):
+            continue
+
+        res.append((int(m.group(3), 16), int(m.group(5), 16), m.group(1)))
+
+    return res
+
+
+def holds(secs, base, vma, page=4096):
+    """
+    What of `secs` lands in `vma`, largest first. Sections smaller than a
+    page are left out unless nothing else is there: they say nothing
+    about which pages get dirtied, which is what this is read for.
+    """
+    inside = [
+        (size, name)
+        for addr, size, name in secs
+        if base + addr < vma.end and base + addr + size > vma.start
+    ]
+    inside.sort(reverse=True)
+    big = [(size, name) for size, name in inside if size >= page]
+
+    return big or inside[:1]
+
+
+def maps(here, data, programs):
+    for program in programs:
+        if program not in data:
+            continue
+
+        vmas = data[program]
+        secs = sections(here / program)
+        base = min(v.start for v in vmas)
+
+        print(f"{program} ({LABELS[program]})")
+        print()
+        print(
+            f"  {'perms':>5} {'size':>7} {'resident':>9} {'shared':>7}"
+            f" {'private':>8} {'dirty':>7}   holds"
+        )
+
+        for v in vmas:
+            held = ", ".join(
+                f"{name} {size // 1024:,}" for size, name in holds(secs, base, v)
+            )
+            print(
+                f"  {v.perms:>5} {(v.end - v.start) // 1024:>7,} {v.rss:>9,}"
+                f" {v.shared_clean + v.shared_dirty:>7,} {v.private_clean:>8,}"
+                f" {v.private_dirty:>7,}   {held}"
+            )
+
+        print(
+            f"  {'':>5} {'':>7} {'':>9} {'':>7} {'':>8}"
+            f" {totals(vmas)['private_dirty']:>7,}   paid per process"
+        )
+        print()
+
+
+def main():
+    p = argparse.ArgumentParser(description=__doc__.strip().splitlines()[0])
+    p.add_argument("--events", type=int, default=1000, help="events built in")
+    p.add_argument(
+        "--processes",
+        type=int,
+        default=1,
+        help="processes to hold alive at once, so shared pages read as shared",
+    )
+    p.add_argument("--maps", action="store_true", help="report every mapping")
+    p.add_argument("programs", nargs="*", default=list(LABELS))
+    args = p.parse_args()
+
+    if args.processes < 1:
+        sys.exit("--processes must be at least 1")
+
+    here = pathlib.Path(__file__).resolve().parent
+
+    for program in args.programs:
+        if not (here / program).is_file():
+            sys.exit(f"{here / program} is not built: run make in {here} first")
+
+    data = run(here, args.programs, probe(here), args.processes)
+
+    held = ""
+
+    if args.processes > 1:
+        held = f", {args.processes} processes at once"
+
+    print(f"kilobytes held by the executable's own mappings"
+          f" ({args.events} events{held})")
+    print()
+
+    for title, group in (
+        ("definitions only, no call sites", ["tp-defs", "tp-defs-probes", "side-defs"]),
+        ("one call site per event", ["tp-calls", "tp-calls-probes", "side-calls"]),
+    ):
+        table(title, data, group)
+
+    if args.maps:
+        maps(here, data, args.programs)
+
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

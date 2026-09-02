@@ -6,12 +6,13 @@ SPDX-License-Identifier: CC-BY-SA-4.0
 
 # libside instrumentation size benchmark
 
-What instrumentation costs a program in code and in data, for the same
-1000 events described once as LTTng-UST tracepoints and once as libside
-events.
+What instrumentation costs a program, for the same 1000 events described
+once as LTTng-UST tracepoints and once as libside events. Two things are
+measured, and they must not be added together:
 
     make
-    ./measure-size
+    ./measure-size          # what the linker emitted
+    ./measure-resident      # what a running process holds
 
 Every event has between one and eight fields, and no two events have the
 same shape: the number of fields and the types they use both walk
@@ -68,3 +69,46 @@ The relocations are worth reading as their own line rather than folded
 into the data. A description built out of pointers pays for each one
 twice: the pointer itself in `.data.rel.ro`, and the relocation which
 fills it in at load time.
+
+## What a process holds
+
+`measure-size` weighs address space and disk. Most of that is never
+resident, and what is resident is not all paid the same way, so
+`measure-resident` weighs the other thing:
+
+- **shared** pages are faulted in and clean, backed by the page cache.
+  They are paid once for the whole system, however many processes map
+  them, and they are reclaimable under pressure.
+- **private** pages have been dirtied, so the copy on write already
+  happened. They are paid in full by every process, and they are the
+  only ones which multiply by the number of processes.
+
+A relocation is what turns the first into the second: the loader writes
+the page, so it is private and dirty in every process before `main()`
+runs, whether or not tracing is ever enabled. A description which holds
+no address is never written, so a process which does not trace never
+faults it in at all, and when a tracer does read it, it faults in clean.
+
+    ./measure-resident                     # what one process holds
+    ./measure-resident --processes 4       # and what several then share
+    ./measure-resident --maps side-defs    # mapping by mapping
+
+`--processes` matters because a clean page is accounted `Private_Clean`
+while one process alone maps it, however shareable it is. Holding
+several alive at once is what moves it to `Shared_Clean`, and what shows
+that the private half does not move at all.
+
+`--maps` is where the difference is legible: the mapping holding
+`side_event_description` is dirtied only where the event states are,
+while the one holding `.data.rel.ro` is dirtied in full.
+
+The numbers come from `/proc/self/smaps`, read by a constructor in
+`smaps-probe.c`, which is preloaded rather than linked into the
+programs: those same binaries are what `measure-size` weighs, so
+anything added to them would be counted as instrumentation. A
+constructor in a preloaded object runs after the loader has relocated
+and before the program has touched anything of its own, which is the
+moment worth reading.
+
+Programs are run through their libtool wrappers. The binary in `.libs`
+links the installed LTTng-UST rather than the one just built.
