@@ -61,7 +61,7 @@ enum class Outcome : uint32_t {
 	Failed = 2,
 };
 
-static side_define_enum(outcome_mappings,
+side_static_define_enum(outcome_mappings,
 	side_enum_mapping_list(
 		side_enum_mapping_value("ok", static_cast<uint32_t>(Outcome::Ok)),
 		side_enum_mapping_value("retried", static_cast<uint32_t>(Outcome::Retried)),
@@ -73,7 +73,7 @@ side_static_event(request_event, "side_example_cxx", "request", SIDE_LOGLEVEL_IN
 	side_field_list(
 		side_field_string("method"),
 		side_field_string("path"),
-		side_field_enum("outcome", &outcome_mappings, side_elem(side_type_u32())),
+		side_field_enum("outcome", outcome_mappings, side_elem(side_type_u32())),
 		side_field_bool("cached"),
 		side_field_u16("nr_samples"),
 	)

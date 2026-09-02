@@ -49,7 +49,7 @@
  * shown as the number it is either way, since nothing else says what
  * it is.
  */
-static side_define_enum(example_states,
+side_static_define_enum(example_states,
 	side_enum_mapping_list(
 		side_enum_mapping_value("idle", 0),
 		side_enum_mapping_value("warming", 1),
@@ -61,7 +61,7 @@ side_static_event(reading_event, "side_example", "reading", SIDE_LOGLEVEL_INFO,
 	side_field_list(
 		side_field_u32("seq"),
 		side_field_string("sensor"),
-		side_field_enum("state", &example_states, side_elem(side_type_u32())),
+		side_field_enum("state", example_states, side_elem(side_type_u32())),
 		side_field_float_binary64("celsius"),
 		side_field_bool("calibrated"),
 		/*
