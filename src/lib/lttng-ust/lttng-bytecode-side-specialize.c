@@ -581,12 +581,12 @@ static int specialize_side_load_object(const struct side_type *side_type,
 	case SIDE_TYPE_ARRAY:
 		load->object_type = OBJECT_TYPE_ARRAY;
 		load->rev_bo = side_elem_rev_bo(side_ptr_rel_get(
-			side_ptr_rel_get(side_type->u.side_array)->elem_type));
+			side_ptr_sel_get(side_type->u.side_array)->elem_type));
 		break;
 	case SIDE_TYPE_VLA:
 		load->object_type = OBJECT_TYPE_SEQUENCE;
 		load->rev_bo = side_elem_rev_bo(side_ptr_rel_get(
-			side_ptr_rel_get(side_type->u.side_vla)->elem_type));
+			side_ptr_sel_get(side_type->u.side_vla)->elem_type));
 		break;
 	/*
 	 * The elements of a gathered array or sequence are not

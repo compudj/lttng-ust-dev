@@ -1291,7 +1291,7 @@ void tracer_after_print_vla(const struct side_type_vla *side_vla,
 static void tracer_print_enum(const struct side_type *type_desc,
 	const struct side_arg *item, void *priv)
 {
-	const struct side_enum_mappings *mappings = side_ptr_rel_get(type_desc->u.side_enum.mappings);
+	const struct side_enum_mappings *mappings = side_ptr_sel_get(type_desc->u.side_enum.mappings);
 	const struct side_type *elem_type = side_ptr_rel_get(type_desc->u.side_enum.elem_type);
 	union int_value v;
 
@@ -1312,7 +1312,7 @@ static void tracer_print_enum(const struct side_type *type_desc,
 static void tracer_print_enum_bitmap(const struct side_type *type_desc,
 	const struct side_arg *item, void *priv __attribute__((unused)))
 {
-	const struct side_enum_bitmap_mappings *side_enum_mappings = side_ptr_rel_get(type_desc->u.side_enum_bitmap.mappings);
+	const struct side_enum_bitmap_mappings *side_enum_mappings = side_ptr_sel_get(type_desc->u.side_enum_bitmap.mappings);
 	const struct side_type *enum_elem_type = side_ptr_rel_get(type_desc->u.side_enum_bitmap.elem_type), *elem_type;
 	uint32_t print_count = 0, stride_bit, nr_items;
 	const struct side_arg *array_item;
@@ -1335,12 +1335,12 @@ static void tracer_print_enum_bitmap(const struct side_type *type_desc,
 		nr_items = 1;
 		break;
 	case SIDE_TYPE_ARRAY:
-		elem_type = side_ptr_rel_get(side_ptr_rel_get(enum_elem_type->u.side_array)->elem_type);
+		elem_type = side_ptr_rel_get(side_ptr_sel_get(enum_elem_type->u.side_array)->elem_type);
 		array_item = side_ptr_get(side_ptr_get(item->u.side_static.side_array)->sav);
-		nr_items = side_ptr_rel_get(enum_elem_type->u.side_array)->length;
+		nr_items = side_ptr_sel_get(enum_elem_type->u.side_array)->length;
 		break;
 	case SIDE_TYPE_VLA:
-		elem_type = side_ptr_rel_get(side_ptr_rel_get(enum_elem_type->u.side_vla)->elem_type);
+		elem_type = side_ptr_rel_get(side_ptr_sel_get(enum_elem_type->u.side_vla)->elem_type);
 		array_item = side_ptr_get(side_ptr_get(item->u.side_static.side_vla)->sav);
 		nr_items = side_ptr_get(item->u.side_static.side_vla)->len;
 		break;
@@ -1503,7 +1503,7 @@ void tracer_print_gather_enum(const struct side_type_gather_enum *type,
 	const union side_integer_value *value,
 	void *priv __attribute__((unused)))
 {
-	const struct side_enum_mappings *mappings = side_ptr_rel_get(type->mappings);
+	const struct side_enum_mappings *mappings = side_ptr_sel_get(type->mappings);
 	const struct side_type *enum_elem_type = side_ptr_rel_get(type->elem_type);
 	const struct side_type_gather_integer *side_integer = &enum_elem_type->u.side_gather.u.side_integer;
 	union int_value v;
@@ -2090,7 +2090,7 @@ void do_after_print_description_enum(const char *type_name __attribute__((unused
 static
 void before_print_description_enum(const struct side_type_enum *type, void *priv)
 {
-	const struct side_enum_mappings *mappings = side_ptr_rel_get(type->mappings);
+	const struct side_enum_mappings *mappings = side_ptr_sel_get(type->mappings);
 	const struct side_type *elem_type = side_ptr_rel_get(type->elem_type);
 
 	switch (side_enum_get(elem_type->type)) {
@@ -2115,7 +2115,7 @@ void before_print_description_enum(const struct side_type_enum *type, void *priv
 static
 void after_print_description_enum(const struct side_type_enum *type, void *priv)
 {
-	const struct side_enum_mappings *mappings = side_ptr_rel_get(type->mappings);
+	const struct side_enum_mappings *mappings = side_ptr_sel_get(type->mappings);
 
 	do_after_print_description_enum("enum", mappings, priv);
 }
@@ -2124,7 +2124,7 @@ static
 void before_print_description_enum_bitmap(const struct side_type_enum_bitmap *type, void *priv __attribute__((unused)))
 {
 	const struct side_type *elem_type = side_ptr_rel_get(type->elem_type);
-	const struct side_enum_bitmap_mappings *mappings = side_ptr_rel_get(type->mappings);
+	const struct side_enum_bitmap_mappings *mappings = side_ptr_sel_get(type->mappings);
 	uint32_t print_count = 0;
 
 	switch (side_enum_get(elem_type->type)) {
@@ -2263,7 +2263,7 @@ void print_description_gather_string(const struct side_type_gather_string *type,
 static
 void before_print_description_gather_struct(const struct side_type_gather_struct *side_gather_struct, void *priv)
 {
-	const struct side_type_struct *side_struct = side_ptr_rel_get(side_gather_struct->type);
+	const struct side_type_struct *side_struct = side_ptr_sel_get(side_gather_struct->type);
 	struct print_ctx *ctx = (struct print_ctx *) priv;
 
 	print_attributes("attr", ":", side_array_rel_elements(&side_struct->attributes), side_array_length(&side_struct->attributes));
@@ -2342,7 +2342,7 @@ void after_element_print_description_gather_vla(const struct side_type_gather_vl
 static
 void before_print_description_gather_enum(const struct side_type_gather_enum *type, void *priv)
 {
-	const struct side_enum_mappings *mappings = side_ptr_rel_get(type->mappings);
+	const struct side_enum_mappings *mappings = side_ptr_sel_get(type->mappings);
 	const struct side_type *elem_type = side_ptr_rel_get(type->elem_type);
 
 	if (side_enum_get(elem_type->type) != SIDE_TYPE_GATHER_INTEGER) {
@@ -2355,7 +2355,7 @@ void before_print_description_gather_enum(const struct side_type_gather_enum *ty
 static
 void after_print_description_gather_enum(const struct side_type_gather_enum *type, void *priv)
 {
-	const struct side_enum_mappings *mappings = side_ptr_rel_get(type->mappings);
+	const struct side_enum_mappings *mappings = side_ptr_sel_get(type->mappings);
 
 	do_after_print_description_enum("gather_enum", mappings, priv);
 }
@@ -2949,10 +2949,10 @@ size_t side_type_alignof(const struct side_type *type_desc)
 		return lttng_ust_rb_alignof(char);
 	case SIDE_TYPE_ARRAY:
 		return side_type_alignof(side_ptr_rel_get(
-			side_ptr_rel_get(type_desc->u.side_array)->elem_type));
+			side_ptr_sel_get(type_desc->u.side_array)->elem_type));
 	case SIDE_TYPE_VLA:
 	{
-		const struct side_type_vla *v = side_ptr_rel_get(type_desc->u.side_vla);
+		const struct side_type_vla *v = side_ptr_sel_get(type_desc->u.side_vla);
 		size_t length_align, elem_align;
 
 		length_align = side_type_alignof(side_ptr_rel_get(v->length_type));
@@ -2960,13 +2960,13 @@ size_t side_type_alignof(const struct side_type *type_desc)
 		return length_align > elem_align ? length_align : elem_align;
 	}
 	case SIDE_TYPE_STRUCT:
-		return side_struct_alignof(side_ptr_rel_get(type_desc->u.side_struct));
+		return side_struct_alignof(side_ptr_sel_get(type_desc->u.side_struct));
 	case SIDE_TYPE_ENUM:
 		/* An enumeration is aligned like its container. */
 		return side_type_alignof(side_ptr_rel_get(type_desc->u.side_enum.elem_type));
 	case SIDE_TYPE_VARIANT:
 	{
-		const struct side_type_variant *v = side_ptr_rel_get(type_desc->u.side_variant);
+		const struct side_type_variant *v = side_ptr_sel_get(type_desc->u.side_variant);
 
 		/*
 		 * CTF 2 gives a variant an alignment requirement of
@@ -3007,7 +3007,7 @@ size_t side_type_alignof(const struct side_type *type_desc)
 		return side_type_alignof(side_ptr_rel_get(
 			type_desc->u.side_gather.u.side_enum.elem_type));
 	case SIDE_TYPE_GATHER_STRUCT:
-		return side_struct_alignof(side_ptr_rel_get(
+		return side_struct_alignof(side_ptr_sel_get(
 			type_desc->u.side_gather.u.side_struct.type));
 	case SIDE_TYPE_GATHER_ARRAY:
 		return side_type_alignof(side_ptr_rel_get(
@@ -3794,7 +3794,7 @@ fail:
 static
 void side_translate_after_enum(const struct side_type_enum *t, void *priv)
 {
-	side_translate_after_enum_mappings(side_ptr_rel_get(t->mappings), priv);
+	side_translate_after_enum_mappings(side_ptr_sel_get(t->mappings), priv);
 }
 
 /*
@@ -4405,19 +4405,19 @@ void side_translate_before_gather_enum(const struct side_type_gather_enum *t __a
 static
 void side_translate_after_gather_enum(const struct side_type_gather_enum *t, void *priv)
 {
-	side_translate_after_enum_mappings(side_ptr_rel_get(t->mappings), priv);
+	side_translate_after_enum_mappings(side_ptr_sel_get(t->mappings), priv);
 }
 
 static
 void side_translate_before_gather_struct(const struct side_type_gather_struct *t, void *priv)
 {
-	side_translate_before_struct(side_ptr_rel_get(t->type), priv);
+	side_translate_before_struct(side_ptr_sel_get(t->type), priv);
 }
 
 static
 void side_translate_after_gather_struct(const struct side_type_gather_struct *t, void *priv)
 {
-	side_translate_after_struct(side_ptr_rel_get(t->type), priv);
+	side_translate_after_struct(side_ptr_sel_get(t->type), priv);
 }
 
 static
@@ -4468,7 +4468,7 @@ bool side_gather_elem_is_fixed_size(const struct side_type *elem_type)
 	case SIDE_TYPE_GATHER_STRUCT:
 	{
 		const struct side_type_struct *side_struct =
-			side_ptr_rel_get(elem_type->u.side_gather.u.side_struct.type);
+			side_ptr_sel_get(elem_type->u.side_gather.u.side_struct.type);
 		uint32_t i;
 
 		for (i = 0; i < side_array_length(&side_struct->fields); i++) {
@@ -5558,7 +5558,7 @@ bool side_type_layout_is_dynamic(const struct side_type *type_desc)
 	case SIDE_TYPE_STRUCT:
 	{
 		const struct side_type_struct *side_struct =
-			side_ptr_rel_get(type_desc->u.side_struct);
+			side_ptr_sel_get(type_desc->u.side_struct);
 		uint32_t i, nr_fields = side_array_length(&side_struct->fields);
 
 		for (i = 0; i < nr_fields; i++) {
@@ -5572,10 +5572,10 @@ bool side_type_layout_is_dynamic(const struct side_type *type_desc)
 	}
 	case SIDE_TYPE_ARRAY:
 		return side_type_layout_is_dynamic(side_ptr_rel_get(
-			side_ptr_rel_get(type_desc->u.side_array)->elem_type));
+			side_ptr_sel_get(type_desc->u.side_array)->elem_type));
 	case SIDE_TYPE_VLA:
 		return side_type_layout_is_dynamic(side_ptr_rel_get(
-			side_ptr_rel_get(type_desc->u.side_vla)->elem_type));
+			side_ptr_sel_get(type_desc->u.side_vla)->elem_type));
 	default:
 		return false;
 	}
