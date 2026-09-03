@@ -76,6 +76,9 @@ char* lttng_ust_sockinfo_get_procname(void *owner)
 void lttng_ust_sockinfo_session_enabled(void *owner)
 	__attribute__((visibility("hidden")));
 
+void lttng_ust_sockinfo_wakeup_listeners(void)
+	__attribute__((visibility("hidden")));
+
 void lttng_event_notifier_notification_send(
 		const struct lttng_ust_event_notifier *event_notifier,
 		const char *stack_data,

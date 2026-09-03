@@ -363,6 +363,19 @@ struct lttng_ust_bytecode_runtime {
 	struct lttng_ust_ctx **pctx;
 };
 
+/*
+ * Whether this session owes the session daemon a notification saying
+ * what became of the statedump it asked for, and which one.
+ */
+enum lttng_ust_session_statedump_notify {
+	/* Nothing to tell: none was asked for, or it was told. */
+	LTTNG_UST_SESSION_STATEDUMP_NOTIFY_NONE = 0,
+	/* A request was issued to side; tell once it is no longer outstanding. */
+	LTTNG_UST_SESSION_STATEDUMP_NOTIFY_OWED = 1,
+	/* The request was dropped before being taken; say so. */
+	LTTNG_UST_SESSION_STATEDUMP_NOTIFY_DROPPED = 2,
+};
+
 struct lttng_ust_session_private {
 	struct lttng_ust_session *pub;		/* Public session interface */
 
@@ -386,6 +399,8 @@ struct lttng_ust_session_private {
 	void *owner;				/* object owner */
 	unsigned int tstate:1;			/* Transient enable state */
 	unsigned int statedump_pending:1;
+	/* enum lttng_ust_session_statedump_notify */
+	unsigned int statedump_notify:2;
 	/*
 	 * Key identifying the side event callbacks of this session:
 	 * a side statedump requested with it is only delivered to this

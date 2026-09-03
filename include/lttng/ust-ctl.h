@@ -552,6 +552,18 @@ enum lttng_ust_ctl_notify_cmd {
 	LTTNG_UST_CTL_NOTIFY_CMD_CHANNEL = 1,
 	LTTNG_UST_CTL_NOTIFY_CMD_ENUM = 2,
 	LTTNG_UST_CTL_NOTIFY_CMD_KEY = 3,
+	LTTNG_UST_CTL_NOTIFY_CMD_STATEDUMP = 4,
+};
+
+/* What became of a statedump a session asked for. */
+enum lttng_ust_ctl_statedump_status {
+	/* The application has walked its state for this session. */
+	LTTNG_UST_CTL_STATEDUMP_STATUS_TAKEN = 0,
+	/*
+	 * The request was dropped without being taken, because the
+	 * session stopped before the application got to it.
+	 */
+	LTTNG_UST_CTL_STATEDUMP_STATUS_DROPPED = 1,
 };
 
 enum lttng_ust_ctl_channel_header {
@@ -901,6 +913,29 @@ int lttng_ust_ctl_recv_register_channel(int sock,
 int lttng_ust_ctl_reply_register_channel(int sock,
 	uint32_t chan_id,
 	enum lttng_ust_ctl_channel_header header_type,
+	int ret_code);			/* return code. 0 ok, negative error */
+
+/*
+ * Receive the notification which says what became of a statedump a
+ * session asked an application for, so that a session daemon need not
+ * poll lttng_ust_ctl_statedump_outstanding() for it.
+ *
+ * It is a hint and not a queue: an application dumps its state for
+ * every tracer at once, so this may arrive when nothing this session
+ * asked for changed. lttng_ust_ctl_statedump_outstanding() remains the
+ * authoritative answer. A receiver which re-derives its state cannot
+ * be made wrong by an extra notification; one which counts them can.
+ *
+ * Returns 0 on success, negative UST or system error value on error.
+ */
+int lttng_ust_ctl_recv_notify_statedump(int sock,
+	int *session_objd,		/* session descriptor (output) */
+	enum lttng_ust_ctl_statedump_status *status);	/* (output) */
+
+/*
+ * Returns 0 on success, negative error value on error.
+ */
+int lttng_ust_ctl_reply_notify_statedump(int sock,
 	int ret_code);			/* return code. 0 ok, negative error */
 
 /*

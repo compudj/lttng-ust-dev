@@ -2704,6 +2704,15 @@ restart:
 		memset(ancillary_buf, 0, sizeof(ancillary_buf));
 
 		ust_listener_park_check(sock_info);
+		/*
+		 * Tell the session daemon what became of the statedumps
+		 * it asked for. Reached after handling a command, and
+		 * on the wakeup a statedump completion sends, which is
+		 * why it re-derives everything rather than trusting the
+		 * reason it was woken: spurious wakeups are ordinary
+		 * here, as they are for the park point above.
+		 */
+		lttng_handle_statedump_notifications(sock_info);
 		if (!ust_listener_wait_cmd(sock_info, sock))
 			continue;
 
@@ -3466,4 +3475,15 @@ void lttng_ust_sockinfo_session_enabled(void *owner)
 {
 	struct sock_info *sock_info = owner;
 	sock_info->statedump_pending = 1;
+}
+
+/*
+ * Have every listener thread loop back to the top and re-derive what it
+ * has to do. A one-byte non-blocking write per listener, safe from any
+ * thread and taking no lock: this is what a side statedump completion
+ * callback is allowed to do.
+ */
+void lttng_ust_sockinfo_wakeup_listeners(void)
+{
+	ust_listener_wakeup_all();
 }

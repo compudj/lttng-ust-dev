@@ -1990,6 +1990,66 @@ int ustcomm_register_channel(const struct ustcomm_sock *sock,
 }
 
 /*
+ * Returns 0 on success, negative error value on error.
+ * Returns -EPIPE or -ECONNRESET if other end has hung up.
+ */
+int ustcomm_notify_statedump(const struct ustcomm_sock *sock,
+	int session_objd,
+	uint32_t status)
+{
+	ssize_t len;
+	struct {
+		struct ustcomm_notify_hdr header;
+		struct ustcomm_notify_statedump_msg m;
+	} msg;
+	struct {
+		struct ustcomm_notify_hdr header;
+		struct ustcomm_notify_statedump_reply r;
+	} reply;
+
+	memset(&msg, 0, sizeof(msg));
+	msg.header.notify_cmd = LTTNG_UST_CTL_NOTIFY_CMD_STATEDUMP;
+	msg.m.session_objd = session_objd;
+	msg.m.status = status;
+
+	len = ustcomm_send_unix_sock(sock, &msg, sizeof(msg));
+	if (len > 0 && len != sizeof(msg))
+		return -EIO;
+	if (len < 0)
+		return len;
+
+	len = ustcomm_recv_unix_sock(sock, &reply, sizeof(reply));
+	switch (len) {
+	case 0:	/* orderly shutdown */
+		return -EPIPE;
+	case sizeof(reply):
+		if (reply.header.notify_cmd != msg.header.notify_cmd) {
+			ERR("Unexpected result message command "
+				"expected: %u vs received: %u\n",
+				msg.header.notify_cmd, reply.header.notify_cmd);
+			return -EINVAL;
+		}
+		if (reply.r.ret_code > 0)
+			return -EINVAL;
+		if (reply.r.ret_code < 0)
+			return reply.r.ret_code;
+		DBG("Sent statedump notification for session objd %d: status %u\n",
+			session_objd, status);
+		return 0;
+	default:
+		if (len < 0) {
+			/* Transport level error */
+			if (errno == EPIPE || errno == ECONNRESET)
+				len = -errno;
+			return len;
+		} else {
+			ERR("incorrect message size: %zd\n", len);
+			return -EIO;
+		}
+	}
+}
+
+/*
  * Set socket receiving timeout.
  */
 int ustcomm_setsockopt_rcv_timeout(int sock, unsigned int msec)

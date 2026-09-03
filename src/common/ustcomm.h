@@ -271,6 +271,36 @@ lttng_ust_static_assert(sizeof(struct ustcomm_notify_channel_reply) == USTCOMM_N
 			"Unexpected size for struct ustcomm_notify_channel_reply",
 			Unexpected_size_for_struct_ustcomm_notify_channel_reply);
 
+#define USTCOMM_NOTIFY_STATEDUMP_MSG_SIZE	32
+struct ustcomm_notify_statedump_msg {
+	union {
+		char padding[USTCOMM_NOTIFY_STATEDUMP_MSG_SIZE];
+		struct {
+			uint32_t session_objd;
+			/* enum lttng_ust_ctl_statedump_status */
+			uint32_t status;
+		} __attribute__((packed));
+	};
+} __attribute__((packed));
+
+lttng_ust_static_assert(sizeof(struct ustcomm_notify_statedump_msg) == USTCOMM_NOTIFY_STATEDUMP_MSG_SIZE,
+			"Unexpected size for struct ustcomm_notify_statedump_msg",
+			Unexpected_size_for_struct_ustcomm_notify_statedump_msg);
+
+#define USTCOMM_NOTIFY_STATEDUMP_REPLY_SIZE	32
+struct ustcomm_notify_statedump_reply {
+	union {
+		char padding[USTCOMM_NOTIFY_STATEDUMP_REPLY_SIZE];
+		struct {
+			int32_t ret_code;	/* 0: ok, negative: error code */
+		} __attribute__((packed));
+	};
+} __attribute__((packed));
+
+lttng_ust_static_assert(sizeof(struct ustcomm_notify_statedump_reply) == USTCOMM_NOTIFY_STATEDUMP_REPLY_SIZE,
+			"Unexpected size for struct ustcomm_notify_statedump_reply",
+			Unexpected_size_for_struct_ustcomm_notify_statedump_reply);
+
 /*
  * LTTNG_UST_TRACEPOINT_FIELD_LIST reply is followed by a
  * struct lttng_ust_field_iter field.
@@ -445,6 +475,18 @@ int ustcomm_register_channel(const struct ustcomm_sock *sock,
 	struct lttng_ust_ctx_field *ctx_fields,
 	uint32_t *chan_id,		/* channel id (output) */
 	int *header_type) 		/* header type (output) */
+	__attribute__((visibility("hidden")));
+
+/*
+ * Tell the session daemon what became of a statedump it asked this
+ * session for.
+ *
+ * Returns 0 on success, negative error value on error.
+ * Returns -EPIPE or -ECONNRESET if other end has hung up.
+ */
+int ustcomm_notify_statedump(const struct ustcomm_sock *sock,
+	int session_objd,		/* session descriptor */
+	uint32_t status)		/* enum lttng_ust_ctl_statedump_status */
 	__attribute__((visibility("hidden")));
 
 int ustcomm_setsockopt_rcv_timeout(int sock, unsigned int msec)

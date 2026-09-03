@@ -233,6 +233,9 @@ struct cds_list_head *lttng_get_sessions(void)
 void lttng_handle_pending_statedump(void *owner)
 	__attribute__((visibility("hidden")));
 
+void lttng_handle_statedump_notifications(void *owner)
+	__attribute__((visibility("hidden")));
+
 int lttng_channel_enable(struct lttng_ust_channel_common *lttng_channel)
 	__attribute__((visibility("hidden")));
 

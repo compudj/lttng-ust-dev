@@ -371,6 +371,13 @@ void lttng_session_destroy(struct lttng_ust_session *session)
 	 * for a session which is going away.
 	 */
 	lttng_ust_side_session_statedump_cancel(session);
+	/*
+	 * Nothing to tell about a session which is going away: its
+	 * object descriptor, which is what a notification names, is
+	 * being released by the session daemon which asked.
+	 */
+	session->priv->statedump_notify =
+		LTTNG_UST_SESSION_STATEDUMP_NOTIFY_NONE;
 	cds_list_for_each_entry(event_priv, &session->priv->events_head, node)
 		_lttng_event_unregister(event_priv->pub);
 	lttng_ust_tracer_synchronize();		/* Wait for in-flight events to complete */
@@ -766,6 +773,15 @@ int lttng_session_disable(struct lttng_ust_session *session)
 	 * session again asks for a new one.
 	 */
 	lttng_ust_side_session_statedump_cancel(session);
+	/*
+	 * A cancelled request goes as quiet as a completed one, so a
+	 * statedump the session daemon is still owed a word on becomes
+	 * a "dropped" rather than a bogus "taken".
+	 */
+	if (session->priv->statedump_notify ==
+			LTTNG_UST_SESSION_STATEDUMP_NOTIFY_OWED)
+		session->priv->statedump_notify =
+			LTTNG_UST_SESSION_STATEDUMP_NOTIFY_DROPPED;
 
 	/* Set transient enabler state to "disabled" */
 	session->priv->tstate = 0;
@@ -1802,10 +1818,111 @@ void lttng_handle_pending_statedump(void *owner)
 		 * they are only delivered to it, whenever they run.
 		 */
 		lttng_ust_side_session_statedump(session_priv->pub);
+		/*
+		 * From here the session daemon is owed a word on what
+		 * becomes of that request. Without this the listener
+		 * could not tell a session which has gone quiet because
+		 * its statedump was taken from one which was never asked
+		 * for a statedump at all.
+		 */
+		session_priv->statedump_notify =
+			LTTNG_UST_SESSION_STATEDUMP_NOTIFY_OWED;
 	}
 end:
 	ust_unlock();
 	return;
+}
+
+/*
+ * Take from the sessions of this owner the next word the session daemon
+ * is owed about a statedump, if any is due yet. Returns false when none
+ * is left. Takes the ust lock.
+ *
+ * The obligation is cleared here rather than after the notification is
+ * sent, so that the lock is not held while writing to the session
+ * daemon. A notification lost that way costs nothing: asking whether a
+ * statedump is outstanding stays the authoritative answer.
+ */
+static
+bool take_statedump_notification(void *owner, int *session_objd,
+		uint32_t *status)
+{
+	struct lttng_ust_session_private *session_priv;
+	bool taken = false;
+
+	if (ust_lock())
+		goto end;
+	cds_list_for_each_entry(session_priv, &sessions, node) {
+		if (session_priv->owner != owner)
+			continue;
+		switch (session_priv->statedump_notify) {
+		case LTTNG_UST_SESSION_STATEDUMP_NOTIFY_OWED:
+			/* Still to be taken: nothing to say yet. */
+			if (lttng_session_statedump_outstanding(session_priv->pub))
+				continue;
+			*status = LTTNG_UST_CTL_STATEDUMP_STATUS_TAKEN;
+			break;
+		case LTTNG_UST_SESSION_STATEDUMP_NOTIFY_DROPPED:
+			*status = LTTNG_UST_CTL_STATEDUMP_STATUS_DROPPED;
+			break;
+		default:
+			continue;
+		}
+		session_priv->statedump_notify =
+			LTTNG_UST_SESSION_STATEDUMP_NOTIFY_NONE;
+		*session_objd = session_priv->objd;
+		taken = true;
+		break;
+	}
+end:
+	ust_unlock();
+	return taken;
+}
+
+/*
+ * Tell the session daemon what became of the statedumps it asked the
+ * sessions of this owner for, and which are no longer outstanding.
+ * Called by the listener thread of the owner, without the ust lock
+ * held.
+ *
+ * The notification is sent from here, and not from the thread which
+ * takes the statedump, because the notify socket is a strictly
+ * synchronous request/reply stream whose every other sender is this
+ * same listener thread: a second writer would desynchronize it. It
+ * would also put the latency of the session daemon on the statedump
+ * thread of the application.
+ */
+void lttng_handle_statedump_notifications(void *owner)
+{
+	int notify_socket, session_objd;
+	uint32_t status;
+
+	/*
+	 * The listener thread of this owner is the only writer of its
+	 * own notify socket, and is the caller here.
+	 */
+	notify_socket = lttng_get_notify_socket(owner);
+	if (notify_socket < 0)
+		return;
+	while (take_statedump_notification(owner, &session_objd, &status)) {
+		const struct ustcomm_sock usock = {
+			.fd = notify_socket,
+			.shutdown_on_error = USTCOMM_SHUTDOWN_RDWR,
+		};
+		int ret;
+
+		ret = ustcomm_notify_statedump(&usock, session_objd, status);
+		if (ret) {
+			DBG("Error (%d) notifying the statedump of a session",
+				ret);
+			/*
+			 * The notify socket is gone; the session daemon
+			 * registers the application again, and its
+			 * sessions here are torn down with it.
+			 */
+			return;
+		}
+	}
 }
 
 static

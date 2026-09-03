@@ -3913,6 +3913,9 @@ int lttng_ust_ctl_recv_notify(int sock, enum lttng_ust_ctl_notify_cmd *notify_cm
 	case 3:
 		*notify_cmd = LTTNG_UST_CTL_NOTIFY_CMD_KEY;
 		break;
+	case 4:
+		*notify_cmd = LTTNG_UST_CTL_NOTIFY_CMD_STATEDUMP;
+		break;
 	default:
 		return -EINVAL;
 	}
@@ -4410,6 +4413,67 @@ int lttng_ust_ctl_reply_register_channel(int sock,
 		reply.r.header_type = 0;
 		break;
 	}
+	len = ustcomm_send_unix_sock(&usock, &reply, sizeof(reply));
+	if (len > 0 && len != sizeof(reply))
+		return -EIO;
+	if (len < 0)
+		return len;
+	return 0;
+}
+
+/*
+ * Returns 0 on success, negative UST or system error value on error.
+ */
+int lttng_ust_ctl_recv_notify_statedump(int sock,
+	int *session_objd,
+	enum lttng_ust_ctl_statedump_status *status)
+{
+	const struct ustcomm_sock usock = {
+		.fd = sock,
+		.shutdown_on_error = USTCOMM_SHUTDOWN_RDWR,
+	};
+	struct ustcomm_notify_statedump_msg msg;
+	ssize_t len;
+
+	len = ustcomm_recv_unix_sock(&usock, &msg, sizeof(msg));
+	if (len > 0 && len != sizeof(msg))
+		return -EIO;
+	if (len == 0)
+		return -EPIPE;
+	if (len < 0)
+		return len;
+
+	switch (msg.status) {
+	case LTTNG_UST_CTL_STATEDUMP_STATUS_TAKEN:
+	case LTTNG_UST_CTL_STATEDUMP_STATUS_DROPPED:
+		break;
+	default:
+		return -EINVAL;
+	}
+	*session_objd = msg.session_objd;
+	*status = (enum lttng_ust_ctl_statedump_status) msg.status;
+	return 0;
+}
+
+/*
+ * Returns 0 on success, negative error value on error.
+ */
+int lttng_ust_ctl_reply_notify_statedump(int sock, int ret_code)
+{
+	const struct ustcomm_sock usock = {
+		.fd = sock,
+		.shutdown_on_error = USTCOMM_SHUTDOWN_RDWR,
+	};
+	ssize_t len;
+	struct {
+		struct ustcomm_notify_hdr header;
+		struct ustcomm_notify_statedump_reply r;
+	} reply;
+
+	memset(&reply, 0, sizeof(reply));
+	reply.header.notify_cmd = LTTNG_UST_CTL_NOTIFY_CMD_STATEDUMP;
+	reply.r.ret_code = ret_code;
+	/* Notify socket: use SHUT_RDWR on error. */
 	len = ustcomm_send_unix_sock(&usock, &reply, sizeof(reply));
 	if (len > 0 && len != sizeof(reply))
 		return -EIO;

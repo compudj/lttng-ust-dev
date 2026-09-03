@@ -58,6 +58,8 @@ struct print_ctx {
 
 static struct side_tracer_handle *tracer_handle;
 
+static struct side_statedump_completion_handle *statedump_completion_handle;
+
 static uint64_t tracer_key;
 
 static struct side_description_visitor_callbacks description_visitor_callbacks;
@@ -5977,6 +5979,29 @@ void tracer_event_notification(enum side_tracer_notification notif,
 	}
 }
 
+/*
+ * A statedump has been taken. Runs on the thread which took it -- the
+ * side agent thread, or an application thread running its pending
+ * requests -- so it does the least it can: wake the listener threads,
+ * which re-derive under the ust lock which sessions are no longer owed
+ * a statedump and tell the session daemon.
+ *
+ * It must stay this small. It takes no lock and makes no allocation,
+ * because it runs on an application thread the tracer does not own, and
+ * it does not send the notification itself, because the notify socket
+ * belongs to the listener thread.
+ *
+ * The key is ignored: one statedump reaches every registered callback,
+ * so this is a hint that an answer may have changed, not a report about
+ * one session. What the listener asks afterwards is authoritative.
+ */
+static
+void tracer_statedump_completion(uint64_t key __attribute__((unused)),
+		void *priv __attribute__((unused)))
+{
+	lttng_ust_sockinfo_wakeup_listeners();
+}
+
 void lttng_ust_side_tracer_init(void)
 {
 	if (side_tracer_request_key(&tracer_key))
@@ -5984,10 +6009,15 @@ void lttng_ust_side_tracer_init(void)
 	tracer_handle = side_tracer_event_notification_register(tracer_event_notification, NULL);
 	if (!tracer_handle)
 		abort();
+	statedump_completion_handle =
+		side_tracer_statedump_completion_register(tracer_statedump_completion, NULL);
+	if (!statedump_completion_handle)
+		abort();
 }
 
 void lttng_ust_side_tracer_exit(void)
 {
+	side_tracer_statedump_completion_unregister(statedump_completion_handle);
 	side_tracer_event_notification_unregister(tracer_handle);
 }
 
