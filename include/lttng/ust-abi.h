@@ -36,8 +36,8 @@
  * is the favored approach to work-around a protocol issue within a
  * given protocol major version without breaking compatibility.
  */
-#define LTTNG_UST_ABI_MAJOR_VERSION			11
-#define LTTNG_UST_ABI_MAJOR_VERSION_OLDEST_COMPATIBLE	11
+#define LTTNG_UST_ABI_MAJOR_VERSION			12
+#define LTTNG_UST_ABI_MAJOR_VERSION_OLDEST_COMPATIBLE	12
 #define LTTNG_UST_ABI_MINOR_VERSION			 0
 
 #define LTTNG_UST_ABI_CMD_MAX_LEN			4096U
