@@ -402,6 +402,11 @@ struct lttng_ust_session_private {
 	/* enum lttng_ust_session_statedump_notify */
 	unsigned int statedump_notify:2;
 	/*
+	 * Whether a side statedump request issued for this session has
+	 * neither been taken nor cancelled yet.
+	 */
+	unsigned int side_statedump_issued:1;
+	/*
 	 * Key identifying the side event callbacks of this session:
 	 * a side statedump requested with it is only delivered to this
 	 * session. 0 if none was allocated.

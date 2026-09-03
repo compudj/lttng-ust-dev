@@ -6052,8 +6052,11 @@ void lttng_ust_side_session_statedump(struct lttng_ust_session *session)
 {
 	if (!session->priv->side_key)
 		return;
-	if (side_tracer_statedump_request(session->priv->side_key) != SIDE_ERROR_OK)
+	if (side_tracer_statedump_request(session->priv->side_key) != SIDE_ERROR_OK) {
 		DBG("Unable to request a side statedump for the session");
+		return;
+	}
+	session->priv->side_statedump_issued = 1;
 }
 
 /*
@@ -6075,6 +6078,7 @@ void lttng_ust_side_session_statedump_cancel(struct lttng_ust_session *session)
 		return;
 	if (side_tracer_statedump_request_cancel(session->priv->side_key) != SIDE_ERROR_OK)
 		DBG("Unable to cancel the side statedump requests of the session");
+	session->priv->side_statedump_issued = 0;
 }
 
 /*
@@ -6089,6 +6093,16 @@ void lttng_ust_side_session_statedump_cancel(struct lttng_ust_session *session)
 bool lttng_ust_side_session_statedump_outstanding(struct lttng_ust_session *session)
 {
 	if (!session->priv->side_key)
+		return false;
+	/*
+	 * Only a request this session actually has outstanding counts.
+	 * Asking side alone over-reports: a statedump requested for
+	 * every tracer at once -- which registering a statedump callback
+	 * queues -- is pending for every key, so a session whose own
+	 * request was cancelled would still read as outstanding for as
+	 * long as some application had not run that one.
+	 */
+	if (!session->priv->side_statedump_issued)
 		return false;
 	return side_tracer_statedump_request_pending(session->priv->side_key);
 }
