@@ -9,6 +9,7 @@
 #ifndef _LTTNG_TRACER_CORE_H
 #define _LTTNG_TRACER_CORE_H
 
+#include <stdbool.h>
 #include <stddef.h>
 #include <urcu/arch.h>
 #include <urcu/list.h>
@@ -144,6 +145,8 @@ int lttng_ust_side_session_key_alloc(struct lttng_ust_session *session)
 void lttng_ust_side_session_statedump(struct lttng_ust_session *session)
 	__attribute__((visibility("hidden")));
 void lttng_ust_side_session_statedump_cancel(struct lttng_ust_session *session)
+	__attribute__((visibility("hidden")));
+bool lttng_ust_side_session_statedump_outstanding(struct lttng_ust_session *session)
 	__attribute__((visibility("hidden")));
 
 #ifdef HAVE_LINUX_PERF_EVENT_H

@@ -215,6 +215,9 @@ int lttng_session_disable(struct lttng_ust_session *session)
 int lttng_session_statedump(struct lttng_ust_session *session)
 	__attribute__((visibility("hidden")));
 
+int lttng_session_statedump_outstanding(struct lttng_ust_session *session)
+	__attribute__((visibility("hidden")));
+
 void lttng_session_destroy(struct lttng_ust_session *session)
 	__attribute__((visibility("hidden")));
 

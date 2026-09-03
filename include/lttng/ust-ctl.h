@@ -520,6 +520,26 @@ int lttng_ust_ctl_has_perf_counters(void);
 /* Regenerate the statedump. */
 int lttng_ust_ctl_regenerate_statedump(int sock, int handle);
 
+/*
+ * Ask whether a statedump this session requested has yet to be taken by
+ * the application. Sets *outstanding to 1 if one has, 0 if none has.
+ *
+ * This is a question, not a wait: an application which dumps its state
+ * by polling takes the statedump whenever it next runs its pending
+ * requests, so whoever wants to bound the wait owns that policy. It is
+ * also per application, so a session which spans several of them is
+ * done once every one of them answers 0.
+ *
+ * Zero does not say that a statedump happened: it also answers a
+ * session which never asked for one, a session whose requests were
+ * dropped when it stopped, and an application which has no state to
+ * dump.
+ *
+ * Returns 0 on success, negative error value on error.
+ */
+int lttng_ust_ctl_statedump_outstanding(int sock, int handle,
+		int *outstanding);
+
 /* event registry management */
 
 enum lttng_ust_ctl_socket_type {

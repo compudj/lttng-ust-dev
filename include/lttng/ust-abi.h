@@ -595,6 +595,15 @@ lttng_ust_static_assert(sizeof(struct lttng_ust_abi_event_exclusion) == LTTNG_US
 #define LTTNG_UST_ABI_SESSION_START		LTTNG_UST_ABI_CMD(0x52)
 #define LTTNG_UST_ABI_SESSION_STOP		LTTNG_UST_ABI_CMD(0x53)
 #define LTTNG_UST_ABI_SESSION_STATEDUMP		LTTNG_UST_ABI_CMD(0x54)
+/*
+ * Returns, in the ret_val of the reply, whether a statedump this
+ * session asked for is still outstanding: 1 if one has yet to be taken
+ * by the application, 0 if none is. Zero does not say that a statedump
+ * happened -- it also answers a session which never asked for one, and
+ * one whose requests were dropped when it stopped.
+ */
+#define LTTNG_UST_ABI_SESSION_STATEDUMP_OUTSTANDING \
+	LTTNG_UST_ABI_CMD(0x55)
 
 /* Channel commands */
 #define LTTNG_UST_ABI_STREAM			LTTNG_UST_ABI_CMD(0x60)

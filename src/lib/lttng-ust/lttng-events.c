@@ -645,6 +645,31 @@ int lttng_session_statedump(struct lttng_ust_session *session)
 	return 0;
 }
 
+/*
+ * Answer whether a statedump this session asked for has yet to be
+ * taken. Called with ust lock held.
+ *
+ * The statedump_pending half is not redundant with asking side: it
+ * covers the window where the request has been taken from the session
+ * daemon but not yet issued to side, which is real before the
+ * "registration done" command, because handle_pending_statedump() only
+ * acts once registration_done is set. Both halves are read and written
+ * under the ust lock, so there is no moment at which both look clear
+ * while a request is in transit between them.
+ *
+ * It also makes the one answer cover both halves of a statedump:
+ * statedump_pending spans do_lttng_ust_statedump(), which dumps what
+ * lttng-ust itself knows of the application, and only clears once the
+ * side request -- the state the application itself describes -- has
+ * been issued.
+ */
+int lttng_session_statedump_outstanding(struct lttng_ust_session *session)
+{
+	if (session->priv->statedump_pending)
+		return 1;
+	return lttng_ust_side_session_statedump_outstanding(session) ? 1 : 0;
+}
+
 int lttng_session_enable(struct lttng_ust_session *session)
 {
 	struct ustcomm_sock usock = {

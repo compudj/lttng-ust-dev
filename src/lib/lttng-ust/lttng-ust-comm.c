@@ -380,6 +380,8 @@ static const char *cmd_name_mapping[] = {
 	[ LTTNG_UST_ABI_CHANNEL ] = "Create Channel",
 	[ LTTNG_UST_ABI_SESSION_START ] = "Start Session",
 	[ LTTNG_UST_ABI_SESSION_STOP ] = "Stop Session",
+	[ LTTNG_UST_ABI_SESSION_STATEDUMP ] = "Regenerate Statedump",
+	[ LTTNG_UST_ABI_SESSION_STATEDUMP_OUTSTANDING ] = "Statedump Outstanding",
 
 	/* Channel FD commands */
 	[ LTTNG_UST_ABI_STREAM ] = "Create Stream",

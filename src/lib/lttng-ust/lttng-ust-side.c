@@ -6047,6 +6047,22 @@ void lttng_ust_side_session_statedump_cancel(struct lttng_ust_session *session)
 		DBG("Unable to cancel the side statedump requests of the session");
 }
 
+/*
+ * Returns whether a statedump this session requested has yet to be
+ * taken: queued for an application which has not run its statedump
+ * callbacks yet, or being taken right now.
+ *
+ * False also answers a session whose requests were cancelled and an
+ * application which registered no statedump callback at all. It says
+ * that nothing is outstanding, not that a statedump happened.
+ */
+bool lttng_ust_side_session_statedump_outstanding(struct lttng_ust_session *session)
+{
+	if (!session->priv->side_key)
+		return false;
+	return side_tracer_statedump_request_pending(session->priv->side_key);
+}
+
 void lttng_ust_tracer_synchronize(void)
 {
 	lttng_ust_urcu_synchronize_rcu();

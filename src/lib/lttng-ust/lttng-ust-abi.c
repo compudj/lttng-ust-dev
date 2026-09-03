@@ -810,6 +810,8 @@ long lttng_session_cmd(int objd, unsigned int cmd, unsigned long arg,
 		return lttng_session_disable(session);
 	case LTTNG_UST_ABI_SESSION_STATEDUMP:
 		return lttng_session_statedump(session);
+	case LTTNG_UST_ABI_SESSION_STATEDUMP_OUTSTANDING:
+		return lttng_session_statedump_outstanding(session);
 	case LTTNG_UST_ABI_COUNTER:
 		return lttng_session_create_counter(objd,
 				(struct lttng_ust_abi_counter_conf *)arg,

@@ -4438,6 +4438,28 @@ int lttng_ust_ctl_regenerate_statedump(int sock, int handle)
 	return 0;
 }
 
+int lttng_ust_ctl_statedump_outstanding(int sock, int handle,
+		int *outstanding)
+{
+	DEFINE_ZEROED(struct ustcomm_ust_msg_header, lum);
+	DEFINE_ZEROED(struct ustcomm_ust_reply, lur);
+	const struct ustcomm_sock usock = {
+		.fd = sock,
+		.shutdown_on_error = USTCOMM_SHUTDOWN_WR,
+	};
+	int ret;
+
+	lum.handle = handle;
+	lum.cmd = LTTNG_UST_ABI_SESSION_STATEDUMP_OUTSTANDING;
+	ret = ustcomm_send_app_cmd(&usock, &lum, &lur);
+	if (ret)
+		return ret;
+	*outstanding = lur.header.ret_val ? 1 : 0;
+	DBG("Statedump %s for handle %u",
+		*outstanding ? "outstanding" : "not outstanding", handle);
+	return 0;
+}
+
 /* counter operations */
 
 int lttng_ust_ctl_get_nr_cpu_per_counter(void)
